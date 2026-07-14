@@ -1,0 +1,24 @@
+V1.10.31_SHOP_PROFILE_BANNER_ASSETS_NO_SQL
+
+Mục tiêu:
+- Tích hợp gói PES_2026_PROFILE_BANNER_PACK_5 vào app để hiển thị 5 banner hồ sơ trong Cửa Hàng / Trang trí.
+
+Thay đổi:
+- Thêm 5 banner hồ sơ WEBP vào static/shop/profile_banners/.
+- Thêm 5 icon shop PNG vào static/shop/profile_banner_icons/.
+- Thêm ảnh preview pack vào static/shop/previews/.
+- Thêm manifest gốc JSON/CSV vào static/shop/profile_banners/ để tiện tra cứu.
+- Cập nhật app.py với catalog tĩnh PROFILE_BANNER_SHOP_ITEMS.
+- Cập nhật templates/shop.html để tab Trang trí hiển thị khu Banner hồ sơ với ảnh preview, tên, độ hiếm và giá ZCOIN đề xuất.
+- Cập nhật static/style.css cho giao diện card banner trong Shop.
+- Cập nhật cache CSS trong base.html lên v=1.10.31.
+- Cập nhật APP_VERSION lên V1.10.31.
+
+Không thay đổi:
+- Không cần SQL.
+- Không thay đổi database.
+- Chưa mở mua/sử dụng banner thật.
+- Không đụng Gift Code, ZCOIN, Điểm danh, BXH, Admin, phòng đấu hoặc logic tính điểm.
+
+Rollback:
+- Rollback Vercel/GitHub về V1.10.30 nếu cần. Không cần rollback Supabase.

@@ -1,0 +1,31 @@
+V1.10.17_ROOM_CONFIRM_UI_HOTFIX_NO_SQL
+
+Mục tiêu:
+- Sửa lỗi hiển thị khu vực chờ xác nhận kết quả trong phòng đấu.
+- Tỷ số đã nhập như 1 - 0 không còn hiển thị nhỏ/lệch/dính vào nút Xác Nhận và Không Đồng Ý.
+- Khôi phục cảm giác giao diện tỷ số lớn ở giữa phòng như bản trước.
+
+Phạm vi thay đổi:
+- app.py: chỉ cập nhật APP_VERSION thành V1.10.17.
+- static/style.css: thêm CSS cho .room-result-review, .room-result-score, .room-result-actions, .room-result-btn, .room-result-dispute-form.
+- Log.md: ghi chú version và phạm vi sửa.
+- README.md: thêm quy tắc update an toàn và mốc version để 2 người cùng phát triển dễ theo dõi.
+- docs/update_v1_10_17_room_confirm_ui_hotfix_no_sql.txt: ghi chú bản update này.
+
+Không thay đổi:
+- Không sửa database.
+- Không cần SQL.
+- Không sửa logic tính điểm/rank.
+- Không sửa logic xác nhận kết quả/tranh chấp.
+- Không sửa ZCOIN/Điểm danh.
+- Không sửa BXH/Players/Dashboard.
+
+Cách triển khai:
+1. Upload các file trong ZIP lên đúng vị trí trong GitHub.
+2. Chờ Vercel deploy Ready.
+3. Mở một phòng đấu ở trạng thái chờ xác nhận kết quả.
+4. Kiểm tra tỷ số và hai nút Xác Nhận / Không Đồng Ý hiển thị cân đối ở giữa.
+
+Rollback:
+- Nếu lỗi, rollback Vercel về deployment V1.10.16.
+- Không cần rollback Supabase vì bản này không đổi database.

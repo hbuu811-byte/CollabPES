@@ -1,0 +1,32 @@
+V1.10.29_MOBILE_LAYOUT_SIDEBAR_SPACE_HOTFIX_NO_SQL
+
+Mục tiêu:
+- Sửa lỗi trên điện thoại khi mở app thấy một khoảng trống rất lớn phía trên, topbar/dashboard bị đẩy xuống gần cuối màn hình.
+
+Nguyên nhân:
+- Ở breakpoint mobile, sidebar bị transform ẩn sang trái nhưng vẫn ở trạng thái static trong layout nên vẫn chiếm chiều cao trên trang.
+- Kết quả là phần main/topbar bị đẩy xuống dưới, nhìn như app không hiển thị nội dung.
+
+Thay đổi:
+- Đặt sidebar mobile về position: fixed để không chiếm layout flow.
+- Khi đóng sidebar, sidebar trượt ra ngoài màn hình nhưng không tạo khoảng trống.
+- Khi bấm menu ☰, sidebar trượt vào đúng cách.
+- Căn lại nhẹ topbar mobile để các icon/ZCOIN/profile gọn hơn.
+- Cập nhật CSS cache version trong base.html lên 1.10.29.
+- Cập nhật APP_VERSION lên V1.10.29.
+
+File thay đổi:
+- app.py
+- templates/base.html
+- static/style.css
+- README.md
+- Log.md
+- docs/update_v1_10_29_mobile_layout_sidebar_space_hotfix_no_sql.txt
+
+Không thay đổi:
+- Không cần SQL.
+- Không đổi database.
+- Không đụng Shop/Gift Code/ZCOIN/Điểm danh/BXH/Admin/logic phòng đấu.
+
+Rollback:
+- Rollback về deployment V1.10.28 nếu cần.

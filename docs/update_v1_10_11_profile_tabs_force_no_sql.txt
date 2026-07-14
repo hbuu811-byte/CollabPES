@@ -1,0 +1,31 @@
+V1.10.11_PROFILE_TABS_FORCE_NO_SQL
+
+Mục tiêu:
+- Cập nhật lại đúng giao diện Hồ sơ cá nhân dạng tab cho app PES 2026.
+- Đây là bản force/repack riêng cho profile vì Production trước đó vẫn hiển thị profile cũ.
+
+Phạm vi thay đổi:
+- app.py: chỉ đổi APP_VERSION = "V1.10.11".
+- templates/profile.html: giao diện Hồ sơ cá nhân dạng tab.
+- static/style.css: CSS cho giao diện tab trong Hồ sơ cá nhân.
+- Log.md: ghi chú phiên bản.
+- docs/update_v1_10_11_profile_tabs_force_no_sql.txt: ghi chú update.
+
+Các tab trong Hồ sơ cá nhân:
+1. Tổng quan
+2. Thành tích
+3. Lịch sử
+4. ZCOIN
+5. Điểm danh
+6. Tài khoản
+
+Lưu ý:
+- Tab ZCOIN và Điểm danh hiện chỉ là khung giao diện.
+- Chưa có dữ liệu ZCOIN thật.
+- Chưa có điểm danh thật.
+- Không thêm bảng/cột Supabase.
+- Không cần chạy SQL.
+
+Rollback:
+- Nếu lỗi, rollback Vercel về deployment V1.10.10 hoặc revert commit chứa bản này.
+- Không cần restore database.

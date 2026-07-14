@@ -1,0 +1,24 @@
+V1.10.20_TOPBAR_ZCOIN_BALANCE_NO_SQL
+
+Mục tiêu:
+- Hiển thị số dư ZCOIN trên topbar, cạnh khu thông báo/chuông.
+- Người chơi có thể bấm pill ZCOIN để vào Hồ sơ cá nhân tab ZCOIN.
+
+Phạm vi thay đổi:
+- app.py: cập nhật APP_VERSION = V1.10.20.
+- templates/base.html: thêm pill ZCOIN trên topbar.
+- static/style.css: thêm CSS cho pill ZCOIN và responsive.
+- README.md / Log.md: ghi chú version và commit name.
+
+Không thay đổi:
+- Không SQL.
+- Không database.
+- Không logic điểm danh/ZCOIN transaction.
+- Không phòng đấu, BXH, Players, Admin.
+
+Commit khuyến nghị:
+V1.10.20_TOPBAR_ZCOIN_BALANCE_NO_SQL
+
+Rollback:
+- Nếu lỗi giao diện, rollback Vercel về deployment V1.10.19.
+- Không cần rollback Supabase.

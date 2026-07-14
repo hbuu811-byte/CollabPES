@@ -1,0 +1,24 @@
+V1.10.13_USER_DROPDOWN_LOGOUT_ONLY_NO_SQL
+
+Mục tiêu:
+- Chỉ giữ nút Đăng xuất trong menu xổ xuống của tên người dùng trên topbar.
+- Gỡ nút Đăng xuất riêng ở sidebar để giao diện gọn và giống menu tài khoản hơn.
+
+Phạm vi thay đổi:
+- app.py: cập nhật APP_VERSION = V1.10.13.
+- templates/base.html: xóa link Đăng xuất trong sidebar, giữ Đăng xuất trong dropdown user.
+- static/style.css: giữ kèm từ bản trước để đảm bảo dropdown/topbar đồng bộ.
+- Log.md: ghi chú bản update.
+
+Không thay đổi:
+- Database/Supabase.
+- Logic đăng nhập/đăng xuất.
+- Logic thi đấu, BXH, phòng đấu, lịch sử.
+- Route hiện có.
+
+SQL:
+- Không cần chạy SQL.
+
+Rollback:
+- Nếu lỗi giao diện, rollback Vercel/GitHub về deployment hoặc commit trước đó.
+- Không cần restore database.

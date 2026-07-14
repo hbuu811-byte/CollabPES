@@ -1,0 +1,36 @@
+V1.10.41_PROFILE_BANNER_VISIBILITY_HOTFIX_NO_SQL
+================================================
+
+Mục tiêu
+--------
+Làm banner hồ sơ đã trang bị hiển thị rõ hơn. Bản V1.10.40 có lớp phủ tối quá mạnh nên banner nhìn mờ và khó thấy.
+
+Thay đổi
+--------
+1. static/style.css
+   - Giảm overlay đen trên `.rzp-profile-hero.has-profile-banner::after`.
+   - Tăng brightness/contrast/saturate cho ảnh banner nền.
+   - Tăng nhẹ chiều cao hero hồ sơ.
+   - Giữ text/chip dễ đọc bằng nền mờ nhẹ cho rank/chip thay vì che toàn bộ banner.
+   - Tối ưu thêm cho mobile và light theme.
+
+2. templates/base.html
+   - Cập nhật cache CSS lên `?v=1.10.41`.
+
+3. app.py
+   - APP_VERSION -> V1.10.41.
+
+Không thay đổi
+--------------
+- Không cần SQL.
+- Không đổi database.
+- Không đụng Shop, mua vật phẩm, Kho đồ, ZCOIN, phòng đấu, BXH hoặc logic tính điểm.
+
+Deploy
+------
+Upload đè các file trong ZIP lên source hiện tại.
+Commit gợi ý: V1.10.41_PROFILE_BANNER_VISIBILITY_HOTFIX_NO_SQL
+
+Rollback
+--------
+Quay lại deployment/commit V1.10.40 nếu cần.

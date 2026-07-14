@@ -1,0 +1,27 @@
+V1.10.30_TOPBAR_ANNOUNCEMENT_FIT_HOTFIX_NO_SQL
+
+Mục tiêu:
+- Sửa thanh thông báo trên topbar bị dài/lấn vào cụm icon bên phải.
+
+Thay đổi:
+- Đưa thanh thông báo trên desktop về đúng luồng flex của topbar, không còn dùng absolute center dễ đè lên icon.
+- Giới hạn chiều rộng thanh thông báo theo khoảng trống còn lại giữa tiêu đề trang và cụm action bên phải.
+- Thu gọn nhãn THÔNG BÁO và font marquee ở các màn hình nhỏ hơn để tránh che ZCOIN, chuông, profile.
+- Cập nhật cache CSS trong base.html lên ?v=1.10.30.
+- Cập nhật APP_VERSION lên V1.10.30.
+
+File thay đổi:
+- app.py
+- templates/base.html
+- static/style.css
+- README.md
+- Log.md
+- docs/update_v1_10_30_topbar_announcement_fit_hotfix_no_sql.txt
+
+Không thay đổi:
+- Không cần SQL.
+- Không thay đổi database.
+- Không đụng Shop / Gift Code / ZCOIN / Điểm danh / BXH / Admin / Phòng đấu.
+
+Rollback:
+- Rollback Vercel về deployment V1.10.29 nếu cần.

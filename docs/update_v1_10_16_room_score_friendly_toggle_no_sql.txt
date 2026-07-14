@@ -1,0 +1,34 @@
+V1.10.16_ROOM_SCORE_FRIENDLY_TOGGLE_NO_SQL
+
+Mục tiêu:
+- Khôi phục hiển thị tỷ số 0 - 0 ở giữa phòng đấu khi trận đang thi đấu.
+- Thêm cài đặt Admin bật/tắt chế độ trận giao hữu.
+
+Có cần SQL không?
+- Không cần SQL.
+- Tính năng dùng bảng system_settings đã có sẵn. Nếu chưa có key friendly_matches_enabled, app tự tạo giá trị mặc định là true.
+
+File thay đổi:
+- app.py
+- templates/room_detail.html
+- templates/admin.html
+- static/style.css
+- Log.md
+- docs/update_v1_10_16_room_score_friendly_toggle_no_sql.txt
+
+Phạm vi không đụng:
+- Không đổi database schema.
+- Không đổi ZCOIN / Điểm danh.
+- Không đổi BXH.
+- Không đổi logic tính rank.
+- Không đổi login/register.
+
+Cách test:
+1. Vào một phòng đấu đang chơi, kiểm tra giữa phòng có tỷ số 0 - 0.
+2. Vào Admin > Hệ thống > Trận giao hữu.
+3. Tắt Trận giao hữu, quay lại phòng đấu, kiểm tra card Giao hữu bị khóa.
+4. Bật lại Trận giao hữu, kiểm tra card Giao hữu hoạt động lại.
+
+Rollback:
+- Rollback Vercel về deployment trước.
+- Không cần rollback Supabase vì không thay đổi schema.

@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.42"
+APP_VERSION = "V1.10.43"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -2834,7 +2834,7 @@ def enrich_chat_message(message, users=None):
 
 
 def list_chat_messages(scope="global", room_id=None, limit=20):
-    query = db.table("chat_messages").select("*").eq("scope", scope)
+    query = db.table("chat_messages").select("id,user_id,scope,room_id,message,created_at").eq("scope", scope)
 
     if room_id:
         query = query.eq("room_id", room_id)
@@ -2849,7 +2849,7 @@ def list_chat_messages(scope="global", room_id=None, limit=20):
 
 
 def user_can_chat(user_id, scope="global", room_id=None):
-    query = db.table("chat_messages").select("*").eq("user_id", user_id).eq("scope", scope)
+    query = db.table("chat_messages").select("id,created_at").eq("user_id", user_id).eq("scope", scope)
 
     if room_id:
         query = query.eq("room_id", room_id)
@@ -3376,6 +3376,11 @@ def api_pending_invites():
     if not user or user.get("role") == "admin":
         return jsonify({"invites": []})
 
+    cache_key = f"api_pending_invites:{user['id']}"
+    cached = ttl_cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     try:
         result = execute_query(
             db.table("match_invites")
@@ -3407,7 +3412,9 @@ def api_pending_invites():
                 "accept_url": url_for("respond_invite", invite_id=invite["id"]),
                 "reject_url": url_for("respond_invite", invite_id=invite["id"]),
             })
-        return jsonify({"invites": data})
+        payload = {"invites": data}
+        ttl_cache_set(cache_key, payload, 3)
+        return jsonify(payload)
     except Exception as exc:
         print(f"api_pending_invites ERROR user={user.get('id')}: {type(exc).__name__}: {exc}")
         return jsonify({"invites": []})
@@ -3423,13 +3430,20 @@ def api_active_room():
     if not user or user.get("role") == "admin":
         return jsonify({"ok": True, "has_room": False})
 
+    cache_key = f"api_active_room:{user['id']}"
+    cached = ttl_cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
+
     try:
         room = active_room_for_user(user["id"])
     except Exception:
         return jsonify({"ok": False, "has_room": False, "error": "temporary_db_error"}), 503
 
     if not room:
-        return jsonify({"ok": True, "has_room": False})
+        payload = {"ok": True, "has_room": False}
+        ttl_cache_set(cache_key, payload, 5)
+        return jsonify(payload)
 
     is_host = room.get("host_user_id") == user["id"]
     is_guest = room.get("guest_user_id") == user["id"]
@@ -3439,7 +3453,7 @@ def api_active_room():
     # Chỉ tự động vào phòng khi đối thủ đã tham gia hoặc người dùng là khách.
     auto_redirect = bool(has_opponent or is_guest)
 
-    return jsonify({
+    payload = {
         "ok": True,
         "has_room": True,
         "room_id": room["id"],
@@ -3449,7 +3463,9 @@ def api_active_room():
         "is_guest": is_guest,
         "has_opponent": has_opponent,
         "auto_redirect": auto_redirect,
-    })
+    }
+    ttl_cache_set(cache_key, payload, 5)
+    return jsonify(payload)
 
 @app.route("/api/room/<room_id>/state")
 @login_required
@@ -3766,34 +3782,29 @@ def api_global_chat():
 @app.route("/api/chat/global/status")
 @login_required
 def api_global_chat_status():
-    """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
+    """Trả payload nhỏ: chỉ số tin chưa đọc và mốc mới nhất, không gửi lại 100 bản ghi."""
     user = current_user()
+    since = (request.args.get("since") or "").strip()
     limit = 100
     query = (
         db.table("chat_messages")
         .select("id,user_id,created_at")
         .eq("scope", "global")
         .is_("room_id", "null")
-        .order("created_at", desc=True)
+        .order("created_at", desc=False)
         .limit(limit)
     )
-    result = execute_query(query, "api_global_chat_status")
-    rows = list(reversed(result.data or []))
-
-    messages = [
-        {
-            "id": row.get("id"),
-            "created_at": row.get("created_at"),
-            "is_own": row.get("user_id") == user.get("id"),
-        }
-        for row in rows
-    ]
-
+    if since:
+        query = query.gt("created_at", since)
+    result = execute_query(query, "api_global_chat_status", attempts=2)
+    rows = result.data or []
+    latest_created_at = rows[-1].get("created_at") if rows else None
+    unread_count = sum(1 for row in rows if row.get("user_id") != user.get("id"))
     return jsonify({
         "ok": True,
-        "messages": messages,
-        "latest_created_at": messages[-1]["created_at"] if messages else None,
-        "limit_reached": len(messages) >= limit,
+        "unread_count": unread_count,
+        "latest_created_at": latest_created_at,
+        "limit_reached": len(rows) >= limit,
     })
 
 
@@ -3854,6 +3865,7 @@ def admin_create_announcement():
         admin_user_id=user.get("id"),
     )
     announcement_id = created.data[0].get("id") if created.data else None
+    ttl_cache_delete("api_current_announcement")
     log_admin_action("Đăng thông báo", "announcement", announcement_id, title[:40], message[:220])
 
     flash("Đã đăng thông báo admin.", "success")
@@ -3865,6 +3877,7 @@ def admin_create_announcement():
 @admin_required
 def admin_clear_announcement():
     db.table("admin_announcements").update({"is_active": False}).eq("is_active", True).execute()
+    ttl_cache_delete("api_current_announcement")
     log_admin_action("Tắt thông báo", "announcement", details="Đã tắt toàn bộ thông báo đang hoạt động.")
     flash("Đã tắt thông báo admin.", "success")
     return redirect_admin("system")
@@ -3890,11 +3903,17 @@ def admin_toggle_friendly_matches():
 @app.route("/api/announcement/current")
 @login_required
 def api_current_announcement():
+    cache_key = "api_current_announcement"
+    cached = ttl_cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     announcement = get_active_announcement()
     if not announcement:
-        return jsonify({"ok": True, "announcement": None})
+        payload = {"ok": True, "announcement": None}
+        ttl_cache_set(cache_key, payload, 15)
+        return jsonify(payload)
 
-    return jsonify({
+    payload = {
         "ok": True,
         "announcement": {
             "id": announcement["id"],
@@ -3902,7 +3921,9 @@ def api_current_announcement():
             "message": announcement["message"],
             "created_at": announcement["created_at"],
         },
-    })
+    }
+    ttl_cache_set(cache_key, payload, 15)
+    return jsonify(payload)
 
 
 @app.route("/api/chat/global/send", methods=["POST"])
@@ -3937,6 +3958,7 @@ def api_admin_send_announcement():
         admin_user_id=user.get("id"),
     )
     announcement_id = created.data[0].get("id") if created.data else None
+    ttl_cache_delete("api_current_announcement")
     log_admin_action("Đăng thông báo", "announcement", announcement_id, title, message)
 
     return jsonify({"ok": True})
@@ -3945,9 +3967,14 @@ def api_admin_send_announcement():
 @app.route("/api/online-count")
 @login_required
 def api_online_count():
+    cache_key = "api_online_count"
+    cached = ttl_cache_get(cache_key)
+    if cached is not None:
+        return jsonify(cached)
     players = list_players(include_admin=False)
-    online_count = sum(1 for player in players if player.get("is_online"))
-    return jsonify({"ok": True, "online_count": online_count})
+    payload = {"ok": True, "online_count": sum(1 for player in players if player.get("is_online"))}
+    ttl_cache_set(cache_key, payload, 20)
+    return jsonify(payload)
 
 
 # =========================

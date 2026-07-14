@@ -428,8 +428,11 @@ function roomHasActiveInput() {
     return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
 }
 
+let roomStateRequestRunning = false;
 function checkRoomState() {
-    fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
+    if (document.hidden || roomStateRequestRunning) return Promise.resolve();
+    roomStateRequestRunning = true;
+    return fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -460,10 +463,18 @@ function checkRoomState() {
             window.location.reload();
         }
     })
-    .catch(function () {});
+    .catch(function () {})
+    .finally(function () { roomStateRequestRunning = false; });
 }
 
-setInterval(checkRoomState, 4000);
+function scheduleRoomStatePoll() {
+    const delay = document.hidden ? 15000 : 6000;
+    setTimeout(function () {
+        Promise.resolve(checkRoomState()).finally(scheduleRoomStatePoll);
+    }, delay);
+}
+checkRoomState();
+scheduleRoomStatePoll();
 </script>
 
 <script>
@@ -503,16 +514,26 @@ function renderRoomChat(messages) {
     box.scrollTop = box.scrollHeight;
 }
 
+let roomChatRequestRunning = false;
 function loadRoomChat() {
-    fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
+    if (document.hidden || roomChatRequestRunning) return Promise.resolve();
+    roomChatRequestRunning = true;
+    return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderRoomChat(data.messages);
         })
-        .catch(function () {});
+        .catch(function () {})
+    .finally(function () { roomChatRequestRunning = false; });
 }
 
+function scheduleRoomChatPoll() {
+    const delay = document.hidden ? 20000 : 10000;
+    setTimeout(function () {
+        Promise.resolve(loadRoomChat()).finally(scheduleRoomChatPoll);
+    }, delay);
+}
 loadRoomChat();
-setInterval(loadRoomChat, 5000);
+scheduleRoomChatPoll();
 </script>
 {% endblock %}

@@ -1,3 +1,28 @@
+# V1.10.43 — Tối ưu Fast Origin Transfer và chống đơ lag
+
+## Thay đổi chính
+
+- Giảm polling lời mời từ 3 giây xuống 10 giây, nhưng kiểm tra ngay khi người dùng quay lại tab.
+- Không chạy polling lời mời, phòng hiện tại, online và chat sảnh khi đang ở trong phòng đấu.
+- Dừng request nền khi tab bị ẩn; chạy đồng bộ ngay khi tab hoạt động lại.
+- Thay toàn bộ `setInterval` quan trọng bằng bộ lập lịch `setTimeout` nối tiếp để không tạo request chồng lên nhau khi mạng chậm.
+- Heartbeat 75 giây; phòng hiện tại 30 giây; thông báo 120 giây; online 120 giây.
+- Trạng thái phòng 6 giây và chat phòng 10 giây; không gửi request mới khi request cũ chưa xong.
+- Chat sảnh 10 giây khi mở; không tải khi tab ẩn.
+- API trạng thái chat chỉ trả `unread_count` và mốc thời gian mới nhất, không gửi lại tối đa 100 bản ghi.
+- Các truy vấn chat bỏ `select("*")`, chỉ lấy cột cần dùng.
+- Thêm cache RAM rất ngắn cho lời mời, phòng hiện tại, online và thông báo để gộp request từ nhiều tab trên cùng warm instance.
+- Giữ nguyên giới hạn kết nối Supabase, retry và fallback của V1.10.42.
+
+## Tác động dự kiến
+
+- Trang thường: giảm khoảng 55–70% số request nền so với V1.10.42.
+- Phòng đấu: giảm khoảng 45–60% request nền, đồng thời loại bỏ polling không cần thiết từ `base.html`.
+- Giảm Fast Origin Transfer, Function Invocations và truy vấn Supabase.
+- Không cần chạy SQL mới.
+
+---
+
 ## V1.10.42_VERCEL_SUPABASE_RESOURCE_BUSY_HOTFIX_NO_SQL
 
 - Sửa lỗi `/bxh` HTTP 500 do `httpx.ConnectError: [Errno 16] Device or resource busy` trên Vercel.

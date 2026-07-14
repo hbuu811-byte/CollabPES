@@ -227,7 +227,8 @@ function toggleTheme(){
 
 <script>
 function postHeartbeat() {
-    fetch("{{ url_for('heartbeat') }}", {
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('heartbeat') }}", {
         method: "POST",
         credentials: "same-origin"
     }).catch(function () {});
@@ -283,9 +284,9 @@ function renderInvitePopup(invite) {
 let lastKnownActiveRoomId = null;
 
 function checkActiveRoom() {
-    if (document.hidden) return;
+    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
 
-    fetch("{{ url_for('api_active_room') }}", {
+    return fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -311,8 +312,8 @@ function checkActiveRoom() {
 
 
 function checkPendingInvites() {
-    if (document.hidden) return;
-    fetch("{{ url_for('api_pending_invites') }}", {
+    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -508,7 +509,8 @@ function updateOnlineFloatingCountSmart() {
 }
 
 function loadBottomChat() {
-    fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -521,34 +523,20 @@ function loadBottomChat() {
 function checkLobbyChatUnread() {
     if (document.hidden || isLobbyChatOpen) return;
 
-    fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
+    const lastRead = getChatLastRead();
+    const url = new URL("{{ url_for('api_global_chat_status') }}", window.location.origin);
+    if (lastRead) url.searchParams.set("since", lastRead);
+
+    return fetch(url.toString(), { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data.ok || !Array.isArray(data.messages)) return;
-
-            const latestTimestamp = data.latest_created_at || newestChatTimestamp(data.messages);
-            const lastRead = getChatLastRead();
-
-            // Lần đầu dùng tính năng: lấy mốc hiện tại, không báo toàn bộ tin cũ.
+            if (!data.ok) return;
             if (!lastRead) {
-                if (latestTimestamp) saveChatLastRead(latestTimestamp);
+                if (data.latest_created_at) saveChatLastRead(data.latest_created_at);
                 setChatUnreadCount(0);
                 return;
             }
-
-            const lastReadMs = Date.parse(lastRead);
-            if (!Number.isFinite(lastReadMs)) {
-                if (latestTimestamp) saveChatLastRead(latestTimestamp);
-                setChatUnreadCount(0);
-                return;
-            }
-
-            const unreadCount = data.messages.filter(function (msg) {
-                const createdMs = Date.parse(msg.created_at || "");
-                return !msg.is_own && Number.isFinite(createdMs) && createdMs > lastReadMs;
-            }).length;
-
-            setChatUnreadCount(unreadCount);
+            setChatUnreadCount(Number(data.unread_count || 0));
         })
         .catch(function () {});
 }
@@ -687,7 +675,8 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkAnnouncement() {
-    fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderAnnouncement(data.announcement);
@@ -731,24 +720,45 @@ function sendAdminAnnouncement() {
     });
 }
 
-postHeartbeat();
-checkAnnouncement();
+// Bộ lập lịch tự thích nghi: không tạo request chồng nhau, dừng khi tab ẩn.
+const RZ_POLL = { timers: {}, running: {} };
+function schedulePoll(name, task, intervalMs, initialDelayMs) {
+    function run() {
+        if (document.hidden || RZ_POLL.running[name]) {
+            RZ_POLL.timers[name] = setTimeout(run, intervalMs);
+            return;
+        }
+        RZ_POLL.running[name] = true;
+        Promise.resolve(task())
+            .catch(function () {})
+            .finally(function () {
+                RZ_POLL.running[name] = false;
+                RZ_POLL.timers[name] = setTimeout(run, intervalMs);
+            });
+    }
+    RZ_POLL.timers[name] = setTimeout(run, initialDelayMs || 0);
+}
 
-setInterval(postHeartbeat, 60000);
-checkPendingInvites();
-setInterval(checkPendingInvites, 3000);
-setInterval(checkActiveRoom, 18000);
-setInterval(loadBottomChatSmart, 45000);
-setInterval(checkLobbyChatUnread, 45000);
-setInterval(checkAnnouncementSmart, 90000);
-setTimeout(checkPendingInvites, 1500);
-setTimeout(checkActiveRoom, 2500);
-setTimeout(checkLobbyChatUnread, 2000);
+const rzIsRoomPage = window.location.pathname.startsWith("/room/");
+schedulePoll("heartbeat", postHeartbeat, 75000, 1000);
+schedulePoll("announcement", checkAnnouncementSmart, 120000, 1200);
+if (!rzIsRoomPage) {
+    schedulePoll("invites", checkPendingInvites, 10000, 700);
+    schedulePoll("activeRoom", checkActiveRoom, 30000, 1800);
+    schedulePoll("chatUnread", checkLobbyChatUnread, 60000, 2200);
+    schedulePoll("bottomChat", loadBottomChatSmart, 12000, 5000);
+}
 
 document.addEventListener("visibilitychange", function () {
     if (document.hidden) return;
-    if (isLobbyChatOpen) loadBottomChat();
-    else checkLobbyChatUnread();
+    postHeartbeat();
+    checkAnnouncementSmart();
+    if (!rzIsRoomPage) {
+        checkPendingInvites();
+        checkActiveRoom();
+        if (isLobbyChatOpen) loadBottomChat();
+        else checkLobbyChatUnread();
+    }
 });
 </script>
 {% endif %}
@@ -757,7 +767,8 @@ document.addEventListener("visibilitychange", function () {
 {% if current_user and not (auth_only|default(false)) %}
 <script>
 function updateOnlineFloatingCount() {
-    fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
+    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -767,8 +778,9 @@ function updateOnlineFloatingCount() {
         .catch(function () {});
 }
 
-updateOnlineFloatingCount();
-setInterval(updateOnlineFloatingCountSmart, 90000);
+if (!window.location.pathname.startsWith("/room/")) {
+    schedulePoll("onlineCount", updateOnlineFloatingCountSmart, 120000, 2600);
+}
 </script>
 {% endif %}
 

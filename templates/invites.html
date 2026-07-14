@@ -79,10 +79,7 @@
 </div>
 
 <script>
-let inviteRoomRequestInFlight = false;
 function checkActiveRoomFromInvitesPage() {
-    if (document.hidden || inviteRoomRequestInFlight) return;
-    inviteRoomRequestInFlight = true;
     fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
         credentials: "same-origin"
@@ -92,12 +89,11 @@ function checkActiveRoomFromInvitesPage() {
         if (!data.ok || !data.has_room || !data.room_url || data.auto_redirect === false) return;
         window.location.href = data.room_url;
     })
-    .catch(function () {})
-    .finally(function () { inviteRoomRequestInFlight = false; });
+    .catch(function () {});
 }
 
 setTimeout(checkActiveRoomFromInvitesPage, 1500);
-setInterval(checkActiveRoomFromInvitesPage, 15000);
+setInterval(checkActiveRoomFromInvitesPage, 5000);
 </script>
 
 {% endblock %}

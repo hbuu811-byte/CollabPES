@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.10.42">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.10.41">
 
 <script>
 (function initTheme(){
@@ -226,24 +226,11 @@ function toggleTheme(){
 {% endif %}
 
 <script>
-let lastUserActivityAt = Date.now();
-let heartbeatInFlight = false;
-["click", "keydown", "mousemove", "touchstart"].forEach(function (eventName) {
-    document.addEventListener(eventName, function () {
-        lastUserActivityAt = Date.now();
-    }, { passive: true });
-});
-
 function postHeartbeat() {
-    if (document.hidden || heartbeatInFlight) return;
-    if (Date.now() - lastUserActivityAt > 5 * 60 * 1000) return;
-    heartbeatInFlight = true;
     fetch("{{ url_for('heartbeat') }}", {
         method: "POST",
         credentials: "same-origin"
-    }).catch(function () {}).finally(function () {
-        heartbeatInFlight = false;
-    });
+    }).catch(function () {});
 }
 
 let lastInviteId = null;
@@ -295,10 +282,8 @@ function renderInvitePopup(invite) {
 
 let lastKnownActiveRoomId = null;
 
-let activeRoomRequestInFlight = false;
 function checkActiveRoom() {
-    if (document.hidden || activeRoomRequestInFlight) return;
-    activeRoomRequestInFlight = true;
+    if (document.hidden) return;
 
     fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
@@ -321,15 +306,12 @@ function checkActiveRoom() {
         roomLink.href = data.room_url;
         roomLink.classList.remove("is-hidden");
     })
-    .catch(function () {})
-    .finally(function () { activeRoomRequestInFlight = false; });
+    .catch(function () {});
 }
 
 
-let pendingInvitesRequestInFlight = false;
 function checkPendingInvites() {
-    if (document.hidden || pendingInvitesRequestInFlight) return;
-    pendingInvitesRequestInFlight = true;
+    if (document.hidden) return;
     fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
         credentials: "same-origin"
@@ -349,8 +331,7 @@ function checkPendingInvites() {
             renderInvitePopup(invite);
         }
     })
-    .catch(function () {})
-    .finally(function () { pendingInvitesRequestInFlight = false; });
+    .catch(function () {});
 }
 
 function escapeHtml(text) {
@@ -537,20 +518,16 @@ function loadBottomChat() {
         .catch(function () {});
 }
 
-let chatUnreadRequestInFlight = false;
 function checkLobbyChatUnread() {
-    if (document.hidden || isLobbyChatOpen || chatUnreadRequestInFlight) return;
+    if (document.hidden || isLobbyChatOpen) return;
 
-    const lastRead = getChatLastRead();
-    const url = new URL("{{ url_for('api_global_chat_status') }}", window.location.origin);
-    if (lastRead) url.searchParams.set("after", lastRead);
-
-    chatUnreadRequestInFlight = true;
-    fetch(url.toString(), { credentials: "same-origin" })
+    fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data.ok) return;
-            const latestTimestamp = data.latest_created_at || null;
+            if (!data.ok || !Array.isArray(data.messages)) return;
+
+            const latestTimestamp = data.latest_created_at || newestChatTimestamp(data.messages);
+            const lastRead = getChatLastRead();
 
             // Lần đầu dùng tính năng: lấy mốc hiện tại, không báo toàn bộ tin cũ.
             if (!lastRead) {
@@ -559,10 +536,21 @@ function checkLobbyChatUnread() {
                 return;
             }
 
-            setChatUnreadCount(Number(data.unread_count) || 0);
+            const lastReadMs = Date.parse(lastRead);
+            if (!Number.isFinite(lastReadMs)) {
+                if (latestTimestamp) saveChatLastRead(latestTimestamp);
+                setChatUnreadCount(0);
+                return;
+            }
+
+            const unreadCount = data.messages.filter(function (msg) {
+                const createdMs = Date.parse(msg.created_at || "");
+                return !msg.is_own && Number.isFinite(createdMs) && createdMs > lastReadMs;
+            }).length;
+
+            setChatUnreadCount(unreadCount);
         })
-        .catch(function () {})
-        .finally(function () { chatUnreadRequestInFlight = false; });
+        .catch(function () {});
 }
 
 function sendBottomChat() {
@@ -746,13 +734,13 @@ function sendAdminAnnouncement() {
 postHeartbeat();
 checkAnnouncement();
 
-setInterval(postHeartbeat, 120000);
+setInterval(postHeartbeat, 60000);
 checkPendingInvites();
-setInterval(checkPendingInvites, 15000);
-setInterval(checkActiveRoom, 30000);
-setInterval(loadBottomChatSmart, 60000);
-setInterval(checkLobbyChatUnread, 60000);
-setInterval(checkAnnouncementSmart, 120000);
+setInterval(checkPendingInvites, 3000);
+setInterval(checkActiveRoom, 18000);
+setInterval(loadBottomChatSmart, 45000);
+setInterval(checkLobbyChatUnread, 45000);
+setInterval(checkAnnouncementSmart, 90000);
 setTimeout(checkPendingInvites, 1500);
 setTimeout(checkActiveRoom, 2500);
 setTimeout(checkLobbyChatUnread, 2000);
@@ -780,7 +768,7 @@ function updateOnlineFloatingCount() {
 }
 
 updateOnlineFloatingCount();
-setInterval(updateOnlineFloatingCountSmart, 120000);
+setInterval(updateOnlineFloatingCountSmart, 90000);
 </script>
 {% endif %}
 

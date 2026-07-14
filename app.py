@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from functools import wraps
 from collections import Counter
 import unicodedata
-from threading import Lock
+from threading import Lock, BoundedSemaphore
 
 from dotenv import load_dotenv
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -292,36 +292,51 @@ def ttl_cache_delete(*keys):
             _ttl_cache.pop(key, None)
 
 
+# Giới hạn số kết nối TCP đi Supabase trên cùng một Vercel warm instance.
+# Các API polling có thể đổ vào cùng lúc; nếu tất cả cùng mở socket, Linux có thể
+# trả [Errno 16] Device or resource busy trước khi request kịp tới Supabase.
+_supabase_query_slots = BoundedSemaphore(max(1, int(os.getenv("SUPABASE_MAX_CONCURRENT", "3") or 3)))
+
+
 def execute_query(query, label="Supabase", attempts=4, delay=0.25):
-    """Retry short-lived Vercel/Supabase network failures before returning 500."""
+    """Retry lỗi mạng ngắn hạn và chặn bùng nổ kết nối TCP trên Vercel."""
     last_error = None
 
     for attempt in range(max(1, attempts)):
-        try:
-            return query.execute()
-        except Exception as exc:
-            last_error = exc
-            message = f"{type(exc).__name__}: {exc}".lower()
+        acquired = _supabase_query_slots.acquire(timeout=5)
+        if not acquired:
+            last_error = RuntimeError("Supabase query queue is busy")
+        else:
+            try:
+                return query.execute()
+            except Exception as exc:
+                last_error = exc
+            finally:
+                _supabase_query_slots.release()
 
-            transient = any(token in message for token in (
-                "connecterror",
-                "connection",
-                "server disconnected",
-                "remoteprotocolerror",
-                "timeout",
-                "temporarily",
-                "device or resource busy",
-                "resource busy",
-                "errno 16",
-                "eagain",
-            ))
+        exc = last_error
+        message = f"{type(exc).__name__}: {exc}".lower()
+        transient = any(token in message for token in (
+            "connecterror",
+            "connection",
+            "server disconnected",
+            "remoteprotocolerror",
+            "timeout",
+            "temporarily",
+            "device or resource busy",
+            "resource busy",
+            "errno 16",
+            "eagain",
+            "query queue is busy",
+        ))
 
-            if not transient or attempt >= max(1, attempts) - 1:
-                print(f"{label} failed after {attempt + 1} attempt(s): {exc}")
-                raise
+        if not transient or attempt >= max(1, attempts) - 1:
+            print(f"{label} failed after {attempt + 1} attempt(s): {exc}")
+            raise exc
 
-            # Backoff ngắn: 0.25s, 0.5s, 0.75s...
-            time.sleep(delay * (attempt + 1))
+        # Exponential backoff + jitter để các request không retry cùng một nhịp.
+        sleep_seconds = delay * (2 ** attempt) + random.uniform(0.05, 0.18)
+        time.sleep(sleep_seconds)
 
     raise last_error
 
@@ -874,38 +889,51 @@ def _validate_rank_ranges(raw_ranges):
 
 
 def load_rank_ranges(force=False):
-    """Always load active Rank ranges from Supabase system_settings."""
+    """Đọc Rank từ Supabase; khi mạng chập chờn dùng cache cũ/DEFAULT_RANKS."""
     now = time.time()
-    if not force and _rank_range_cache["value"] is not None and now < _rank_range_cache["expires_at"]:
-        return _rank_range_cache["value"]
-    if db is None:
-        raise RuntimeError("Chưa cấu hình kết nối Supabase để đọc khoảng điểm Rank.")
+    cached_value = _rank_range_cache.get("value")
+    if not force and cached_value is not None and now < _rank_range_cache["expires_at"]:
+        return cached_value
 
-    result = execute_query(
-        db.table("system_settings").select("setting_value").eq("setting_key", RANK_RANGE_SETTING_KEY).limit(1),
-        "load_rank_ranges",
-        attempts=3,
-    )
-    if not result.data:
-        # Tự tạo cấu hình lần đầu để không cần chạy hoặc lưu file SQL trên GitHub.
-        execute_query(
-            db.table("system_settings").upsert({
-                "setting_key": RANK_RANGE_SETTING_KEY,
-                "setting_value": DEFAULT_RANKS,
-                "updated_at": now_iso(),
-            }, on_conflict="setting_key"),
-            "seed_rank_ranges",
+    # Không để context processor làm sập toàn bộ HTML chỉ vì cấu hình Rank chưa đọc được.
+    fallback = cached_value or _validate_rank_ranges(DEFAULT_RANKS)
+    if db is None:
+        return fallback
+
+    try:
+        result = execute_query(
+            db.table("system_settings").select("setting_value").eq("setting_key", RANK_RANGE_SETTING_KEY).limit(1),
+            "load_rank_ranges",
             attempts=3,
         )
-        configured = _validate_rank_ranges(DEFAULT_RANKS)
-    else:
-        stored = result.data[0].get("setting_value")
-        if isinstance(stored, str):
-            stored = json.loads(stored)
-        configured = _validate_rank_ranges(stored)
+        if not result.data:
+            # Seed là best-effort; trang vẫn dùng DEFAULT_RANKS nếu ghi thất bại.
+            try:
+                execute_query(
+                    db.table("system_settings").upsert({
+                        "setting_key": RANK_RANGE_SETTING_KEY,
+                        "setting_value": DEFAULT_RANKS,
+                        "updated_at": now_iso(),
+                    }, on_conflict="setting_key"),
+                    "seed_rank_ranges",
+                    attempts=2,
+                )
+            except Exception as exc:
+                print(f"seed_rank_ranges warning: {exc}")
+            configured = fallback
+        else:
+            stored = result.data[0].get("setting_value")
+            if isinstance(stored, str):
+                stored = json.loads(stored)
+            configured = _validate_rank_ranges(stored)
 
-    _rank_range_cache.update({"value": configured, "expires_at": now + 30})
-    return configured
+        _rank_range_cache.update({"value": configured, "expires_at": now + 60})
+        return configured
+    except Exception as exc:
+        print(f"load_rank_ranges fallback warning: {exc}")
+        # Cache fallback ngắn để tránh mỗi request tiếp theo lại mở thêm 3 kết nối.
+        _rank_range_cache.update({"value": fallback, "expires_at": now + 15})
+        return fallback
 
 
 def get_rank_ranges():
@@ -2014,9 +2042,13 @@ def list_matches(status=None):
 
     cached = cache_get("_rz_matches_all")
     if cached is None:
-        query = db.table("matches").select("*").order("created_at", desc=True)
-        result = execute_query(query, "list_matches")
-        cached = result.data or []
+        shared = ttl_cache_get("matches_raw")
+        if shared is None:
+            query = db.table("matches").select("*").order("created_at", desc=True)
+            result = execute_query(query, "list_matches")
+            shared = result.data or []
+            ttl_cache_set("matches_raw", shared, 8)
+        cached = [dict(row) for row in shared]
         cache_set("_rz_matches_all", cached)
 
     matches = [dict(m) for m in cached if not status or m.get("status") == status]
@@ -3734,48 +3766,34 @@ def api_global_chat():
 @app.route("/api/chat/global/status")
 @login_required
 def api_global_chat_status():
-    """Chỉ trả số tin chưa đọc, không gửi lại tối đa 100 bản ghi cho mỗi lần polling."""
+    """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
     user = current_user()
-    last_read = (request.args.get("after") or "").strip()
-
-    latest_result = execute_query(
-        db.table("chat_messages")
-        .select("created_at")
-        .eq("scope", "global")
-        .is_("room_id", "null")
-        .order("created_at", desc=True)
-        .limit(1),
-        "api_global_chat_status_latest",
-    )
-    latest_rows = latest_result.data or []
-    latest_created_at = latest_rows[0].get("created_at") if latest_rows else None
-
-    # Lần đầu mở: frontend chỉ lưu mốc hiện tại, không cần tải danh sách tin cũ.
-    if not last_read:
-        return jsonify({
-            "ok": True,
-            "unread_count": 0,
-            "latest_created_at": latest_created_at,
-            "limit_reached": False,
-        })
-
     limit = 100
     query = (
         db.table("chat_messages")
-        .select("id")
+        .select("id,user_id,created_at")
         .eq("scope", "global")
         .is_("room_id", "null")
-        .neq("user_id", user.get("id"))
-        .gt("created_at", last_read)
+        .order("created_at", desc=True)
         .limit(limit)
     )
-    result = execute_query(query, "api_global_chat_status_unread")
-    rows = result.data or []
+    result = execute_query(query, "api_global_chat_status")
+    rows = list(reversed(result.data or []))
+
+    messages = [
+        {
+            "id": row.get("id"),
+            "created_at": row.get("created_at"),
+            "is_own": row.get("user_id") == user.get("id"),
+        }
+        for row in rows
+    ]
+
     return jsonify({
         "ok": True,
-        "unread_count": len(rows),
-        "latest_created_at": latest_created_at,
-        "limit_reached": len(rows) >= limit,
+        "messages": messages,
+        "latest_created_at": messages[-1]["created_at"] if messages else None,
+        "limit_reached": len(messages) >= limit,
     })
 
 
@@ -3927,15 +3945,8 @@ def api_admin_send_announcement():
 @app.route("/api/online-count")
 @login_required
 def api_online_count():
-    """Đếm online bằng truy vấn nhẹ, không tải toàn bộ users/rank/thành tích."""
-    result = execute_query(
-        db.table("users")
-        .select("is_online,last_seen_at")
-        .eq("role", "player")
-        .eq("is_online", True),
-        "api_online_count_light",
-    )
-    online_count = sum(1 for row in (result.data or []) if is_user_online_now(row))
+    players = list_players(include_admin=False)
+    online_count = sum(1 for player in players if player.get("is_online"))
     return jsonify({"ok": True, "online_count": online_count})
 
 

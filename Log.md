@@ -1,11 +1,11 @@
-## V1.10.42_FAST_ORIGIN_TRANSFER_OPTIMIZATION_NO_SQL
+## V1.10.42_VERCEL_SUPABASE_RESOURCE_BUSY_HOTFIX_NO_SQL
 
-- Giảm tần suất toàn bộ polling gây tải cao trên Vercel: lời mời, trạng thái phòng, chat, active room, heartbeat, unread, thông báo và online count.
-- Dừng request khi tab ẩn; tự cập nhật lại khi quay về tab.
-- Thêm khóa chống request chồng khi kết nối chậm.
-- Tối ưu `/api/online-count`: chỉ truy vấn `is_online,last_seen_at`, không gọi `list_players()`/`select(*)`.
-- Tối ưu `/api/chat/global/status`: chỉ trả số lượng chưa đọc thay vì tối đa 100 message rows.
-- Không cần SQL, không thay đổi dữ liệu, RP, Shop, Kho đồ hoặc logic phòng đấu.
+- Sửa lỗi `/bxh` HTTP 500 do `httpx.ConnectError: [Errno 16] Device or resource busy` trên Vercel.
+- Giới hạn số truy vấn Supabase đồng thời trên mỗi warm instance; mặc định tối đa 3 truy vấn.
+- Retry theo exponential backoff kèm jitter để tránh nhiều request kết nối lại cùng lúc.
+- `load_rank_ranges()` dùng cache cũ hoặc `DEFAULT_RANKS` khi Supabase chập chờn, không còn làm context processor khiến toàn trang lỗi 500.
+- Thêm cache RAM 8 giây cho danh sách trận đấu để giảm truy vấn lặp lại khi nhiều người mở BXH.
+- Có thể cấu hình `SUPABASE_MAX_CONCURRENT`; không cần SQL, không thay đổi database.
 - Rollback: quay lại deployment V1.10.41 nếu cần.
 
 

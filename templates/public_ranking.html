@@ -1,0 +1,150 @@
+{% from "_rank_macros.html" import rank_badge %}
+{% from "_avatar_macros.html" import player_avatar %}
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Bảng xếp hạng công khai PES 2026">
+    <title>Bảng xếp hạng • {{ APP_NAME }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script>
+    (function initTheme(){
+        const saved = localStorage.getItem('pes2026-theme');
+        document.documentElement.dataset.theme = saved || 'dark';
+    })();
+    function toggleTheme(){
+        const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+        document.documentElement.dataset.theme = next;
+        localStorage.setItem('pes2026-theme', next);
+    }
+    </script>
+</head>
+<body class="public-ranking-page public-ranking-home public-ranking-synced">
+<header class="public-ranking-header">
+    <a class="public-ranking-brand" href="{{ url_for('index') }}" aria-label="Trang chủ PES 2026">
+        <strong>PES 2026</strong>
+        <small>CHAMPIONSHIP</small>
+    </a>
+
+    <nav class="public-ranking-nav" aria-label="Điều hướng công khai">
+        <a class="public-nav-link active" href="{{ url_for('ranking') }}">Bảng xếp hạng</a>
+        <button class="public-theme-button" type="button" onclick="toggleTheme()" title="Chuyển giao diện sáng/tối" aria-label="Chuyển giao diện sáng tối">
+            <span class="theme-sun">☀</span><span class="theme-moon">☾</span>
+        </button>
+        <a class="public-login-button" href="{{ url_for('login') }}">Đăng nhập</a>
+    </nav>
+</header>
+
+<main class="public-ranking-main synced-ranking-main">
+<section class="ranking-hero">
+    <div class="ranking-title-wrap">
+        <span class="ranking-star">★</span>
+        <div>
+            <span class="ranking-kicker">PES 2026 CHAMPIONSHIP</span>
+            <h1>TOP 100 BẢNG XẾP HẠNG</h1>
+            <p>Vinh danh những huấn luyện viên có thành tích tốt nhất hệ thống.</p>
+        </div>
+        <span class="ranking-star">★</span>
+    </div>
+
+    {% if players %}
+    <div class="ranking-showcase">
+        <div class="podium-stage podium-stage-cups podium-stage-reference">
+            <div class="podium-reference-wrap">
+                <img class="podium-reference-image" src="{{ url_for('static', filename='podium_top3_reference.png') }}" alt="Top 3 podium cups">
+                <div class="podium-reference-names">
+                    {% if players|length > 1 %}
+                    <div class="podium-name-slot podium-name-slot-second">
+                        <span class="podium-name-engrave">{{ players[1].display_name }}</span>
+                    </div>
+                    {% endif %}
+                    <div class="podium-name-slot podium-name-slot-first">
+                        <span class="podium-name-engrave">{{ players[0].display_name }}</span>
+                    </div>
+                    {% if players|length > 2 %}
+                    <div class="podium-name-slot podium-name-slot-third">
+                        <span class="podium-name-engrave">{{ players[2].display_name }}</span>
+                    </div>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <div class="ranking-board-panel">
+            <form class="ranking-search" method="get" action="{{ url_for('ranking') }}">
+                <input name="q" value="{{ q }}" placeholder="Nhập tên HLV hoặc tài khoản muốn tìm">
+                <select name="rank" aria-label="Lọc theo hạng" onchange="this.form.submit()">
+                    <option value="all">Tất cả hạng</option>
+                    {% for value, label in [('ga','Gà'),('non','Non'),('bao-thu','Báo Thủ'),('moi-tap-choi','Mới Tập Chơi'),('ban-chuyen','Bán Chuyên'),('chuyen-nghiep','Chuyên Nghiệp'),('dang-cap','Đẳng Cấp'),('sieu-sao','Siêu Sao'),('huyen-thoai','Huyền Thoại'),('goat','GOAT')] %}
+                    <option value="{{ value }}" {{ 'selected' if rank_filter == value else '' }}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+                <button class="btn" type="submit">Tìm kiếm</button>
+                {% if q or rank_filter != 'all' %}<a class="btn gray" href="{{ url_for('ranking') }}">Xóa lọc</a>{% endif %}
+            </form>
+
+            <div class="ranking-table-wrap ranking-table-modern-wrap">
+                <table class="ranking-table ranking-table-modern public-ranking-table">
+                    <thead>
+                        <tr>
+                            <th>RANK</th>
+                            <th>TÊN HLV</th>
+                            <th>HẠNG</th>
+                            <th>ĐIỂM</th>
+                            <th>THÀNH TÍCH</th>
+                            <th>5 trận gần nhất</th>
+                            <th>WIN RATE</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for p in players[:100] %}
+                        <tr>
+                            <td>
+                                <strong class="rank-position rank-position-{{ p.position if p.position <= 3 else 'normal' }}">{{ p.position }}</strong>
+                            </td>
+                            <td>
+                                <div class="player-link player-with-avatar leaderboard-player-cell public-player-name">
+                                    {{ player_avatar(p, size='xs') }}
+                                    <span>
+                                        <strong>{{ p.display_name }}</strong>
+                                    </span>
+                                </div>
+                            </td>
+                            <td>{{ rank_badge(p.rank_info) }}</td>
+                            <td><strong class="leaderboard-points">{{ p.rank_points or 0 }}</strong></td>
+                            <td>
+                                <div class="leaderboard-record">
+                                    <span class="record-chip record-chip-win">{{ p.wins or 0 }}T</span>
+                                    <span class="record-chip record-chip-draw">{{ p.draws or 0 }}H</span>
+                                    <span class="record-chip record-chip-loss">{{ p.losses or 0 }}B</span>
+                                </div>
+                            </td>
+                            <td>
+                                <div class="leaderboard-form" aria-label="5 trận gần nhất của {{ p.display_name }}">
+                                    {% for item in p.recent_form|reverse %}
+                                    <span class="form-pill form-pill-{{ item.code }}{% if loop.last %} form-pill-newest{% endif %}" title="{{ item.label }}{% if loop.last %} • Trận mới nhất{% endif %}">{{ item.short }}</span>
+                                    {% endfor %}
+                                    {% for _ in range(5 - (p.recent_form|length)) %}
+                                    <span class="form-pill form-pill-empty">−</span>
+                                    {% endfor %}
+                                </div>
+                            </td>
+                            <td><strong class="leaderboard-winrate">{{ p.winrate }}%</strong></td>
+                        </tr>
+                    {% else %}
+                        <tr><td colspan="7" class="empty-state">Không tìm thấy người chơi phù hợp.</td></tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+    {% else %}
+    <div class="empty-state public-ranking-empty">BXH chưa có dữ liệu người chơi.</div>
+    {% endif %}
+</section>
+</main>
+<footer class="public-ranking-footer">PES 2026 • Bảng xếp hạng công khai</footer>
+</body>
+</html>

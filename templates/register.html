@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block auth %}
+<div class="auth-body">
+    <div class="auth-card">
+        <div class="auth-emblem">PES</div><div class="logo">PES <span>eFootball 2026</span></div>
+        <div class="subtitle">Đăng ký tài khoản player</div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="alert {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        <form method="post">
+            <div class="form-group"><input name="username" maxlength="30" placeholder="Tên tài khoản" required></div>
+            <div class="form-group"><input name="password" type="password" minlength="6" placeholder="Mật khẩu" required></div>
+            <div class="form-group"><input name="zalo_name" maxlength="80" placeholder="Tên Zalo" required></div>
+            <button class="btn full green" type="submit">Gửi đăng ký</button>
+        </form>
+
+        <p class="small">Tài khoản mới phải được Admin duyệt trước khi đăng nhập.</p>
+        <p class="small">Đã có tài khoản? <a href="{{ url_for('login') }}">Đăng nhập</a></p>
+    </div>
+</div>
+{% endblock %}

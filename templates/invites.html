@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% from "_avatar_macros.html" import player_avatar %}
+{% block content %}
+<h1 class="page-title">Mời đấu</h1>
+<p class="page-subtitle">Gửi lời mời thi đấu hạng và xử lý lời mời đến</p>
+
+<div class="panel">
+    <h2>Gửi lời mời</h2>
+    <form method="post" action="{{ url_for('send_invite') }}" class="grid-form">
+        <div>
+            <label>Chọn đối thủ đang online</label>
+            <select name="to_user_id" required>
+                {% for p in players %}
+                <option value="{{ p.id }}">{{ p.display_name }} • {{ p.rank_info.icon }} {{ p.rank_info.name }} • {{ p.rank_points }} điểm</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div class="smart-random-card">
+            <strong>⚖️ Smart Random Rank</strong>
+            <span>Hệ thống tự cân OVR theo chênh lệch rank. Không có chế độ giao hữu.</span>
+        </div>
+        <button class="btn green" type="submit">Gửi lời mời</button>
+    </form>
+    {% if not players %}<p class="small">Hiện chưa có đối thủ online nào để mời.</p>{% endif %}
+</div>
+
+<h2 class="section-title">Lời mời đến</h2>
+<div class="table-wrap">
+<table>
+    <thead><tr><th>Người mời</th><th>Rank</th><th>Điểm</th><th>Cơ chế đội</th><th>Hành động</th></tr></thead>
+    <tbody>
+        {% for inv in received %}
+        <tr>
+            <td><span class="player-with-avatar">{{ player_avatar(name=inv.from_name, avatar_url=inv.from_avatar_url, achievement=inv.from_achievement, size='xs') }}<strong>{{ inv.from_name }}</strong></span></td><td>{{ inv.from_rank }}</td><td>{{ inv.from_points }}</td><td>⚖️ Smart Rank</td>
+            <td>
+                <form class="inline-form" method="post" action="{{ url_for('respond_invite', invite_id=inv.id) }}">
+                    <button class="btn green" name="action" value="accept" type="submit">Chấp nhận</button>
+                    <button class="btn red" name="action" value="reject" type="submit">Từ chối</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<h2 class="section-title">Lời mời đã gửi</h2>
+<div class="table-wrap">
+<table>
+    <thead><tr><th>Gửi tới</th><th>Rank</th><th>Điểm</th><th>Cơ chế đội</th><th>Hành động</th></tr></thead>
+    <tbody>
+        {% for inv in sent %}
+        <tr>
+            <td><span class="player-with-avatar">{{ player_avatar(name=inv.to_name, avatar_url=inv.to_avatar_url, achievement=inv.to_achievement, size='xs') }}<strong>{{ inv.to_name }}</strong></span></td><td>{{ inv.to_rank }}</td><td>{{ inv.to_points }}</td><td>⚖️ Smart Rank</td>
+            <td>
+                <form method="post" action="{{ url_for('cancel_invite', invite_id=inv.id) }}">
+                    <button class="btn red" type="submit">Hủy lời mời</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<h2 class="section-title">Lịch sử lời mời gần đây</h2>
+<div class="table-wrap">
+<table>
+    <thead><tr><th>Người gửi</th><th>Người nhận</th><th>Cơ chế</th><th>Trạng thái</th><th>Thời gian</th></tr></thead>
+    <tbody>
+        {% for inv in history %}
+        <tr>
+            <td><span class="player-with-avatar">{{ player_avatar(name=inv.from_name, avatar_url=inv.from_avatar_url, achievement=inv.from_achievement, size='xs') }}<span>{{ inv.from_name }}</span></span></td><td><span class="player-with-avatar">{{ player_avatar(name=inv.to_name, avatar_url=inv.to_avatar_url, achievement=inv.to_achievement, size='xs') }}<span>{{ inv.to_name }}</span></span></td><td>⚖️ Smart Rank</td>
+            <td><span class="badge {{ inv.status }}">{{ inv.status }}</span></td><td>{{ inv.created_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+</div>
+
+<script>
+function checkActiveRoomFromInvitesPage() {
+    fetch("{{ url_for('api_active_room') }}", {
+        method: "GET",
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (!data.ok || !data.has_room || !data.room_url || data.auto_redirect === false) return;
+        window.location.href = data.room_url;
+    })
+    .catch(function () {});
+}
+
+setTimeout(checkActiveRoomFromInvitesPage, 1500);
+setInterval(checkActiveRoomFromInvitesPage, 5000);
+</script>
+
+{% endblock %}

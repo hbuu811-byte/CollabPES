@@ -1,0 +1,120 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="guide-page">
+    <div class="guide-hero panel">
+        <div>
+            <span class="guide-kicker">PES 2026 • HƯỚNG DẪN NHANH</span>
+            <h1>Bắt đầu thi đấu chỉ trong vài bước</h1>
+            <p>Làm theo hướng dẫn dưới đây để tìm đối thủ, vào phòng, quay CLB và xác nhận kết quả an toàn.</p>
+        </div>
+        <div class="guide-hero-actions">
+            <a class="guide-zalo-card" href="https://zalo.me/g/b21i20icbmhxks1rl3ks" target="_blank" rel="noopener noreferrer" aria-label="Tham gia Nhóm Zalo PES 21 Parsec">
+                <span>Tham gia Nhóm Zalo</span>
+                <img src="{{ url_for('static', filename='zalo_group_qr.png') }}" alt="Mã QR tham gia Nhóm Zalo PES 21 Parsec">
+                <small>Quét mã hoặc bấm vào đây</small>
+            </a>
+            <a class="btn gold guide-start-button" href="{{ url_for('players') }}">Tìm đối thủ ngay</a>
+        </div>
+    </div>
+
+    <div class="guide-step-grid">
+        <article class="guide-step-card panel">
+            <span class="guide-step-number">01</span>
+            <div class="guide-step-icon">👤</div>
+            <h2>Chọn đối thủ</h2>
+            <p>Mở tab <strong>Players</strong>, tìm người đang online rồi bấm <strong>Mời đấu</strong>.</p>
+        </article>
+        <article class="guide-step-card panel">
+            <span class="guide-step-number">02</span>
+            <div class="guide-step-icon">⚔️</div>
+            <h2>Vào phòng đấu</h2>
+            <p>Khi đối thủ chấp nhận, hai người được đưa vào cùng một phòng và chuyển sang trạng thái <strong>Chờ Chủ Phòng Quay</strong>. Không còn nút Sẵn sàng.</p>
+        </article>
+        <article class="guide-step-card panel">
+            <span class="guide-step-number">03</span>
+            <div class="guide-step-icon">🎲</div>
+            <h2>Chọn chế độ</h2>
+            <p>Chủ phòng chọn <strong>Xếp hạng</strong> để tính RP hoặc <strong>Giao hữu</strong> để chọn Tier CLB.</p>
+        </article>
+        <article class="guide-step-card panel">
+            <span class="guide-step-number">04</span>
+            <div class="guide-step-icon">🎮</div>
+            <h2>Thi đấu</h2>
+            <p>Hệ thống quay hai CLB khác nhau, kèm logo, giải đấu, Tier và chỉ số.</p>
+        </article>
+        <article class="guide-step-card panel">
+            <span class="guide-step-number">05</span>
+            <div class="guide-step-icon">📝</div>
+            <h2>Nhập kết quả</h2>
+            <p>Chủ phòng nhập tỷ số.</p>
+        </article>
+        <article class="guide-step-card panel">
+            <span class="guide-step-number">06</span>
+            <div class="guide-step-icon">✅</div>
+            <h2>Xác nhận</h2>
+            <p>Khách kiểm tra rồi xác nhận. Sau đó có thể chọn <strong>Đá tiếp</strong> hoặc <strong>Rời phòng</strong>.</p>
+        </article>
+    </div>
+
+    <div class="guide-two-column">
+        <section class="guide-info-card panel">
+            <div class="guide-section-title"><span>🏆</span><div><h2>Chế độ Xếp hạng</h2><p>Thi đấu có tính thành tích</p></div></div>
+            <ul class="guide-check-list">
+                <li>Thắng cơ bản: <strong>+21 RP</strong>; thua: <strong>−20 RP</strong>; hòa không đổi RP.</li>
+                <li>Cùng Rank không xét chênh lệch RP. Thắng người cao hơn Rank được cộng thêm, tối đa cơ bản +24 RP.</li>
+                <li>Trong 10 trận đầu, không xét Rank/RP đối thủ; trận thắng được nhân ×1,10.</li>
+                <li>Chuỗi thắng giữ thưởng tại mốc 3, 5, 8 và 10 trận: +5, +10, +15, +20.</li>
+                <li>Tổng điểm dương tối đa mỗi trận là +35 RP; nếu chủ phòng thắng, tổng điểm dương nhân ×0,95.</li>
+                <li>CLB, Tier CLB và tỷ số thắng đậm không ảnh hưởng điểm.</li>
+                <li>RP không bao giờ giảm xuống dưới 0.</li>
+                <li>Kết quả được lưu vào lịch sử.</li>
+            </ul>
+        </section>
+        <section class="guide-info-card panel">
+            <div class="guide-section-title"><span>🤝</span><div><h2>Chế độ Giao hữu</h2><p>Đá vui, không ảnh hưởng BXH</p></div></div>
+            <ul class="guide-check-list">
+                <li>Chủ phòng được chọn Tier CLB: S+, S, A+, A, B, C hoặc D.</li>
+                <li>Không cộng hoặc trừ RP.</li>
+                <li>Không lưu vào lịch sử trận đấu.</li>
+                <li>Không cập nhật thắng, hòa, thua hoặc tổng số trận.</li>
+                <li>Kết thúc trận là có thể quay tiếp ngay trong phòng.</li>
+            </ul>
+        </section>
+    </div>
+
+    <section class="guide-rank-system panel">
+        <div class="guide-section-title"><span>🎖️</span><div><h2>Hệ thống Rank</h2><p>Logo rank mới theo phong cách neon esports</p></div></div>
+        <div class="rank-system-grid">
+            {% for rank in RANKS %}
+            <article class="rank-system-card">
+                <img src="{{ url_for('static', filename='ranks/' ~ rank.slug ~ '-card.png') }}" alt="{{ rank.name }}" loading="lazy">
+                <div class="rank-system-copy">
+                    <strong>{{ rank.name }}</strong>
+                    <small>{{ rank.min }}{% if rank.max is not none %}–{{ rank.max }}{% else %}+{% endif %} RP</small>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="guide-rules panel">
+        <div class="guide-section-title"><span>💡</span><div><h2>Lưu ý khi sử dụng phòng đấu</h2><p>Giúp trận đấu diễn ra thuận lợi</p></div></div>
+        <div class="guide-rule-grid">
+            <div><strong>Khách chưa sẵn sàng</strong><span>Có thể hủy sẵn sàng hoặc rời phòng.</span></div>
+            <div><strong>Khách rời phòng</strong><span>Phòng vẫn còn để chủ phòng đợi hoặc mời người khác.</span></div>
+            <div><strong>Chủ phòng muốn rời</strong><span>Bấm Thoát phòng để đóng phòng của mình.</span></div>
+            <div><strong>Phòng không hoạt động</strong><span>Sau 60 phút không có thao tác hoặc tin nhắn mới, phòng sẽ tự đóng.</span></div>
+            <div><strong>Kết quả không đúng</strong><span>Khách có thể gửi tranh chấp thay vì xác nhận.</span></div>
+            <div><strong>Không thấy lời mời</strong><span>Kiểm tra trạng thái online và tải lại trang.</span></div>
+            <div><strong>Điểm chưa thay đổi</strong><span>RP chỉ cập nhật sau khi kết quả được xác nhận.</span></div>
+            <div><strong>Không hoạt động 60 phút</strong><span>Phòng tự đóng dù đang có người trong phòng.</span></div>
+            <div><strong>Bỏ trận Xếp hạng</strong><span>Chủ không nhập kết quả hoặc khách không xác nhận sau 60 phút sẽ bị trừ 20 RP và tính một trận thua.</span></div>
+        </div>
+    </section>
+
+    <div class="guide-footer-actions">
+        <a class="btn gold" href="{{ url_for('players') }}">Tìm đối thủ</a>
+        <a class="btn gray" href="{{ url_for('profile', user_id=current_user.id) }}">Xem hồ sơ của tôi</a>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,12 @@
+{% macro rank_badge(rank) -%}
+<span class="rank-badge rank-{{ rank.slug }}" title="{{ rank.name }}">
+    <span class="rank-icon-image-wrap">
+        <img class="rank-icon-image" src="{{ url_for('static', filename='ranks/' ~ rank.slug ~ '.png') }}" alt="{{ rank.name }} logo" loading="lazy">
+    </span>
+    <span class="rank-badge-copy">
+        <span class="rank-badge-text">{{ rank.name }}</span>
+        <span class="rank-badge-short">{{ rank.short_name or rank.name }}</span>
+        <span class="rank-badge-abbr">{{ rank.abbr or rank.name }}</span>
+    </span>
+</span>
+{%- endmacro %}

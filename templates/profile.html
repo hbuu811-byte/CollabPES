@@ -1,0 +1,409 @@
+{% extends "base.html" %}
+{% from "_rank_macros.html" import rank_badge %}
+{% from "_avatar_macros.html" import player_avatar %}
+{% block content %}
+{% set is_own_profile = current_user.id == player.id %}
+{% set display_name_changes = player.display_name_change_count or 0 %}
+{% set display_name_remaining = [0, 2 - display_name_changes]|max %}
+{% set profile_banner = player.equipped_profile_banner %}
+
+<section class="rzp-profile-hero {% if profile_banner and profile_banner.image_path %}has-profile-banner{% endif %}" {% if profile_banner and profile_banner.image_path %}style="--profile-banner-image: url('{{ url_for('static', filename=profile_banner.image_path) }}');"{% endif %}>
+    <div class="rzp-profile-hero-main">
+        <div class="rzp-profile-avatar-wrap">
+            {{ player_avatar(player, size='xxl') }}
+            <span class="rzp-status-dot {{ 'is-online' if player.is_online else 'is-offline' }}" title="{{ 'Online' if player.is_online else 'Offline' }}"></span>
+        </div>
+        <div class="rzp-profile-title-block">
+            <span class="eyebrow">{{ 'HỒ SƠ CỦA BẠN' if is_own_profile else 'HỒ SƠ PLAYER' }}</span>
+            <h1 class="page-title">{{ player.display_name }}</h1>
+            <div class="profile-rank-line rzp-profile-rank-line">
+                {{ rank_badge(player.rank_info) }}
+                <strong>{{ player.rank_points or 0 }} điểm</strong>
+                <span>Hạng #{{ player.position or '-' }}</span>
+                <span>{{ 'Online' if player.is_online else 'Offline' }}</span>
+            </div>
+            <div class="rzp-profile-chips">
+                <span>@{{ player.username }}</span>
+                <span>{{ player.total_matches or 0 }} trận</span>
+                <span>{{ player.winrate }}% winrate</span>
+                {% if player.featured_achievement %}<span>{{ player.featured_achievement.icon }} {{ player.featured_achievement.name }}</span>{% endif %}
+            </div>
+        </div>
+    </div>
+    <div class="rzp-profile-actions">
+        {% if can_invite %}
+        <form method="post" action="{{ url_for('send_invite') }}">
+            <input type="hidden" name="to_user_id" value="{{ player.id }}">
+            <input type="hidden" name="tier" value="Random">
+            <button class="btn gold" type="submit">⚽ Mời đấu</button>
+        </form>
+        {% elif not is_own_profile and activity %}
+        <span class="presence presence-{{ activity.code }}"><i></i>{{ activity.label }}</span>
+        {% endif %}
+        {% if profile_banner and profile_banner.item_name %}<span class="profile-equipped-banner-pill">🎨 {{ profile_banner.item_name }}</span>{% endif %}
+        {% if is_own_profile %}<a class="btn gray" href="{{ url_for('change_password') }}">🔐 Đổi mật khẩu</a>{% endif %}
+    </div>
+</section>
+
+<div class="rzp-profile-quick-grid">
+    <div><span>Tổng trận</span><strong>{{ player.total_matches or 0 }}</strong></div>
+    <div><span>Thắng</span><strong>{{ player.wins or 0 }}</strong></div>
+    <div><span>Hòa</span><strong>{{ player.draws or 0 }}</strong></div>
+    <div><span>Thua</span><strong>{{ player.losses or 0 }}</strong></div>
+    <div><span>Hiệu số</span><strong>{{ "%+d"|format(player.goal_diff) }}</strong></div>
+    <div><span>Chuỗi</span><strong>{{ player.streak or 0 }}</strong></div>
+</div>
+
+<div class="rzp-profile-shell" data-rzp-profile-tabs>
+    <nav class="rzp-profile-tabs" aria-label="Menu hồ sơ cá nhân">
+        <button class="active" type="button" data-tab-target="overview" aria-selected="true"><span>🏠</span><strong>Tổng quan</strong></button>
+        <button type="button" data-tab-target="achievements" aria-selected="false"><span>🏆</span><strong>Thành tích</strong></button>
+        <button type="button" data-tab-target="history" aria-selected="false"><span>📜</span><strong>Lịch sử</strong></button>
+        <button type="button" data-tab-target="zcoin" aria-selected="false"><span>💰</span><strong>ZCOIN</strong></button>
+        <button type="button" data-tab-target="checkin" aria-selected="false"><span>🎁</span><strong>Điểm danh</strong></button>
+        <button type="button" data-tab-target="account" aria-selected="false"><span>⚙️</span><strong>Tài khoản</strong></button>
+    </nav>
+
+    <section class="rzp-tab-panel active" data-tab-panel="overview">
+        <div class="rzp-tab-head">
+            <div><span class="eyebrow">TỔNG QUAN</span><h2>Trung tâm hồ sơ</h2></div>
+            <p class="small">Tóm tắt nhanh tình trạng thi đấu và những thông tin quan trọng nhất.</p>
+        </div>
+        <div class="rzp-two-col">
+            <article class="panel rzp-focus-card">
+                <div class="section-heading compact-heading">
+                    <div><span class="eyebrow">RANK HIỆN TẠI</span><h2>{{ player.rank_points or 0 }} điểm</h2></div>
+                    {{ rank_badge(player.rank_info) }}
+                </div>
+                {% if player.rank_info.next_rank %}
+                <div class="rank-progress-wrap rzp-progress-wide">
+                    <div class="rank-progress-text">
+                        <span>Lên {{ player.rank_info.next_rank.icon }} {{ player.rank_info.next_rank.name }}</span>
+                        <strong>Còn {{ player.rank_info.points_to_next }} điểm</strong>
+                    </div>
+                    <div class="rank-progress"><span style="width: {{ player.rank_info.progress }}%"></span></div>
+                </div>
+                {% else %}
+                <p class="small">Player này đang ở mốc rank cao nhất hiện tại.</p>
+                {% endif %}
+            </article>
+
+            <article class="panel rzp-focus-card">
+                <span class="eyebrow">PHONG ĐỘ</span>
+                <h2>5 trận gần nhất</h2>
+                <div class="form-dots recent-form-oldest-to-newest" title="Trận mới nhất nằm bên phải">
+                    {% for _ in range(5 - (form|length)) %}<span class="result-empty">−</span>{% endfor %}
+                    {% for result in form|reverse %}
+                    <span class="result-{{ result }}">{{ 'W' if result == 'win' else 'D' if result == 'draw' else 'L' }}</span>
+                    {% endfor %}
+                </div>
+                <small class="recent-form-hint">Cũ nhất ← → Mới nhất</small>
+            </article>
+        </div>
+
+        <div class="rzp-mini-grid">
+            <article class="panel"><span class="eyebrow">ĐỘI RANDOM NHIỀU NHẤT</span><strong>{{ player.favorite_team }}</strong></article>
+            <article class="panel"><span class="eyebrow">ĐỐI THỦ THƯỜNG GẶP</span><strong>{{ player.frequent_opponent }}</strong></article>
+            <article class="panel"><span class="eyebrow">BÀN THẮNG</span><strong>{{ player.goals_for or 0 }} / {{ player.goals_against or 0 }}</strong><small>Ghi bàn / Thủng lưới</small></article>
+        </div>
+
+        {% if h2h %}
+        <article class="panel h2h-panel rzp-h2h-card">
+            <div>
+                <span class="eyebrow">ĐỐI ĐẦU VỚI BẠN</span>
+                <h2>{{ h2h.wins }} thắng • {{ h2h.draws }} hòa • {{ h2h.losses }} thua</h2>
+                <p class="small">Tổng {{ h2h.total }} trận đã xác nhận.</p>
+            </div>
+            <div class="form-dots">
+                {% for m in h2h.recent %}
+                <span class="result-{{ m.result_code }}">{{ 'W' if m.result_code == 'win' else 'D' if m.result_code == 'draw' else 'L' }}</span>
+                {% endfor %}
+            </div>
+        </article>
+        {% endif %}
+    </section>
+
+    <section class="rzp-tab-panel" data-tab-panel="achievements">
+        <div class="rzp-tab-head">
+            <div><span class="eyebrow">THÀNH TÍCH</span><h2>{{ player.achievement_count }} / {{ player.achievements|length }} huy hiệu đã mở khóa</h2></div>
+            {% if player.featured_achievement %}<span class="featured-achievement-pill">{{ player.featured_achievement.icon }} {{ player.featured_achievement.name }}</span>{% endif %}
+        </div>
+        <div class="achievement-grid rzp-achievement-grid">
+            {% for badge in player.achievements %}
+            <article class="achievement-card {{ 'is-unlocked' if badge.unlocked else 'is-locked' }}">
+                <div class="achievement-icon">{{ badge.icon }}</div>
+                <div class="achievement-copy">
+                    <strong>{{ badge.name }}</strong>
+                    <p>{{ badge.description }}</p>
+                    {% if badge.unlocked %}
+                    <span class="achievement-status">Đã mở khóa</span>
+                    {% else %}
+                    <div class="achievement-progress"><span style="width: {{ badge.progress }}%"></span></div>
+                    <small>{{ badge.current }} / {{ badge.threshold }}</small>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+
+    <section class="rzp-tab-panel" data-tab-panel="history">
+        <div class="rzp-tab-head">
+            <div><span class="eyebrow">LỊCH SỬ ĐẤU</span><h2>10 trận gần nhất</h2></div>
+            <p class="small">Kết quả được nhìn từ góc độ của {{ player.display_name }}.</p>
+        </div>
+        <div class="history-list rzp-history-list">
+        {% for m in matches %}
+        <article class="history-card is-mine rzp-history-card">
+            <div class="history-result"><span class="result-pill result-{{ m.result_code }}">{{ m.result_label }}</span><small>{{ m.created_at_display }}</small></div>
+            <div class="history-matchup">
+                <div>
+                    <span class="match-player-inline">{{ player_avatar(player, size='xs') }}<strong>{{ player.display_name }}</strong></span>
+                    <small>{{ m.my_team or '-' }}</small>
+                </div>
+                <strong>{{ m.score_display }}</strong>
+                <div class="right">
+                    <a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.opponent_id) }}"><span>{{ m.opponent_name }}</span>{{ player_avatar(name=m.opponent_name, avatar_url=m.opponent_avatar_url, achievement=m.opponent_achievement, size='xs') }}</a>
+                    <small>{{ m.opponent_team or '-' }}</small>
+                </div>
+            </div>
+            <div class="history-points">
+                {% if m.status == 'confirmed' %}
+                <strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>
+                {% else %}<strong>Không tính điểm</strong>{% endif %}
+                <small>{{ m.status_label }}</small>
+            </div>
+        </article>
+        {% else %}<div class="panel empty-state">Player này chưa có trận nào.</div>{% endfor %}
+        </div>
+    </section>
+
+    <section class="rzp-tab-panel" data-tab-panel="zcoin">
+        <div class="rzp-tab-head">
+            <div><span class="eyebrow">ZCOIN</span><h2>Ví phần thưởng</h2></div>
+            {% if reward_state.setup_required %}<span class="rzp-coming-pill">Cần chạy SQL</span>{% else %}<span class="rzp-live-pill">Đang hoạt động</span>{% endif %}
+        </div>
+        {% if not is_own_profile %}
+        <div class="rzp-placeholder-card"><div class="rzp-placeholder-icon">🔒</div><div><h3>Ví ZCOIN là thông tin cá nhân</h3><p>Chỉ chủ tài khoản mới xem được số dư và lịch sử giao dịch.</p></div></div>
+        {% elif reward_state.setup_required %}
+        <div class="rzp-placeholder-card"><div class="rzp-placeholder-icon">⚙️</div><div><h3>Chưa kích hoạt dữ liệu ZCOIN</h3><p>Hãy chạy file SQL V1.10.15 trong Supabase để bật ví ZCOIN và điểm danh thật.</p></div></div>
+        {% else %}
+        <div class="rzp-zcoin-grid">
+            <article class="panel rzp-zcoin-balance-card">
+                <span class="eyebrow">SỐ DƯ HIỆN TẠI</span>
+                <h2>{{ reward_state.balance }} ZCOIN</h2>
+                <p class="small">ZCOIN nhận từ điểm danh và các nguồn thưởng sau này sẽ hiển thị tại đây.</p>
+                <a class="btn gold small" href="#checkin">🎁 Điểm danh hôm nay</a>
+            </article>
+            <article class="panel rzp-zcoin-history-card">
+                <div class="section-heading compact-heading"><div><span class="eyebrow">LỊCH SỬ GIAO DỊCH</span><h2>Gần đây</h2></div></div>
+                <div class="rzp-zcoin-history-list">
+                    {% for tx in reward_state.transactions %}
+                    <div class="rzp-zcoin-transaction">
+                        <span class="rzp-zcoin-amount {{ 'positive' if (tx.amount or 0) > 0 else 'negative' }}">{{ "%+d"|format(tx.amount or 0) }}</span>
+                        <div><strong>{{ tx.description or 'Giao dịch ZCOIN' }}</strong><small>{{ format_vn_datetime(tx.created_at) }}</small></div>
+                        <em>{{ tx.balance_after or 0 }}</em>
+                    </div>
+                    {% else %}
+                    <div class="empty-state compact-empty">Chưa có giao dịch ZCOIN.</div>
+                    {% endfor %}
+                </div>
+            </article>
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="rzp-tab-panel" data-tab-panel="checkin">
+        <div class="rzp-tab-head">
+            <div><span class="eyebrow">ĐIỂM DANH</span><h2>Nhận thưởng hằng ngày</h2></div>
+            {% if reward_state.setup_required %}<span class="rzp-coming-pill">Cần chạy SQL</span>{% else %}<span class="rzp-live-pill">80–150 ZCOIN/ngày</span>{% endif %}
+        </div>
+        {% if not is_own_profile %}
+        <div class="rzp-placeholder-card"><div class="rzp-placeholder-icon">🔒</div><div><h3>Điểm danh thuộc tài khoản cá nhân</h3><p>Chỉ chủ tài khoản mới có thể điểm danh và nhận ZCOIN.</p></div></div>
+        {% elif reward_state.setup_required %}
+        <div class="rzp-placeholder-card rzp-checkin-preview"><div class="rzp-placeholder-icon">⚙️</div><div><h3>Chưa kích hoạt điểm danh</h3><p>Chạy SQL V1.10.15 để bật nút điểm danh, ví ZCOIN và lịch sử nhận thưởng.</p></div></div>
+        {% else %}
+        <div class="rzp-checkin-live-grid" data-daily-checkin-event="{{ daily_checkin_event.status }}" data-daily-reward="{{ daily_checkin_event.reward }}" data-daily-streak="{{ daily_checkin_event.streak }}" data-daily-balance="{{ daily_checkin_event.balance }}">
+            <article class="panel rzp-checkin-card">
+                <div class="rzp-checkin-icon">🎁</div>
+                <span class="eyebrow">THƯỞNG HÔM NAY</span>
+                <h2>{{ reward_state.reward_min }}–{{ reward_state.reward_max }} ZCOIN</h2>
+                <p class="small">Mỗi tài khoản được điểm danh 1 lần/ngày. Mốc thưởng chuỗi sẽ được bổ sung sau khi hệ thống Cửa Hàng/Kho đồ hoàn thiện.</p>
+                {% if reward_state.claimed_today %}
+                <button class="btn gray" type="button" disabled>✅ Đã điểm danh hôm nay</button>
+                <small class="rzp-checkin-note">Bạn đã nhận {{ reward_state.today_reward }} ZCOIN hôm nay.</small>
+                {% else %}
+                <form method="post" action="{{ url_for('claim_daily_checkin_route') }}">
+                    <button class="btn gold rzp-checkin-button" type="submit">🎉 Điểm danh hôm nay</button>
+                </form>
+                {% endif %}
+            </article>
+            <article class="panel rzp-checkin-stats-card">
+                <span class="eyebrow">CHUỖI ĐIỂM DANH</span>
+                <div class="rzp-checkin-stats">
+                    <div><strong>{{ reward_state.streak }}</strong><span>Ngày liên tiếp</span></div>
+                    <div><strong>{{ reward_state.total_checkins }}</strong><span>Tổng lần</span></div>
+                    <div><strong>{{ reward_state.today_key }}</strong><span>Ngày hiện tại</span></div>
+                </div>
+                <div class="rzp-milestones-muted">
+                    <span>3 ngày</span><span>7 ngày</span><span>15 ngày</span><span>30 ngày</span><span>60 ngày</span><span>365 ngày</span>
+                </div>
+                <p class="small">Các mốc trên hiện chỉ hiển thị tiến trình, chưa phát quà để tránh phá kinh tế trước khi mở Cửa Hàng.</p>
+            </article>
+        </div>
+        {% endif %}
+    </section>
+
+    <section class="rzp-tab-panel" data-tab-panel="account">
+        <div class="rzp-tab-head">
+            <div><span class="eyebrow">TÀI KHOẢN</span><h2>{{ 'Quản lý hồ sơ' if is_own_profile else 'Thông tin công khai' }}</h2></div>
+            {% if is_own_profile %}<a class="btn gold small" href="{{ url_for('change_password') }}">🔐 Đổi mật khẩu</a>{% endif %}
+        </div>
+        <div class="rzp-two-col rzp-account-layout">
+            <section class="panel profile-account-panel">
+                <span class="eyebrow">THÔNG TIN</span>
+                <div class="profile-account-list rzp-account-list">
+                    <div><span>Tài khoản</span><strong>@{{ player.username }}</strong></div>
+                    <div><span>Tên hiển thị</span><strong>{{ player.display_name }}</strong></div>
+                    {% if is_own_profile %}<div><span>Lượt đổi tên còn lại</span><strong>{{ display_name_remaining }} / 2</strong></div>{% endif %}
+                    <div><span>Tên Zalo</span><strong>{{ player.zalo_name or '-' }}</strong></div>
+                    <div><span>Ngày tham gia</span><strong>{{ format_vn_datetime(player.created_at) }}</strong></div>
+                </div>
+            </section>
+
+            {% if is_own_profile %}
+            <section class="panel display-name-manager-panel">
+                <span class="eyebrow">TÊN HIỂN THỊ</span>
+                <h2>Đổi tên hiển thị</h2>
+                <p class="small">Tên này xuất hiện trên BXH, phòng đấu, chat và lịch sử trận. Mỗi tài khoản được đổi tối đa <strong>2 lần</strong>.</p>
+                <form class="display-name-form" method="post" action="{{ url_for('update_display_name') }}">
+                    <input name="display_name" value="{{ player.display_name }}" minlength="2" maxlength="40" {% if display_name_remaining <= 0 %}disabled{% endif %} required>
+                    <button class="btn gold" type="submit" {% if display_name_remaining <= 0 %}disabled{% endif %}>Lưu tên mới</button>
+                </form>
+                {% if display_name_remaining <= 0 %}<small class="limit-reached-note">Bạn đã sử dụng hết lượt đổi tên.</small>{% endif %}
+            </section>
+
+            <section class="panel avatar-manager-panel rzp-avatar-panel">
+                <span class="eyebrow">ẢNH ĐẠI DIỆN</span>
+                <h2>Thêm hoặc thay ảnh</h2>
+                <div class="avatar-manager-preview">
+                    {{ player_avatar(player, size='xxl') }}
+                    <div>
+                        <p>Ảnh sẽ xuất hiện cạnh tên của bạn trên Dashboard, BXH, Players, phòng đấu, chat và lịch sử trận.</p>
+                        <p class="small">JPG, PNG, WEBP • Tối đa 8 MB • Hệ thống tự cắt ảnh vuông.</p>
+                    </div>
+                </div>
+                <form class="avatar-upload-form mobile-safe-avatar-form" method="post" action="{{ url_for('update_profile_avatar') }}" enctype="multipart/form-data">
+                    <label class="avatar-file-label" for="avatarFileInput">
+                        <span>Chọn ảnh mới</span>
+                    </label>
+                    <input id="avatarFileInput" class="mobile-safe-file-input" type="file" name="avatar" accept="image/jpeg,image/png,image/webp,image/*" required>
+                    <small class="avatar-selected-file" id="avatarSelectedFile">Chưa chọn ảnh.</small>
+                    <button class="btn gold" type="submit">Lưu ảnh đại diện</button>
+                </form>
+                {% if player.avatar_url %}
+                <form method="post" action="{{ url_for('delete_profile_avatar') }}" onsubmit="return confirm('Xóa ảnh đại diện hiện tại?');">
+                    <button class="btn danger-outline small" type="submit">Xóa ảnh hiện tại</button>
+                </form>
+                {% endif %}
+            </section>
+            {% endif %}
+        </div>
+    </section>
+</div>
+
+<script>
+(function setupProfileTabs(){
+    const root = document.querySelector('[data-rzp-profile-tabs]');
+    if (!root) return;
+    const buttons = Array.from(root.querySelectorAll('[data-tab-target]'));
+    const panels = Array.from(root.querySelectorAll('[data-tab-panel]'));
+    const validIds = buttons.map((button) => button.dataset.tabTarget);
+
+    function activate(tabId, updateHash) {
+        if (!validIds.includes(tabId)) tabId = 'overview';
+        buttons.forEach((button) => {
+            const active = button.dataset.tabTarget === tabId;
+            button.classList.toggle('active', active);
+            button.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        panels.forEach((panel) => panel.classList.toggle('active', panel.dataset.tabPanel === tabId));
+        if (updateHash && window.history && window.history.replaceState) {
+            window.history.replaceState(null, '', '#' + tabId);
+        }
+    }
+
+    buttons.forEach((button) => button.addEventListener('click', () => activate(button.dataset.tabTarget, true)));
+    activate((window.location.hash || '').replace('#', '') || 'overview', false);
+    window.addEventListener('hashchange', () => activate((window.location.hash || '').replace('#', ''), false));
+})();
+
+(function setupDailyCheckinCelebration(){
+    const root = document.querySelector('[data-daily-checkin-event]');
+    if (!root || root.dataset.dailyCheckinEvent !== 'success') return;
+    const reward = root.dataset.dailyReward || '0';
+    const streak = root.dataset.dailyStreak || '0';
+    const balance = root.dataset.dailyBalance || '0';
+
+    const backdrop = document.createElement('div');
+    backdrop.className = 'rzp-reward-backdrop';
+    backdrop.innerHTML = `
+        <canvas class="rzp-confetti-canvas" aria-hidden="true"></canvas>
+        <div class="rzp-reward-modal" role="dialog" aria-modal="true">
+            <button class="rzp-reward-close" type="button" aria-label="Đóng">×</button>
+            <div class="rzp-reward-burst">🎉</div>
+            <span class="eyebrow">ĐIỂM DANH THÀNH CÔNG</span>
+            <h2>+${reward} ZCOIN</h2>
+            <p>Chuỗi hiện tại: <strong>${streak} ngày</strong></p>
+            <small>Số dư mới: ${balance} ZCOIN</small>
+            <button class="btn gold rzp-reward-ok" type="button">OK</button>
+        </div>`;
+    document.body.appendChild(backdrop);
+
+    const close = () => backdrop.remove();
+    backdrop.querySelector('.rzp-reward-close').addEventListener('click', close);
+    backdrop.querySelector('.rzp-reward-ok').addEventListener('click', close);
+
+    const canvas = backdrop.querySelector('canvas');
+    const ctx = canvas.getContext('2d');
+    const colors = ['#facc15','#22c55e','#38bdf8','#fb7185','#a78bfa','#f97316'];
+    const pieces = [];
+    function resize(){ canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+    resize();
+    window.addEventListener('resize', resize, { once:false });
+    for (let i = 0; i < 130; i++) {
+        pieces.push({x: Math.random()*canvas.width, y: -20-Math.random()*canvas.height*.55, r: 4+Math.random()*7, c: colors[i%colors.length], s: 1.8+Math.random()*4.2, a: Math.random()*Math.PI, spin: -.12+Math.random()*.24});
+    }
+    let frame = 0;
+    function draw(){
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        pieces.forEach(p => {
+            p.y += p.s; p.x += Math.sin((frame+p.r)*0.035)*1.4; p.a += p.spin;
+            ctx.save(); ctx.translate(p.x,p.y); ctx.rotate(p.a); ctx.fillStyle = p.c; ctx.fillRect(-p.r/2,-p.r/2,p.r,p.r*1.7); ctx.restore();
+            if (p.y > canvas.height + 30) { p.y = -20; p.x = Math.random()*canvas.width; }
+        });
+        frame += 1;
+        if (frame < 230 && document.body.contains(backdrop)) requestAnimationFrame(draw);
+    }
+    requestAnimationFrame(draw);
+})();
+
+(function setupMobileAvatarUpload(){
+    const input = document.getElementById('avatarFileInput');
+    const output = document.getElementById('avatarSelectedFile');
+    if (!input || !output) return;
+    input.addEventListener('change', function(){
+        const file = input.files && input.files[0];
+        if (!file) {
+            output.textContent = 'Chưa chọn ảnh.';
+            output.classList.remove('is-selected');
+            return;
+        }
+        const sizeMb = file.size ? (file.size / 1024 / 1024).toFixed(1) : '';
+        output.textContent = file.name + (sizeMb ? ' • ' + sizeMb + ' MB' : '');
+        output.classList.add('is-selected');
+    });
+})();
+
+</script>
+{% endblock %}

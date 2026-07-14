@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_rank_macros.html" import rank_badge %}
+{% from "_avatar_macros.html" import player_avatar %}
+{% block content %}
+<h1 class="page-title">Cộng đồng Player</h1>
+<p class="page-subtitle">Tìm đối thủ, xem hồ sơ và thành tích đối đầu.</p>
+
+<form class="filter-bar" method="get">
+    <input name="q" value="{{ q }}" placeholder="Tìm tên hoặc username...">
+    <select name="status">
+        <option value="all">Mọi trạng thái</option>
+        <option value="ready" {{ 'selected' if status_filter == 'ready' else '' }}>Sẵn sàng</option>
+        <option value="in_room" {{ 'selected' if status_filter == 'in_room' else '' }}>Đang trong phòng</option>
+        <option value="playing" {{ 'selected' if status_filter == 'playing' else '' }}>Đang thi đấu</option>
+        <option value="waiting_confirm" {{ 'selected' if status_filter == 'waiting_confirm' else '' }}>Chờ xác nhận</option>
+        <option value="offline" {{ 'selected' if status_filter == 'offline' else '' }}>Offline</option>
+    </select>
+    <button class="btn" type="submit">Lọc</button>
+    {% if q or status_filter != 'all' %}<a class="btn gray" href="{{ url_for('players') }}">Xóa lọc</a>{% endif %}
+</form>
+
+<div class="table-wrap sticky-table">
+<table>
+    <thead><tr><th>Player</th><th>Rank</th><th>Điểm</th><th>W-D-L</th><th>Winrate</th><th>Trạng thái</th><th>Hoạt động gần nhất</th><th>Hành động</th></tr></thead>
+    <tbody>
+        {% for p in players %}
+        <tr class="{{ 'current-user-row' if p.id == current_user.id else '' }}">
+            <td><a class="player-link player-with-avatar" href="{{ url_for('profile', user_id=p.id) }}">{{ player_avatar(p, size='sm') }}<span class="player-name-stack"><strong>{{ p.display_name }}</strong>{% if p.username != p.display_name %}<small>@{{ p.username }}</small>{% endif %}</span></a></td>
+            <td>{{ rank_badge(p.rank_info) }}</td>
+            <td><strong>{{ p.rank_points or 0 }}</strong></td>
+            <td>{{ p.wins or 0 }}-{{ p.draws or 0 }}-{{ p.losses or 0 }}</td>
+            <td>{{ p.winrate }}%</td>
+            <td><span class="presence presence-{{ p.activity_code }}"><i></i>{{ p.activity_label }}</span></td>
+            <td class="small">{{ 'Đang hoạt động' if p.is_online else p.last_seen_display }}</td>
+            <td class="action-cell">
+                <a class="btn gray small" href="{{ url_for('profile', user_id=p.id) }}">Hồ sơ</a>
+                {% if p.id != current_user.id and p.activity_code == 'ready' %}
+                <form class="inline-form" method="post" action="{{ url_for('send_invite') }}">
+                    <input type="hidden" name="to_user_id" value="{{ p.id }}">
+                    <input type="hidden" name="tier" value="Random">
+                    <button class="btn green small" type="submit">Mời đấu</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% else %}<tr><td colspan="8" class="empty-state">Không tìm thấy player phù hợp.</td></tr>{% endfor %}
+    </tbody>
+</table>
+</div>
+{% endblock %}

@@ -1,3 +1,14 @@
+## V1.10.42_FAST_ORIGIN_TRANSFER_OPTIMIZATION_NO_SQL
+
+- Giảm tần suất toàn bộ polling gây tải cao trên Vercel: lời mời, trạng thái phòng, chat, active room, heartbeat, unread, thông báo và online count.
+- Dừng request khi tab ẩn; tự cập nhật lại khi quay về tab.
+- Thêm khóa chống request chồng khi kết nối chậm.
+- Tối ưu `/api/online-count`: chỉ truy vấn `is_online,last_seen_at`, không gọi `list_players()`/`select(*)`.
+- Tối ưu `/api/chat/global/status`: chỉ trả số lượng chưa đọc thay vì tối đa 100 message rows.
+- Không cần SQL, không thay đổi dữ liệu, RP, Shop, Kho đồ hoặc logic phòng đấu.
+- Rollback: quay lại deployment V1.10.41 nếu cần.
+
+
 ## V1.10.41_PROFILE_BANNER_VISIBILITY_HOTFIX_NO_SQL
 
 - Hotfix hiển thị banner hồ sơ sau khi trang bị: giảm lớp phủ tối quá mạnh khiến banner bị mờ/không thấy rõ.

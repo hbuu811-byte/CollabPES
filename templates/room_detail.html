@@ -428,7 +428,10 @@ function roomHasActiveInput() {
     return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
 }
 
+let roomStateRequestInFlight = false;
 function checkRoomState() {
+    if (document.hidden || roomStateRequestInFlight) return;
+    roomStateRequestInFlight = true;
     fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
         method: "GET",
         credentials: "same-origin"
@@ -460,10 +463,11 @@ function checkRoomState() {
             window.location.reload();
         }
     })
-    .catch(function () {});
+    .catch(function () {})
+    .finally(function () { roomStateRequestInFlight = false; });
 }
 
-setInterval(checkRoomState, 4000);
+setInterval(checkRoomState, 10000);
 </script>
 
 <script>
@@ -503,16 +507,26 @@ function renderRoomChat(messages) {
     box.scrollTop = box.scrollHeight;
 }
 
+let roomChatRequestInFlight = false;
 function loadRoomChat() {
+    if (document.hidden || roomChatRequestInFlight) return;
+    roomChatRequestInFlight = true;
     fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderRoomChat(data.messages);
         })
-        .catch(function () {});
+        .catch(function () {})
+        .finally(function () { roomChatRequestInFlight = false; });
 }
 
 loadRoomChat();
-setInterval(loadRoomChat, 5000);
+setInterval(loadRoomChat, 15000);
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+        checkRoomState();
+        loadRoomChat();
+    }
+});
 </script>
 {% endblock %}

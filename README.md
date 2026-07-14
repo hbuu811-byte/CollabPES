@@ -1,3 +1,22 @@
+## V1.10.42_FAST_ORIGIN_TRANSFER_OPTIMIZATION_NO_SQL
+
+**Mục tiêu:** giảm mạnh Function Invocations và Fast Origin Transfer trên Vercel Hobby mà không làm mất chức năng realtime cần thiết.
+
+**Thay đổi:**
+- Lời mời: 3 giây → 15 giây; trạng thái phòng: 4 giây → 10 giây; chat: 5 giây → 15 giây.
+- Heartbeat: 60 giây → 120 giây và chỉ gửi khi tab đang hiện, người dùng còn hoạt động.
+- Active room: 18 giây → 30 giây; unread chat: 45 giây → 60 giây; thông báo/online: 90 giây → 120 giây.
+- Dừng polling khi tab ẩn và gọi lại ngay khi người dùng quay lại tab.
+- Thêm khóa `in-flight` để không tạo request chồng khi mạng chậm.
+- API số người online chỉ lấy `is_online,last_seen_at`, không còn tải toàn bộ bảng users và thành tích.
+- API chat chưa đọc chỉ trả `unread_count`, không còn trả tối đa 100 bản ghi mỗi lần.
+- `APP_VERSION` và cache CSS cập nhật lên `V1.10.42`.
+
+**SQL:** không cần SQL.
+
+**Commit nên đặt khi upload GitHub:** `V1.10.42_FAST_ORIGIN_TRANSFER_OPTIMIZATION_NO_SQL`
+
+
 ## V1.10.41_PROFILE_BANNER_VISIBILITY_HOTFIX_NO_SQL
 
 **Mục tiêu:** làm banner hồ sơ đã trang bị hiển thị rõ hơn, không còn bị lớp phủ tối che gần hết ảnh.

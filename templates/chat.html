@@ -58,16 +58,23 @@ function renderGlobalChat(messages) {
     box.scrollTop = box.scrollHeight;
 }
 
+let globalChatRequestInFlight = false;
 function loadGlobalChat() {
+    if (document.hidden || globalChatRequestInFlight) return;
+    globalChatRequestInFlight = true;
     fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderGlobalChat(data.messages);
         })
-        .catch(function () {});
+        .catch(function () {})
+        .finally(function () { globalChatRequestInFlight = false; });
 }
 
-setInterval(loadGlobalChat, 5000);
+setInterval(loadGlobalChat, 15000);
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) loadGlobalChat();
+});
 setTimeout(function () {
     const box = document.getElementById("globalChatBox");
     if (box) box.scrollTop = box.scrollHeight;

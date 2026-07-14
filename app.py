@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.41"
+APP_VERSION = "V1.10.42"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -3734,34 +3734,48 @@ def api_global_chat():
 @app.route("/api/chat/global/status")
 @login_required
 def api_global_chat_status():
-    """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
+    """Chỉ trả số tin chưa đọc, không gửi lại tối đa 100 bản ghi cho mỗi lần polling."""
     user = current_user()
-    limit = 100
-    query = (
+    last_read = (request.args.get("after") or "").strip()
+
+    latest_result = execute_query(
         db.table("chat_messages")
-        .select("id,user_id,created_at")
+        .select("created_at")
         .eq("scope", "global")
         .is_("room_id", "null")
         .order("created_at", desc=True)
+        .limit(1),
+        "api_global_chat_status_latest",
+    )
+    latest_rows = latest_result.data or []
+    latest_created_at = latest_rows[0].get("created_at") if latest_rows else None
+
+    # Lần đầu mở: frontend chỉ lưu mốc hiện tại, không cần tải danh sách tin cũ.
+    if not last_read:
+        return jsonify({
+            "ok": True,
+            "unread_count": 0,
+            "latest_created_at": latest_created_at,
+            "limit_reached": False,
+        })
+
+    limit = 100
+    query = (
+        db.table("chat_messages")
+        .select("id")
+        .eq("scope", "global")
+        .is_("room_id", "null")
+        .neq("user_id", user.get("id"))
+        .gt("created_at", last_read)
         .limit(limit)
     )
-    result = execute_query(query, "api_global_chat_status")
-    rows = list(reversed(result.data or []))
-
-    messages = [
-        {
-            "id": row.get("id"),
-            "created_at": row.get("created_at"),
-            "is_own": row.get("user_id") == user.get("id"),
-        }
-        for row in rows
-    ]
-
+    result = execute_query(query, "api_global_chat_status_unread")
+    rows = result.data or []
     return jsonify({
         "ok": True,
-        "messages": messages,
-        "latest_created_at": messages[-1]["created_at"] if messages else None,
-        "limit_reached": len(messages) >= limit,
+        "unread_count": len(rows),
+        "latest_created_at": latest_created_at,
+        "limit_reached": len(rows) >= limit,
     })
 
 
@@ -3913,8 +3927,15 @@ def api_admin_send_announcement():
 @app.route("/api/online-count")
 @login_required
 def api_online_count():
-    players = list_players(include_admin=False)
-    online_count = sum(1 for player in players if player.get("is_online"))
+    """Đếm online bằng truy vấn nhẹ, không tải toàn bộ users/rank/thành tích."""
+    result = execute_query(
+        db.table("users")
+        .select("is_online,last_seen_at")
+        .eq("role", "player")
+        .eq("is_online", True),
+        "api_online_count_light",
+    )
+    online_count = sum(1 for row in (result.data or []) if is_user_online_now(row))
     return jsonify({"ok": True, "online_count": online_count})
 
 

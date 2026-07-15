@@ -1,3 +1,14 @@
+# V1.10.64 — Giảm delay Quay quân, Xác nhận và Đá tiếp
+
+- Tránh refresh fragment lần hai do Realtime của chính thao tác POST.
+- Realtime đọc state nhẹ trước, chỉ tải fragment khi state_key thực sự thay đổi.
+- Polling khi Realtime hoạt động tăng từ 5 giây lên 15 giây; tab ẩn 30 giây.
+- Không xếp hàng refresh dư nếu state_key đã trùng giao diện hiện tại.
+- `enrich_room()` chỉ query đúng 2 user trong phòng, không tải toàn bộ users.
+- `active_room_for_user()` và `active_match_for_user()` query trực tiếp theo user, không quét toàn bộ rooms/matches.
+- Không thay đổi công thức RP và không cần SQL.
+
+
 # V1.10.63 — Tối ưu phòng đấu giai đoạn 1 và backend nhẹ
 
 - Tạo `get_room_state_light()` cho API polling: chỉ đọc các cột trạng thái cần thiết, không gọi `users_map()`, dữ liệu Rank, achievement, logo CLB hoặc dữ liệu tranh chấp.

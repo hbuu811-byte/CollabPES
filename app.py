@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.63"
+APP_VERSION = "V1.10.64"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -2959,10 +2959,31 @@ def get_room(room_id):
     return room
 
 
+def _room_users(room):
+    """Chỉ lấy đúng hai người trong phòng thay vì tải toàn bộ bảng users."""
+    user_ids = [str(value) for value in (room.get("host_user_id"), room.get("guest_user_id")) if value]
+    if not user_ids:
+        return {}, {}
+    try:
+        result = execute_query(
+            db.table("users").select(USER_PUBLIC_COLUMNS).in_("id", user_ids),
+            "get_room_users",
+            attempts=2,
+        )
+        mapped = {str(item.get("id")): dict(item) for item in (result.data or [])}
+        achievement_map = list_user_achievement_map()
+        for item in mapped.values():
+            item["rank_info"] = get_rank_info(item.get("rank_points", 0))
+            decorate_player_achievements(item, None, achievement_map)
+        return mapped.get(str(room.get("host_user_id")), {}), mapped.get(str(room.get("guest_user_id")), {})
+    except Exception as exc:
+        print(f"get_room_users warning: {type(exc).__name__}: {exc}")
+        users = users_map()
+        return users.get(room.get("host_user_id"), {}), users.get(room.get("guest_user_id"), {})
+
+
 def enrich_room(room):
-    users = users_map()
-    host = users.get(room.get("host_user_id"), {})
-    guest = users.get(room.get("guest_user_id"), {})
+    host, guest = _room_users(room)
 
     raw_room_id = str(room.get("id") or "")
     compact_room_id = "".join(ch for ch in raw_room_id.upper() if ch.isalnum())
@@ -3290,21 +3311,43 @@ def room_is_active(room):
 
 
 def active_room_for_user(user_id, exclude_room_id=None):
-    rooms = list_rooms()
-    for room in rooms:
-        if exclude_room_id and str(room.get("id")) == str(exclude_room_id):
+    """Query trực tiếp phòng của user; không tải và enrich toàn bộ danh sách phòng."""
+    if not user_id:
+        return None
+    active_statuses = ["waiting_ready", "playing", "friendly_playing", "waiting_result_confirm", "disputed"]
+    query = (
+        db.table("match_rooms")
+        .select("*")
+        .or_(f"host_user_id.eq.{user_id},guest_user_id.eq.{user_id}")
+        .in_("status", active_statuses)
+        .order("updated_at", desc=True)
+        .limit(3)
+    )
+    result = execute_query(query, "active_room_for_user_direct", attempts=2)
+    for raw in result.data or []:
+        if exclude_room_id and str(raw.get("id")) == str(exclude_room_id):
             continue
-        if room_is_active(room) and user_id in [room.get("host_user_id"), room.get("guest_user_id")]:
+        room = expire_room_if_needed(dict(raw))
+        if room_is_active(room):
             return room
     return None
 
 
 def active_match_for_user(user_id):
-    active_statuses = {"playing", "waiting_confirm"}
-    for match in list_matches():
-        if match.get("status") in active_statuses and user_id in [match.get("player1_id"), match.get("player2_id")]:
-            return match
-    return None
+    """Query trực tiếp trận đang hoạt động của user thay vì quét toàn bộ matches."""
+    if not user_id:
+        return None
+    result = execute_query(
+        db.table("matches")
+        .select(MATCH_LIST_COLUMNS)
+        .or_(f"player1_id.eq.{user_id},player2_id.eq.{user_id}")
+        .in_("status", ["playing", "waiting_confirm", "processing_result"])
+        .order("updated_at", desc=True)
+        .limit(1),
+        "active_match_for_user_direct",
+        attempts=2,
+    )
+    return dict(result.data[0]) if result.data else None
 
 
 def busy_user_ids(rooms=None, matches=None):

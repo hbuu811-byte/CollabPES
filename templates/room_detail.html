@@ -9,6 +9,9 @@ var roomSync = {
     pendingRefresh: false,
     realtimeConnected: false,
     lastSuccessAt: Date.now(),
+    lastFragmentAt: 0,
+    ignoreRealtimeUntil: 0,
+    pendingStateKey: "",
     failures: 0
 };
 
@@ -76,9 +79,13 @@ function replaceRoomDynamicState(html) {
 async function refreshRoomDynamicState(options) {
     options = options || {};
     if (roomSync.fragmentRunning) {
-        roomSync.pendingRefresh = true;
+        if (!options.stateKey || options.stateKey !== currentRoomStateKey) {
+            roomSync.pendingRefresh = true;
+            roomSync.pendingStateKey = options.stateKey || roomSync.pendingStateKey;
+        }
         return false;
     }
+    if (options.stateKey && options.stateKey === currentRoomStateKey) return true;
     if (!options.force && roomHasActiveScoreInput()) {
         roomSync.pendingRefresh = true;
         return false;
@@ -100,6 +107,7 @@ async function refreshRoomDynamicState(options) {
         const changed = replaceRoomDynamicState(await response.text());
         if (!changed) throw new Error("invalid_room_fragment");
         roomSync.lastSuccessAt = Date.now();
+        roomSync.lastFragmentAt = Date.now();
         roomSync.failures = 0;
         return true;
     } catch (error) {
@@ -109,8 +117,12 @@ async function refreshRoomDynamicState(options) {
     } finally {
         roomSync.fragmentRunning = false;
         if (roomSync.pendingRefresh && !roomHasActiveScoreInput()) {
+            const pendingKey = roomSync.pendingStateKey;
             roomSync.pendingRefresh = false;
-            setTimeout(function () { refreshRoomDynamicState({ force: true }); }, 120);
+            roomSync.pendingStateKey = "";
+            if (!pendingKey || pendingKey !== currentRoomStateKey) {
+                setTimeout(function () { refreshRoomDynamicState({ force: true, stateKey: pendingKey }); }, 180);
+            }
         }
     }
 }
@@ -140,7 +152,7 @@ async function checkRoomState() {
             renderRoomCountdown(roomCountdownSeconds);
         }
         if (data.state_key !== currentRoomStateKey) {
-            await refreshRoomDynamicState();
+            await refreshRoomDynamicState({ stateKey: data.state_key });
         }
         roomSync.lastSuccessAt = Date.now();
     } catch (error) {
@@ -153,7 +165,7 @@ async function checkRoomState() {
 function roomPollDelay() {
     if (!pollingEnabled) return 15000;
     if (!roomSync.realtimeConnected) return roomSync.failures >= 3 ? 5000 : 2000;
-    return document.hidden ? 20000 : 5000; // Endpoint nhẹ; 5 giây là lớp bảo hiểm khi Realtime bỏ lỡ sự kiện.
+    return document.hidden ? 30000 : 15000; // Realtime là chính; polling chỉ bảo hiểm để giảm request thừa.
 }
 function scheduleRoomStatePoll() {
     setTimeout(async function () {
@@ -179,10 +191,12 @@ function subscribeCurrentRoomRealtime() {
             .on("postgres_changes", {
                 event: "*", schema: "public", table: "match_rooms", filter: "id=eq.{{ room.id }}"
             }, function () {
+                if (Date.now() < roomSync.ignoreRealtimeUntil) return;
                 clearTimeout(window.RZ_ROOM_RUNTIME.stateEventTimer);
                 window.RZ_ROOM_RUNTIME.stateEventTimer = setTimeout(function () {
-                    refreshRoomDynamicState({ force: true });
-                }, 100);
+                    // Đọc state_key nhẹ trước; chỉ tải fragment khi trạng thái thật sự khác.
+                    checkRoomState();
+                }, 120);
             })
             .subscribe(function (status) {
                 roomSync.realtimeConnected = status === "SUBSCRIBED";
@@ -229,6 +243,9 @@ document.addEventListener("submit", async function (event) {
         if (!response.ok) throw new Error("form_http_" + response.status);
         if (response.status === 204) return;
         if (!replaceRoomDynamicState(await response.text())) throw new Error("invalid_form_fragment");
+        // Tránh Realtime của chính POST vừa gửi làm tải lại fragment lần thứ hai.
+        roomSync.ignoreRealtimeUntil = Date.now() + 1800;
+        roomSync.lastFragmentAt = Date.now();
     } catch (error) {
         console.warn("Gửi thao tác nhanh thất bại, chuyển sang submit chuẩn.", error);
         form.removeAttribute("data-room-async");

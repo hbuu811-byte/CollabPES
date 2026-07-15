@@ -102,9 +102,46 @@
                         <div class="room-center-state-pill">{{ room.status|replace('_',' ')|title }}</div>
                     {% endif %}
                 {% endif %}
+
+                {% if room.status == 'waiting_ready' and current_user.id == room.guest_user_id %}
+                <div class="room-center-primary-actions">
+                    {% if not room.guest_ready %}
+                    <form method="post" action="{{ url_for('room_guest_ready', room_id=room.id) }}">
+                        <button class="btn green" type="submit">Sẵn Sàng</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="{{ url_for('room_guest_unready', room_id=room.id) }}">
+                        <button class="btn gray" type="submit">Hủy Sẵn Sàng</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn đã chấp nhận vào phòng. Thoát lúc này được tính là Bỏ Cuộc và bị trừ 20 RP. Tiếp tục?');">
+                        <button class="btn red" type="submit">Thoát Phòng</button>
+                    </form>
+                </div>
+                {% endif %}
+
+                {% if room.status == 'confirmed' and current_user.id in [room.host_user_id, room.guest_user_id] %}
+                    {% set center_current_rematch_ready = (current_user.id == room.host_user_id and room.rematch_host_ready) or (current_user.id == room.guest_user_id and room.rematch_guest_ready) %}
+                <div class="room-center-primary-actions room-center-rematch-actions">
+                    {% if center_current_rematch_ready %}
+                    <span class="btn gray">Đã Chọn Đá Tiếp</span>
+                    {% else %}
+                    <form method="post" action="{{ url_for('room_rematch', room_id=room.id) }}">
+                        <button class="btn gold" type="submit">Đá Tiếp</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
+                        <button class="btn red" type="submit">Thoát Phòng</button>
+                    </form>
+                </div>
+                {% endif %}
             {% else %}
                 <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
+                {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
+                <a class="btn gold room-center-invite-btn" href="{{ url_for('players') }}">Mời Đấu</a>
+                {% else %}
                 <div class="room-center-empty-note">Đang chờ đủ 2 người trong phòng</div>
+                {% endif %}
             {% endif %}
         </section>
 
@@ -195,27 +232,12 @@
                 </form>
             </div>
             {% else %}
-            <a class="btn gold" href="{{ url_for('players') }}">👤 Mời đối thủ</a>
-            <p class="small">Phòng đang mở. Hãy chọn một người chơi trong tab Players để gửi lời mời.</p>
+            <p class="small">Nút Mời Đấu đã được đưa vào khu vực giữa sân đấu.</p>
             {% endif %}
         {% endif %}
 
         {% if current_user.id == room.guest_user_id %}
-        <div class="room-guest-control-actions">
-            {% if not room.guest_ready %}
-            <form method="post" action="{{ url_for('room_guest_ready', room_id=room.id) }}">
-                <button class="btn green" type="submit">Sẵn sàng</button>
-            </form>
-            {% else %}
-            <form method="post" action="{{ url_for('room_guest_unready', room_id=room.id) }}">
-                <button class="btn gray" type="submit">Hủy sẵn sàng</button>
-            </form>
-            {% endif %}
-            <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn đã chấp nhận vào phòng. Thoát lúc này được tính là Bỏ Cuộc và bị trừ 20 RP. Tiếp tục?');">
-                <button class="btn red" type="submit">Thoát phòng</button>
-            </form>
-        </div>
-        <p class="small danger-text">Thoát phòng sau khi đã chấp nhận lời mời được tính là bỏ cuộc và bị trừ 20 RP.</p>
+        <p class="small">Các nút Sẵn Sàng và Thoát Phòng được hiển thị ở giữa sân đấu.</p>
         {% elif current_user.id == room.host_user_id %}
         <form class="inline-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}">
             <button class="btn red" type="submit">🚪 Thoát phòng</button>
@@ -278,46 +300,11 @@
     {% endif %}
 
     {% if room.status == "confirmed" %}
-    <h3>✅ Trận đấu đã hoàn tất</h3>
-    <p>{{ room.host_name }} {{ room.host_score }} - {{ room.guest_score }} {{ room.guest_name }}</p>
-
-    {% if current_user.id in [room.host_user_id, room.guest_user_id] %}
-        {% set current_has_rematch_ready = (current_user.id == room.host_user_id and room.rematch_host_ready) or (current_user.id == room.guest_user_id and room.rematch_guest_ready) %}
-        {% set opponent_has_rematch_ready = (current_user.id == room.host_user_id and room.rematch_guest_ready) or (current_user.id == room.guest_user_id and room.rematch_host_ready) %}
-
-        {% if room.rematch_expired %}
-        <p><strong>⌛ Yêu cầu đá tiếp đã hết hạn.</strong></p>
-        <p class="small">Không đủ hai người đồng ý trong 60 giây. Cả hai trở về sảnh chính.</p>
-        {% elif room.rematch_declined %}
-        <p><strong>❌ Một người đã chọn không đá tiếp.</strong></p>
-        <p class="small">Phiên đá tiếp đã kết thúc. Cả hai sẽ trở về sảnh chính.</p>
-        {% elif current_has_rematch_ready %}
-        <span class="btn gray">✅ Đã chọn đá tiếp</span>
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
-            <button class="btn red" type="submit">🚪 Rời phòng</button>
-        </form>
-        <p class="small">Đang chờ đối thủ chọn Đá tiếp hoặc Không đá tiếp.</p>
-        {% else %}
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch', room_id=room.id) }}">
-            <button class="btn gold" type="submit">🔁 Đá tiếp</button>
-        </form>
-        {% if opponent_has_rematch_ready %}
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
-            <button class="btn red" type="submit">🚪 Rời phòng</button>
-        </form>
-        <p class="small">Đối thủ đã chọn đá tiếp. Bạn có thể đồng ý hoặc từ chối; người kia sẽ được thông báo ngay.</p>
-        {% else %}
-        <p class="small">Bấm Đá tiếp để xác nhận sẵn sàng cho trận mới. Khi cả hai đồng ý, chủ phòng có thể Smart Random đội ngay.</p>
-        {% endif %}
-        {% endif %}
-        {% if not current_has_rematch_ready %}
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
-            <button class="btn red" type="submit">🚪 Rời phòng</button>
-        </form>
-        {% endif %}
-    {% else %}
-        <a class="btn gray" href="{{ url_for('dashboard') }}">Về sảnh chính</a>
-    {% endif %}
+    <div class="room-completed-summary">
+        <h3>✅ Trận đấu đã hoàn tất</h3>
+        <p>{{ room.host_name }} {{ room.host_score }} - {{ room.guest_score }} {{ room.guest_name }}</p>
+        <p class="small">Nút Đá Tiếp và Thoát Phòng được hiển thị ngay giữa hai người chơi.</p>
+    </div>
     {% endif %}
 
     {% if room.status == "cancelled" %}
@@ -361,6 +348,13 @@
     {% endif %}
         </div>
 
+    </div>
+</div>
+
+<div id="roomActionOverlay" class="room-action-overlay" hidden aria-live="polite">
+    <div class="room-action-overlay-card">
+        <span class="room-action-spinner"></span>
+        <strong>Đang xử lý...</strong>
     </div>
 </div>
 
@@ -408,6 +402,26 @@ function roomHasActiveInput() {
     return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
 }
 
+function showRoomActionOverlay() {
+    const overlay = document.getElementById("roomActionOverlay");
+    if (!overlay) return;
+    overlay.hidden = false;
+    requestAnimationFrame(function () { overlay.classList.add("is-visible"); });
+}
+
+document.addEventListener("submit", function (event) {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    if (form.closest(".room-view-shell")) {
+        setTimeout(showRoomActionOverlay, 0);
+    }
+});
+
+document.addEventListener("click", function (event) {
+    const link = event.target.closest("a.room-center-invite-btn");
+    if (link) showRoomActionOverlay();
+});
+
 function checkRoomState() {
     fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
         method: "GET",
@@ -437,6 +451,7 @@ function checkRoomState() {
             return;
         }
         if (data.state_key !== currentRoomStateKey && !roomHasActiveInput()) {
+            showRoomActionOverlay();
             window.location.reload();
         }
     })

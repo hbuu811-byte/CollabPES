@@ -1,3 +1,14 @@
+# PES 2026 WEB — V1.10.69 Hybrid Room Controls
+
+## Nâng cấp
+- Giữ nguyên toàn bộ bản V1.10.68 đã hoạt động ổn định.
+- Đưa nút **Mời Đấu** vào chính giữa sân đấu khi chủ phòng đang chờ đối thủ.
+- Khi khách vào phòng: hiển thị **Sẵn Sàng / Hủy Sẵn Sàng** và **Thoát Phòng** ở giữa sân đấu.
+- Sau khi trận hoàn thành: cả chủ và khách đều thấy **Đá Tiếp** và **Thoát Phòng** ở giữa sân đấu.
+- Loại bỏ các nút trùng lặp ở khu vực Điều khiển phòng.
+- Thêm màn phủ tối khi gửi thao tác hoặc khi trạng thái phòng tự tải lại, giúp không còn cảm giác nháy trắng.
+- Không thay đổi cơ chế backend, RP, random đội hoặc xác nhận kết quả.
+
 # PES 2026 WEB — V1.10.68 Hybrid UI Fix
 
 ## Nền tảng

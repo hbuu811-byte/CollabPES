@@ -5321,3 +5321,72 @@ html[data-theme="light"] .rzp-profile-hero.has-profile-banner::after{
     linear-gradient(90deg,rgba(255,255,255,.56),rgba(255,255,255,.15) 46%,rgba(255,255,255,.20)),
     linear-gradient(180deg,rgba(255,255,255,.02),rgba(255,255,255,.34))!important;
 }
+
+/* V1.10.69 — Room center controls + seamless action loading */
+.room-center-primary-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 18px;
+    min-height: 48px;
+}
+.room-center-primary-actions form { margin: 0; }
+.room-center-primary-actions .btn,
+.room-center-invite-btn {
+    min-width: 132px;
+    min-height: 44px;
+    border-radius: 12px;
+    font-size: 14px;
+    text-transform: uppercase;
+    letter-spacing: .02em;
+}
+.room-center-invite-btn {
+    margin-top: 20px;
+    display: inline-flex;
+}
+.room-center-rematch-actions { margin-top: 14px; }
+.room-completed-summary {
+    text-align: center;
+    padding: 8px 0;
+}
+.room-action-overlay[hidden] { display: none !important; }
+.room-action-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 20000;
+    display: grid;
+    place-items: center;
+    background: rgba(3, 9, 20, .92);
+    opacity: 0;
+    transition: opacity .12s ease;
+    pointer-events: all;
+}
+.room-action-overlay.is-visible { opacity: 1; }
+.room-action-overlay-card {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    border: 1px solid #263a56;
+    border-radius: 14px;
+    background: #0b1626;
+    color: #fff;
+    box-shadow: 0 18px 50px rgba(0,0,0,.4);
+}
+.room-action-spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid rgba(255,255,255,.22);
+    border-top-color: #fbbf24;
+    border-radius: 50%;
+    animation: roomActionSpin .65s linear infinite;
+}
+@keyframes roomActionSpin { to { transform: rotate(360deg); } }
+html, body { background-color: #050b15; }
+@media (max-width: 700px) {
+    .room-center-primary-actions { gap: 8px; width: 100%; }
+    .room-center-primary-actions .btn,
+    .room-center-invite-btn { min-width: 118px; min-height: 42px; font-size: 13px; }
+}

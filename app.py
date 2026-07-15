@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "1.10.66 Hybrid UI"
+APP_VERSION = "1.10.67 Hybrid UI Fix"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -170,6 +170,43 @@ LEAGUE_LOGO_ALIASES = {
     "french ligue 1": "ligue_1",
 }
 
+WIN_STREAK_TITLES = {
+    3: "HAT-TRICK!",
+    4: "POKER!",
+    5: "MEGA WIN!",
+    6: "UNSTOPPABLE!",
+    7: "TERMINATOR!",
+    8: "MONSTER WIN!",
+    9: "GODLIKE!",
+    10: "BEYOND GODLIKE!",
+}
+
+
+def get_streak_title(streak):
+    """Return the active win-streak title, or an empty string below 3 wins."""
+    try:
+        value = int(streak or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if value < 3:
+        return ""
+    if value >= 10:
+        return WIN_STREAK_TITLES[10]
+    return WIN_STREAK_TITLES.get(value, "")
+
+
+def get_streak_badge(streak):
+    """Build the compact streak badge expected by room/player templates."""
+    title = get_streak_title(streak)
+    try:
+        value = int(streak or 0)
+    except (TypeError, ValueError):
+        value = 0
+    if not title or value < 3:
+        return None
+    return {"title": title, "count": value, "icon": "🔥"}
+
+
 def normalize_league_key(league_name):
     raw = str(league_name or "").strip().lower().replace("_", " ").replace("-", " ")
     raw = unicodedata.normalize("NFKD", raw)
@@ -183,6 +220,21 @@ def get_league_logo_urls(league_name):
     if not canonical:
         return []
     return [_league_logo_storage_url(filename) for filename in LEAGUE_LOGO_FILE_CANDIDATES.get(canonical, [])]
+
+
+def get_league_logo_path(league_name):
+    """Compatibility helper for the V1.10.15 room flow.
+
+    V1.10.64 uses a list of logo candidates; the older room renderer expects
+    one URL. Return the first candidate and fail safely when no mapping exists.
+    """
+    try:
+        urls = get_league_logo_urls(league_name) or []
+    except Exception:
+        return ""
+    if isinstance(urls, str):
+        return urls
+    return urls[0] if urls else ""
 
 def get_league_logo_url(league_name):
     urls = get_league_logo_urls(league_name)

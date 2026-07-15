@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.47"
+APP_VERSION = "V1.10.48"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -252,7 +252,7 @@ USER_PUBLIC_COLUMNS = ",".join([
     "admin_level", "rank_points", "wins", "draws", "losses", "total_matches",
     "goals_for", "goals_against", "streak",
     "is_online", "last_seen_at", "matchmaking_cooldown_until", "must_change_password",
-    "zcoin_balance", "featured_achievement_id", "created_at"
+    "zcoin_balance", "created_at"
 ])
 
 MATCH_LIST_COLUMNS = ",".join([

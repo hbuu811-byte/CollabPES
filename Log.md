@@ -395,3 +395,11 @@
 - Lịch sử hồ sơ phân trang 20 trận/trang.
 - Giữ nguyên cache BXH, Realtime và cơ chế chống request chồng của các bản tối ưu trước.
 - Không cần chạy SQL.
+
+
+## V1.10.48 — Database Schema Compatibility Hotfix
+
+- Sửa lỗi `/dashboard`, `/players` và `/api/active-room` do truy vấn cột `users.featured_achievement_id` không tồn tại trong Supabase hiện tại.
+- Loại cột tùy chọn không được sử dụng khỏi `USER_PUBLIC_COLUMNS`; vẫn giữ tối ưu chọn đúng cột thay vì quay lại `select("*")`.
+- Không thay đổi database, không cần chạy SQL và không ảnh hưởng Rank Point, phòng đấu, Shop hoặc dữ liệu người dùng.
+- `/api/active-room` hết lỗi 503 vì luồng `list_rooms -> enrich_room -> users_map -> list_players` không còn truy vấn cột sai.

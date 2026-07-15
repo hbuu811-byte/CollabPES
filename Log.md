@@ -1,3 +1,11 @@
+# V1.10.51 — Giao diện quản lý trận đấu gọn hơn + Admin tạo trận thủ công
+
+- Làm gọn giao diện quản lý trận đấu trong Admin để nhìn được nhiều dòng hơn: gộp nút hành động vào cùng một hàng, thêm vùng cuộn riêng và header cố định.
+- Thêm form "Admin tạo trận thủ công": chọn 2 người chơi, đội, chủ phòng, nhập tỉ số, hệ thống sẽ tạo trận + phòng liên kết và áp dụng RP ngay.
+- Giữ nguyên cơ chế tính RP hiện có, không thay đổi công thức.
+- Không cần SQL mới.
+
+
 # V1.10.50 — Sửa xung đột tên cột `mode` với PostgreSQL aggregate
 
 - Sửa lỗi `42809: WITHIN GROUP is required for ordered-set aggregate mode` trên `/matches`, `/profile/<id>`, `/players` và `/admin`.

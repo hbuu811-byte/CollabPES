@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.50"
+APP_VERSION = "V1.10.51"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -7849,6 +7849,142 @@ def _admin_match_redirect(default_tab="matches"):
     if next_url.startswith("/") and not next_url.startswith("//"):
         return redirect(next_url)
     return redirect_admin(default_tab)
+
+
+def _normalize_manual_team_name(value):
+    return str(value or "").strip()[:80]
+
+
+@app.route("/admin/matches/create-manual", methods=["POST"])
+@login_required
+@admin_required
+def admin_create_manual_match():
+    try:
+        player1_id = str(request.form.get("player1_id") or "").strip()
+        player2_id = str(request.form.get("player2_id") or "").strip()
+        host_side = str(request.form.get("host_side") or "player1").strip().lower()
+        score1 = _safe_int(request.form.get("score1"), 0)
+        score2 = _safe_int(request.form.get("score2"), 0)
+        team1 = _normalize_manual_team_name(request.form.get("team1"))
+        team2 = _normalize_manual_team_name(request.form.get("team2"))
+        note = (request.form.get("note") or "Admin tạo trận thủ công.").strip()[:500]
+    except Exception:
+        flash("Dữ liệu tạo trận không hợp lệ.", "danger")
+        return redirect_admin("matches")
+
+    if not player1_id or not player2_id:
+        flash("Vui lòng chọn đủ 2 người chơi.", "danger")
+        return redirect_admin("matches")
+    if player1_id == player2_id:
+        flash("Không thể tạo trận với cùng một người chơi ở hai bên.", "danger")
+        return redirect_admin("matches")
+    if score1 < 0 or score2 < 0:
+        flash("Tỉ số không được âm.", "danger")
+        return redirect_admin("matches")
+
+    player1 = get_user(player1_id)
+    player2 = get_user(player2_id)
+    if not player1 or not player2:
+        flash("Không tìm thấy một trong hai người chơi.", "danger")
+        return redirect_admin("matches")
+    if is_admin_user(player1) or is_admin_user(player2):
+        flash("Chỉ có thể tạo trận thủ công cho tài khoản người chơi.", "danger")
+        return redirect_admin("matches")
+
+    winner_id = player1_id if score1 > score2 else player2_id if score2 > score1 else None
+    loser_id = player2_id if score1 > score2 else player1_id if score2 > score1 else None
+    host_user_id = player1_id if host_side != "player2" else player2_id
+
+    try:
+        match_result = execute_query(
+            db.table("matches").insert({
+                "player1_id": player1_id,
+                "player2_id": player2_id,
+                "score1": score1,
+                "score2": score2,
+                "team1": team1 or None,
+                "team2": team2 or None,
+                "winner_id": winner_id,
+                "loser_id": loser_id,
+                "delta1": 0,
+                "delta2": 0,
+                "status": "waiting_confirm",
+                "submitted_by_id": current_user().get("id"),
+                "note": note,
+                "updated_at": now_iso(),
+            }),
+            "admin_create_manual_match_insert",
+        )
+        match = (match_result.data or [None])[0]
+        if not match:
+            raise RuntimeError("Không tạo được bản ghi trận đấu.")
+
+        execute_query(
+            db.table("match_rooms").insert({
+                "host_user_id": host_user_id,
+                "guest_user_id": player2_id if host_user_id == player1_id else player1_id,
+                "team_tier": SMART_RANDOM_MODE,
+                "match_mode": MATCH_MODE_RANKED,
+                "friendly_tier": "A",
+                "status": "waiting_result_confirm",
+                "guest_ready": True,
+                "match_id": match.get("id"),
+                "host_score": score1 if host_user_id == player1_id else score2,
+                "guest_score": score2 if host_user_id == player1_id else score1,
+                "host_team": team1 if host_user_id == player1_id else team2,
+                "guest_team": team2 if host_user_id == player1_id else team1,
+                "note": "Admin tạo trận thủ công.",
+                "state_expires_at": None,
+                "updated_at": now_iso(),
+            }),
+            "admin_create_manual_room_insert",
+            attempts=2,
+        )
+
+        refreshed = get_match(match.get("id"))
+        if not refreshed:
+            raise RuntimeError("Không đọc lại được trận vừa tạo.")
+        delta1, delta2 = apply_match_result(refreshed)
+        execute_query(
+            db.table("matches").update({"note": note, "updated_at": now_iso()}).eq("id", match.get("id")),
+            "admin_create_manual_match_note",
+            attempts=2,
+        )
+        execute_query(
+            db.table("match_rooms").update({
+                "status": "confirmed",
+                "note": "Admin đã tạo và xác nhận trận thủ công.",
+                "state_expires_at": None,
+                "updated_at": now_iso(),
+            }).eq("match_id", match.get("id")),
+            "admin_create_manual_room_finalize",
+            attempts=2,
+        )
+        ttl_cache_delete("rooms_raw", "players_raw", "matches_raw", "achievement_map")
+        cache_delete("_rz_matches_all")
+        cache_delete("_rz_players_all")
+        cache_delete("_rz_users_map")
+    except Exception as exc:
+        print(f"admin_create_manual_match ERROR: {type(exc).__name__}: {exc}")
+        flash(f"Không thể tạo trận thủ công: {exc}", "danger")
+        return redirect_admin("matches")
+
+    log_admin_action(
+        "Tạo trận thủ công",
+        "match",
+        match.get("id"),
+        details=(
+            f"{player1.get('display_name') or player1.get('username')} {score1}-{score2} "
+            f"{player2.get('display_name') or player2.get('username')}; "
+            f"RP {int(delta1):+d}/{int(delta2):+d}; host={host_user_id}. {note}"
+        ),
+    )
+    flash(
+        f"Đã tạo trận thủ công: {(player1.get('display_name') or player1.get('username'))} {score1}-{score2} "
+        f"{(player2.get('display_name') or player2.get('username'))}. RP {int(delta1):+d}/{int(delta2):+d}.",
+        "success",
+    )
+    return redirect_admin("matches")
 
 
 @app.route("/admin/match/<match_id>/update-result", methods=["POST"])

@@ -6,8 +6,7 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.10.59">
-    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.9.0">
 
 <script>
 (function initTheme(){
@@ -21,18 +20,13 @@ function toggleTheme(){
     localStorage.setItem('pes2026-theme', next);
 }
 </script>
-
-<style>
-.account-admin-role{display:inline-flex;align-items:center;width:max-content;margin-top:5px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.03em}.account-admin-role.owner-role{color:#ffe59a;background:rgba(255,190,43,.14);border:1px solid rgba(255,190,43,.35)}.account-admin-role.subadmin-role{color:#b9d7ff;background:rgba(68,137,255,.13);border:1px solid rgba(68,137,255,.3)}
-.htmx-request{opacity:.72;pointer-events:none}.htmx-save-ok{display:block;margin-top:5px;color:#65e59a;font-weight:700}
-/* V1.10.59 HTMX behavior */
-</style>
 </head>
 <body>
 {% if current_user and not (auth_only|default(false)) %}
 <div class="layout player-app-shell">
     <aside class="sidebar player-sidebar">
         <div class="brand-lockup">
+            <img class="brand-tournament-logo" src="{{ TOURNAMENT_LOGO_URL }}" alt="PES 2026 Championship">
             <div class="brand-wordmark" aria-label="PES 2026">PES 2026</div>
             <div class="app-version">CHAMPIONSHIP • {{ APP_VERSION }}</div>
         </div>
@@ -41,10 +35,14 @@ function toggleTheme(){
             <a class="{{ 'active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}"><span>🏠</span> Dashboard</a>
             <a class="{{ 'active' if request.endpoint == 'ranking' else '' }}" href="{{ url_for('ranking') }}"><span>🏆</span> BXH</a>
             <a class="{{ 'active' if request.endpoint == 'players' else '' }}" href="{{ url_for('players') }}"><span>👤</span> Players</a>
-            <a class="{{ 'active' if request.endpoint == 'shop' else '' }}" href="{{ url_for('shop') }}"><span>🛒</span> Cửa Hàng</a>
+            <a class="{{ 'active' if request.endpoint in ['shop','inventory'] else '' }}" href="{{ url_for('shop') }}"><span>🛒</span> Cửa Hàng</a>
+            <a class="{{ 'active' if request.endpoint == 'inventory' else '' }}" href="{{ url_for('inventory') }}"><span>🎒</span> Kho đồ</a>
             <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📘</span> Hướng dẫn</a>
+            <a class="{{ 'active' if request.endpoint == 'matches' else '' }}" href="{{ url_for('matches') }}"><span>📜</span> Lịch sử</a>
+            <a class="{{ 'active' if request.endpoint == 'profile' else '' }}" href="{{ url_for('profile', user_id=current_user.id) }}"><span>🪪</span> Hồ sơ cá nhân</a>
             <a class="{{ 'active' if request.endpoint == 'change_password' else '' }}" href="{{ url_for('change_password') }}"><span>🔐</span> Đổi mật khẩu</a>
             {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> Admin</a>{% endif %}
+            <a class="logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
         </nav>
 
         <div class="sidebar-system-status"><small>Trạng thái hệ thống</small><strong><i></i> Tất cả hệ thống hoạt động tốt</strong></div>
@@ -113,43 +111,8 @@ function toggleTheme(){
                         {% endif %}
                     </div>
                 </div>
-                <a class="topbar-zcoin-pill" href="{{ url_for('profile', user_id=current_user.id) }}#zcoin" title="Xem ví ZCOIN">
-                    <span class="topbar-zcoin-icon" aria-hidden="true">
-                        <img src="{{ url_for('static', filename='zcoin-logo.png') }}" alt="">
-                    </span>
-                    <strong>{{ '{:,}'.format((current_user.zcoin_balance|default(0, true))|int).replace(',', '.') }}</strong>
-                    <small>ZCOIN</small>
-                </a>
-                <div class="topbar-user-menu-wrap">
-                    <button id="topbarUserMenuButton" class="topbar-profile topbar-profile-button" type="button" onclick="toggleTopbarUserMenu(event)" aria-expanded="false" aria-haspopup="true">
-                        {{ player_avatar(current_user, size='sm') }}
-                        <span>
-                            <strong>{{ current_user.display_name }}</strong>
-                            <small><i></i> Online{% if current_user.admin_level in ['owner','admin'] %} · Admin{% endif %}</small>
-                        </span>
-                        <em>⌄</em>
-                    </button>
-                    <div id="topbarUserDropdown" class="topbar-user-dropdown" hidden>
-                        <div class="topbar-user-card">
-                            {{ player_avatar(current_user, size='md') }}
-                            <div>
-                                <strong>{{ current_user.display_name }}</strong>
-                                <small>@{{ current_user.username }}</small>
-                                {% if current_user.admin_level in ['owner','admin'] %}<span class="account-admin-role">🛡 Admin</span>{% endif %}
-                            </div>
-                        </div>
-                        <div class="topbar-user-menu-list">
-                            <a href="{{ url_for('profile', user_id=current_user.id) }}#account"><span>⚙️</span><strong>Quản lý tài khoản</strong><small>Hồ sơ, tên hiển thị, avatar</small></a>
-                            <a href="{{ url_for('inventory') }}"><span>🎒</span><strong>Kho đồ</strong><small>Khung quản lý vật phẩm</small></a>
-                            <a href="{{ url_for('shop', tab='gift-code') }}"><span>🎟️</span><strong>Gift Code</strong><small>Nhập mã nhận ZCOIN</small></a>
-                            <a href="{{ url_for('profile', user_id=current_user.id) }}#checkin"><span>🎁</span><strong>Điểm danh</strong><small>Nhận ZCOIN hằng ngày</small></a>
-                            <a href="{{ url_for('matches') }}"><span>📜</span><strong>Lịch sử</strong><small>Toàn bộ lịch sử trận đấu</small></a>
-                        </div>
-                        <div class="topbar-user-menu-foot">
-                            <a class="topbar-user-logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
-                        </div>
-                    </div>
-                </div>
+                <a class="topbar-zcoin-pill" href="{{ url_for('profile', user_id=current_user.id) }}#zcoin" title="Ví ZCOIN"><strong>🪙 {{ '{:,}'.format((current_user.zcoin_balance|default(0, true))|int).replace(',', '.') }}</strong></a>
+                <a class="topbar-profile" href="{{ url_for('profile', user_id=current_user.id) }}">{{ player_avatar(current_user, size='sm') }}<span><strong>{{ current_user.display_name }}</strong><small><i></i> Online</small></span><em>⌄</em></a>
             </div>
         </header>
         <div class="app-status-row">
@@ -200,7 +163,7 @@ function toggleTheme(){
 </div>
 
 
-{% if lobby_chat_enabled and request.endpoint != "dashboard" %}
+{% if request.endpoint != "dashboard" %}
 <button id="chatToggleButton" class="chat-floating-toggle" type="button" onclick="toggleLobbyChat()">
     💬 <span id="chatToggleText">Chat sảnh</span>
     <span id="chatUnreadBadge" class="chat-unread-badge" hidden>0</span>
@@ -237,46 +200,8 @@ function toggleTheme(){
 {% endif %}
 
 <script>
-window.IS_LOGGED_IN = {{ "true" if current_user else "false" }};
-window.RZ_LOBBY_CHAT_ENABLED = {{ "true" if lobby_chat_enabled else "false" }};
-window.RZ_REALTIME = {
-    enabled: {{ "true" if SUPABASE_REALTIME_ENABLED else "false" }},
-    url: {{ SUPABASE_PUBLIC_URL|tojson }},
-    anonKey: {{ SUPABASE_PUBLIC_ANON_KEY|tojson }},
-    userId: {{ (current_user.id if current_user else None)|tojson }}
-};
-let pollingEnabled = !document.hidden;
-window.RZ_RUNTIME = window.RZ_RUNTIME || {
-    realtime: { invites: false, rooms: false, announcements: false },
-    realtimeInitStarted: false,
-    realtimeInitDone: false
-};
-document.addEventListener("visibilitychange", () => {
-    pollingEnabled = !document.hidden;
-});
-
-async function safePoll(url, options) {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return null;
-    try {
-        const response = await fetch(url, Object.assign({
-            credentials: "same-origin",
-            cache: "no-store"
-        }, options || {}));
-        return response;
-    } catch (error) {
-        console.warn("Polling failed:", error);
-        return null;
-    }
-}
-</script>
-{% if current_user and SUPABASE_REALTIME_ENABLED %}
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
-{% endif %}
-
-<script>
 function postHeartbeat() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return Promise.resolve();
-    return fetch("{{ url_for('heartbeat') }}", {
+    fetch("{{ url_for('heartbeat') }}", {
         method: "POST",
         credentials: "same-origin"
     }).catch(function () {});
@@ -332,9 +257,9 @@ function renderInvitePopup(invite) {
 let lastKnownActiveRoomId = null;
 
 function checkActiveRoom() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    if (document.hidden) return;
 
-    return fetch("{{ url_for('api_active_room') }}", {
+    fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -360,8 +285,8 @@ function checkActiveRoom() {
 
 
 function checkPendingInvites() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN || window.location.pathname.startsWith("/room/")) return Promise.resolve();
-    return fetch("{{ url_for('api_pending_invites') }}", {
+    if (document.hidden) return;
+    fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -402,15 +327,9 @@ function renderAvatarHtml(url, name, size, achievement) {
     return `<span class="player-avatar avatar-${sizeClass}" title="${safeName}"><span>${initial}</span>${badge}</span>`;
 }
 
-let bottomChatRenderKey = "";
 function renderBottomChat(messages) {
     const box = document.getElementById("bottomGlobalChatBox");
     if (!box) return;
-    const renderKey = (messages || []).map(function (msg) {
-        return [msg.id, msg.created_at, msg.message].join(":");
-    }).join("|");
-    if (renderKey === bottomChatRenderKey) return;
-    bottomChatRenderKey = renderKey;
 
     box.innerHTML = messages.map(function (msg) {
         const adminBadge = ["owner", "admin"].includes(msg.user_role) ? '<span class="badge gold">ADMIN</span>' : '';
@@ -497,33 +416,6 @@ document.addEventListener("click", function(event) {
     if (button) button.setAttribute("aria-expanded", "false");
 });
 
-function toggleTopbarUserMenu(event) {
-    if (event) event.stopPropagation();
-    const panel = document.getElementById("topbarUserDropdown");
-    const button = document.getElementById("topbarUserMenuButton");
-    if (!panel) return;
-    const willOpen = panel.hasAttribute("hidden");
-    panel.toggleAttribute("hidden", !willOpen);
-    if (button) button.setAttribute("aria-expanded", willOpen ? "true" : "false");
-}
-
-document.addEventListener("click", function(event) {
-    const wrap = document.querySelector(".topbar-user-menu-wrap");
-    const panel = document.getElementById("topbarUserDropdown");
-    const button = document.getElementById("topbarUserMenuButton");
-    if (!wrap || !panel || wrap.contains(event.target)) return;
-    panel.setAttribute("hidden", "");
-    if (button) button.setAttribute("aria-expanded", "false");
-});
-
-document.addEventListener("keydown", function(event) {
-    if (event.key !== "Escape") return;
-    const userPanel = document.getElementById("topbarUserDropdown");
-    const userButton = document.getElementById("topbarUserMenuButton");
-    if (userPanel) userPanel.setAttribute("hidden", "");
-    if (userButton) userButton.setAttribute("aria-expanded", "false");
-});
-
 function toggleLobbyChat() {
     const panel = document.getElementById("bottomLobbyChat");
     const button = document.getElementById("chatToggleButton");
@@ -548,23 +440,22 @@ function toggleLobbyChat() {
 }
 
 function loadBottomChatSmart() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN || !isLobbyChatOpen) return;
+    if (document.hidden || !isLobbyChatOpen) return;
     loadBottomChat();
 }
 
 function checkAnnouncementSmart() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return;
+    if (document.hidden) return;
     checkAnnouncement();
 }
 
 function updateOnlineFloatingCountSmart() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return;
+    if (document.hidden) return;
     updateOnlineFloatingCount();
 }
 
 function loadBottomChat() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return Promise.resolve();
-    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+    fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -575,22 +466,36 @@ function loadBottomChat() {
 }
 
 function checkLobbyChatUnread() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN || isLobbyChatOpen) return;
+    if (document.hidden || isLobbyChatOpen) return;
 
-    const lastRead = getChatLastRead();
-    const url = new URL("{{ url_for('api_global_chat_status') }}", window.location.origin);
-    if (lastRead) url.searchParams.set("since", lastRead);
-
-    return fetch(url.toString(), { credentials: "same-origin" })
+    fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data.ok) return;
+            if (!data.ok || !Array.isArray(data.messages)) return;
+
+            const latestTimestamp = data.latest_created_at || newestChatTimestamp(data.messages);
+            const lastRead = getChatLastRead();
+
+            // Lần đầu dùng tính năng: lấy mốc hiện tại, không báo toàn bộ tin cũ.
             if (!lastRead) {
-                if (data.latest_created_at) saveChatLastRead(data.latest_created_at);
+                if (latestTimestamp) saveChatLastRead(latestTimestamp);
                 setChatUnreadCount(0);
                 return;
             }
-            setChatUnreadCount(Number(data.unread_count || 0));
+
+            const lastReadMs = Date.parse(lastRead);
+            if (!Number.isFinite(lastReadMs)) {
+                if (latestTimestamp) saveChatLastRead(latestTimestamp);
+                setChatUnreadCount(0);
+                return;
+            }
+
+            const unreadCount = data.messages.filter(function (msg) {
+                const createdMs = Date.parse(msg.created_at || "");
+                return !msg.is_own && Number.isFinite(createdMs) && createdMs > lastReadMs;
+            }).length;
+
+            setChatUnreadCount(unreadCount);
         })
         .catch(function () {});
 }
@@ -729,8 +634,7 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkAnnouncement() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return Promise.resolve();
-    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
+    fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderAnnouncement(data.announcement);
@@ -774,145 +678,24 @@ function sendAdminAnnouncement() {
     });
 }
 
-// Bộ lập lịch tự thích nghi: không tạo request chồng nhau, dừng khi tab ẩn.
-const RZ_POLL = { timers: {}, running: {} };
-function resolvePollInterval(intervalOrResolver) {
-    try {
-        const value = typeof intervalOrResolver === "function" ? intervalOrResolver() : intervalOrResolver;
-        return Math.max(1000, Number(value) || 30000);
-    } catch (error) {
-        return 30000;
-    }
-}
-function schedulePoll(name, task, intervalOrResolver, initialDelayMs) {
-    function queueNext() {
-        clearTimeout(RZ_POLL.timers[name]);
-        RZ_POLL.timers[name] = setTimeout(run, resolvePollInterval(intervalOrResolver));
-    }
-    function run() {
-        if (!pollingEnabled || !window.IS_LOGGED_IN || RZ_POLL.running[name]) {
-            queueNext();
-            return;
-        }
-        RZ_POLL.running[name] = true;
-        Promise.resolve(task())
-            .catch(function () {})
-            .finally(function () {
-                RZ_POLL.running[name] = false;
-                queueNext();
-            });
-    }
-    RZ_POLL.timers[name] = setTimeout(run, initialDelayMs || 0);
-}
+postHeartbeat();
+checkAnnouncement();
 
-function rzDebounce(name, task, waitMs) {
-    window.RZ_RUNTIME.debounceTimers = window.RZ_RUNTIME.debounceTimers || {};
-    clearTimeout(window.RZ_RUNTIME.debounceTimers[name]);
-    window.RZ_RUNTIME.debounceTimers[name] = setTimeout(function () {
-        if (pollingEnabled) Promise.resolve(task()).catch(function () {});
-    }, waitMs || 120);
-}
+setInterval(postHeartbeat, 60000);
+checkPendingInvites();
+setInterval(checkPendingInvites, 3000);
+setInterval(checkActiveRoom, 18000);
+setInterval(loadBottomChatSmart, 45000);
+setInterval(checkLobbyChatUnread, 45000);
+setInterval(checkAnnouncementSmart, 90000);
+setTimeout(checkPendingInvites, 1500);
+setTimeout(checkActiveRoom, 2500);
+setTimeout(checkLobbyChatUnread, 2000);
 
-function setRealtimeHealth(kind, healthy) {
-    if (!window.RZ_RUNTIME?.realtime) return;
-    window.RZ_RUNTIME.realtime[kind] = Boolean(healthy);
-}
-
-function subscribeWithHealth(channel, kind) {
-    return channel.subscribe(function (status) {
-        if (status === "SUBSCRIBED") setRealtimeHealth(kind, true);
-        if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) setRealtimeHealth(kind, false);
-    });
-}
-
-const rzIsRoomPage = window.location.pathname.startsWith("/room/");
-if (window.IS_LOGGED_IN) {
-    schedulePoll("heartbeat", postHeartbeat, 90000, 800);
-    // Trước khi Realtime đăng ký thành công, fallback chạy nhanh để không tạo delay.
-    schedulePoll("announcement", checkAnnouncementSmart,
-        () => window.RZ_RUNTIME.realtime.announcements ? 300000 : 30000, 1200);
-    if (!rzIsRoomPage) {
-        schedulePoll("invites", checkPendingInvites,
-            () => window.RZ_RUNTIME.realtime.invites ? 120000 : 15000, 700);
-        schedulePoll("activeRoom", checkActiveRoom,
-            () => window.RZ_RUNTIME.realtime.rooms ? 120000 : 15000, 1500);
-        if (window.RZ_LOBBY_CHAT_ENABLED) {
-            schedulePoll("chatUnread", checkLobbyChatUnread, 90000, 2500);
-            if (isLobbyChatOpen) schedulePoll("bottomChat", loadBottomChatSmart, 20000, 4000);
-        }
-    }
-}
-
-function initRankzoneRealtime() {
-    if (window.RZ_RUNTIME.realtimeInitStarted) return window.RZ_RUNTIME.realtimeInitDone;
-    if (!window.IS_LOGGED_IN || !window.RZ_REALTIME?.enabled || !window.supabase?.createClient) return false;
-    window.RZ_RUNTIME.realtimeInitStarted = true;
-    try {
-        const client = window.supabase.createClient(window.RZ_REALTIME.url, window.RZ_REALTIME.anonKey, {
-            auth: { persistSession: false, autoRefreshToken: false },
-            realtime: { params: { eventsPerSecond: 5 } }
-        });
-        window.RZ_SUPABASE = client;
-        const uid = window.RZ_REALTIME.userId;
-        if (uid && !rzIsRoomPage) {
-            subscribeWithHealth(
-                client.channel(`rz-invites-${uid}`)
-                    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_invites', filter: `to_user_id=eq.${uid}` },
-                        () => rzDebounce('invite-event', checkPendingInvites, 100)),
-                'invites'
-            );
-            let roomSubscriptionsReady = 0;
-            function roomStatus(status) {
-                if (status === 'SUBSCRIBED') roomSubscriptionsReady += 1;
-                if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) roomSubscriptionsReady = Math.max(0, roomSubscriptionsReady - 1);
-                setRealtimeHealth('rooms', roomSubscriptionsReady >= 2);
-            }
-            client.channel(`rz-room-host-${uid}`)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `host_user_id=eq.${uid}` },
-                    () => rzDebounce('active-room-event', checkActiveRoom, 100))
-                .subscribe(roomStatus);
-            client.channel(`rz-room-guest-${uid}`)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `guest_user_id=eq.${uid}` },
-                    () => rzDebounce('active-room-event', checkActiveRoom, 100))
-                .subscribe(roomStatus);
-        }
-        subscribeWithHealth(
-            client.channel('rz-announcements')
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_announcements' },
-                    () => rzDebounce('announcement-event', checkAnnouncementSmart, 100)),
-            'announcements'
-        );
-        window.RZ_RUNTIME.realtimeInitDone = true;
-        return true;
-    } catch (error) {
-        window.RZ_RUNTIME.realtimeInitStarted = false;
-        console.warn('Realtime init failed; fallback polling remains active.', error);
-        return false;
-    }
-}
-
-function tryInitRankzoneRealtime(attempt) {
-    if (initRankzoneRealtime()) return;
-    if ((attempt || 0) >= 24 || !window.RZ_REALTIME?.enabled) return;
-    setTimeout(function () { tryInitRankzoneRealtime((attempt || 0) + 1); }, 250);
-}
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { tryInitRankzoneRealtime(0); }, { once: true });
-} else {
-    tryInitRankzoneRealtime(0);
-}
-
-// Khi quay lại tab, đồng bộ ngay thay vì chờ chu kỳ tiếp theo.
 document.addEventListener("visibilitychange", function () {
-    if (!pollingEnabled || !window.IS_LOGGED_IN) return;
-    postHeartbeat();
-    checkAnnouncementSmart();
-    if (!rzIsRoomPage) {
-        checkPendingInvites();
-        checkActiveRoom();
-        if (isLobbyChatOpen) loadBottomChat();
-        else checkLobbyChatUnread();
-    }
+    if (document.hidden) return;
+    if (isLobbyChatOpen) loadBottomChat();
+    else checkLobbyChatUnread();
 });
 </script>
 {% endif %}
@@ -921,8 +704,7 @@ document.addEventListener("visibilitychange", function () {
 {% if current_user and not (auth_only|default(false)) %}
 <script>
 function updateOnlineFloatingCount() {
-    if (!pollingEnabled || !window.IS_LOGGED_IN || window.location.pathname.startsWith("/room/")) return Promise.resolve();
-    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
+    fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -932,9 +714,8 @@ function updateOnlineFloatingCount() {
         .catch(function () {});
 }
 
-if (!window.location.pathname.startsWith("/room/")) {
-    schedulePoll("onlineCount", updateOnlineFloatingCountSmart, 180000, 3200);
-}
+updateOnlineFloatingCount();
+setInterval(updateOnlineFloatingCountSmart, 90000);
 </script>
 {% endif %}
 

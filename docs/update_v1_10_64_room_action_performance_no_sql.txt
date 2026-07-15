@@ -1,0 +1,15 @@
+V1.10.64
+
+Không cần chạy SQL.
+
+Tối ưu các thao tác:
+- Quay quân
+- Xác nhận kết quả
+- Đá tiếp
+
+Kiểm tra sau triển khai:
+1. Mở cùng phòng trên hai trình duyệt.
+2. Bấm Quay quân và đo thời gian cả hai màn hình đổi trạng thái.
+3. Nhập/Xác nhận kết quả và kiểm tra RP chỉ cộng một lần.
+4. Hai người bấm Đá tiếp và kiểm tra phòng trở về waiting_ready.
+5. Kiểm tra Achievement có thể cập nhật chậm hơn thao tác chính vài giây do chạy hậu kỳ.

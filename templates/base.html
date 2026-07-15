@@ -20,6 +20,10 @@ function toggleTheme(){
     localStorage.setItem('pes2026-theme', next);
 }
 </script>
+
+<style>
+.account-admin-role{display:inline-flex;align-items:center;width:max-content;margin-top:5px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.03em}.account-admin-role.owner-role{color:#ffe59a;background:rgba(255,190,43,.14);border:1px solid rgba(255,190,43,.35)}.account-admin-role.subadmin-role{color:#b9d7ff;background:rgba(68,137,255,.13);border:1px solid rgba(68,137,255,.3)}
+</style>
 </head>
 <body>
 {% if current_user and not (auth_only|default(false)) %}
@@ -37,7 +41,7 @@ function toggleTheme(){
             <a class="{{ 'active' if request.endpoint == 'shop' else '' }}" href="{{ url_for('shop') }}"><span>🛒</span> Cửa Hàng</a>
             <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📘</span> Hướng dẫn</a>
             <a class="{{ 'active' if request.endpoint == 'change_password' else '' }}" href="{{ url_for('change_password') }}"><span>🔐</span> Đổi mật khẩu</a>
-            {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> Admin</a>{% endif %}
+            {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> {{ 'Chủ hệ thống' if current_user.admin_level == 'owner' else 'Admin phụ' }}</a>{% endif %}
         </nav>
 
         <div class="sidebar-system-status"><small>Trạng thái hệ thống</small><strong><i></i> Tất cả hệ thống hoạt động tốt</strong></div>
@@ -116,7 +120,10 @@ function toggleTheme(){
                 <div class="topbar-user-menu-wrap">
                     <button id="topbarUserMenuButton" class="topbar-profile topbar-profile-button" type="button" onclick="toggleTopbarUserMenu(event)" aria-expanded="false" aria-haspopup="true">
                         {{ player_avatar(current_user, size='sm') }}
-                        <span><strong>{{ current_user.display_name }}</strong><small><i></i> Online</small></span>
+                        <span>
+                            <strong>{{ current_user.display_name }}</strong>
+                            <small><i></i> Online{% if current_user.admin_level == 'owner' %} · Chủ hệ thống{% elif current_user.admin_level == 'admin' %} · Admin phụ{% endif %}</small>
+                        </span>
                         <em>⌄</em>
                     </button>
                     <div id="topbarUserDropdown" class="topbar-user-dropdown" hidden>
@@ -125,6 +132,11 @@ function toggleTheme(){
                             <div>
                                 <strong>{{ current_user.display_name }}</strong>
                                 <small>@{{ current_user.username }}</small>
+                                {% if current_user.admin_level == 'owner' %}
+                                <span class="account-admin-role owner-role">👑 Chủ hệ thống</span>
+                                {% elif current_user.admin_level == 'admin' %}
+                                <span class="account-admin-role subadmin-role">🛡 Admin phụ</span>
+                                {% endif %}
                             </div>
                         </div>
                         <div class="topbar-user-menu-list">

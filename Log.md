@@ -1,12 +1,20 @@
-# V1.10.52  
-- Loại `mode` khỏi `MATCH_LIST_COLUMNS` vì các màn hình hiện tại không sử dụng `matches.mode`.
-- Giữ nguyên tối ưu chọn đúng cột, không quay lại `select(*)`.
-- Không thay đổi database, RP, lịch sử trận hoặc cấu trúc bảng. Không cần chạy SQL.
+# V1.10.53 — Phân biệt nhãn Chủ hệ thống và Admin phụ
+
+- Thêm cache RAM 8 giây cho danh sách trận đấu để giảm truy vấn lặp lại khi nhiều người mở BXH.
+- Có thể cấu hình `SUPABASE_MAX_CONCURRENT`; không cần SQL, không thay đổi database.
+- Rollback: quay lại deployment V1.10.41 nếu cần.
+
+
+# V1.10.52 — Phân quyền toàn bộ chức năng Admin phụ
+
+- Không render lại toàn bộ danh sách chat nếu dữ liệu không đổi, giảm giật/flicker và giảm thao tác DOM.
+- Bộ đếm thời gian trong phòng dừng khi tab ẩn; khi quay lại tab sẽ đồng bộ trạng thái và chat ngay.
+- Xóa một dòng `return redirect(...)` không bao giờ chạy trong route `/`.
+- Không thay đổi database, Rank Point hoặc cấu trúc bảng.
+
 
 # V1.10.51 — Giao diện quản lý trận đấu gọn hơn + Admin tạo trận thủ công
 
-- Làm gọn giao diện quản lý trận đấu trong Admin để nhìn được nhiều dòng hơn: gộp nút hành động vào cùng một hàng, thêm vùng cuộn riêng và header cố định.
-- Thêm form "Admin tạo trận thủ công": chọn 2 người chơi, đội, chủ phòng, nhập tỉ số, hệ thống sẽ tạo trận + phòng liên kết và áp dụng RP ngay.
 - Giữ nguyên cơ chế tính RP hiện có, không thay đổi công thức.
 - Không cần SQL mới.
 

@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.56"
+APP_VERSION = "V1.10.57"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -7091,7 +7091,12 @@ def admin():
         admin_users = []
         players = []
 
-    admins = [item for item in admin_users if is_admin_user(item)] if owner else []
+    # Chỉ đưa các tài khoản có admin_level=admin vào khu phân quyền.
+    # Owner hiện tại luôn toàn quyền nên không cần render một card rỗng hoặc công tắc quyền.
+    admins = [
+        item for item in admin_users
+        if owner and item.get("admin_level") == "admin"
+    ]
     pending_users = [item for item in players if item.get("account_status") == "pending"] if admin_caps.get("approve_users") else []
 
     all_matches = list_recent_matches(80) if needs_matches else []

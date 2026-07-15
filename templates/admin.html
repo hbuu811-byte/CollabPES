@@ -102,7 +102,7 @@
     <div class="admin-section-heading">
         <div>
             <h2>🛡️ Đội ngũ quản trị</h2>
-            <p class="small">Tất cả tài khoản quản trị đều hiển thị chung là <strong>Admin</strong>. Bạn vẫn có thể bật hoặc tắt riêng từng chức năng.</p>
+            <p class="small">Bật hoặc tắt quyền riêng cho từng tài khoản Admin.</p>
         </div>
         <span class="admin-count">{{ admins|length }}</span>
     </div>
@@ -113,7 +113,6 @@
                 <div><strong>{{ a.username }}</strong><small>{{ a.zalo_name or '-' }}</small></div>
                 <span class="badge success">Admin</span>
             </header>
-            {% if a.admin_level == 'admin' %}
             <form method="post" action="{{ url_for('admin_update_permissions', user_id=a.id) }}" class="admin-permission-form compact-permission-form">
                 {% set saved_permissions = sub_admin_permissions.get(a.id|string, {}) %}
                 <div class="admin-permission-grid compact-permission-grid">
@@ -129,10 +128,9 @@
                     <button class="btn red" type="submit" formaction="{{ url_for('admin_demote_user', user_id=a.id) }}" onclick="return confirm('Gỡ quyền Admin?')">Gỡ quyền Admin</button>
                 </div>
             </form>
-            {% else %}
-            <p class="small admin-full-access-note">Tài khoản Admin hiện tại.</p>
-            {% endif %}
         </article>
+    {% else %}
+        <div class="panel empty-state">Chưa có tài khoản Admin nào để phân quyền.</div>
     {% endfor %}
     </div>
 </div>
@@ -474,7 +472,7 @@
             <div class="admin-section-heading admin-match-head">
                 <div>
                     <h2>🎮 Quản lý trận đấu gần đây</h2>
-                    <p class="small">Bảng gọn hơn để nhìn được nhiều dòng. Sửa tỉ số sẽ xác nhận lại trận và tính lại RP.</p>
+                    <p class="small">Sửa tỷ số, trạng thái hoặc ghi chú ngay trên từng dòng. Dữ liệu được hiển thị gọn để quản lý nhanh.</p>
                 </div>
                 <span class="admin-count">{{ all_matches|length }}</span>
             </div>
@@ -497,11 +495,14 @@
                         <td class="admin-player-cell"><strong>{{ m.player2_name }}</strong><small>{{ m.team2 or '-' }}</small></td>
                         <td><strong class="{{ 'positive' if (m.delta2 or 0) > 0 else 'negative' if (m.delta2 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta2 or 0) }}</strong></td>
                         <td>
-                            {% if admin_caps.edit_matches %}<select form="match-form-{{ m.id }}" name="target_status" class="admin-status-select compact">
-                                <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>confirmed</option>
-                                <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>cancelled</option>
-                            </select>{% endif %}
-                            <span class="badge {{ m.status }}">{{ m.status }}</span>
+                            {% if admin_caps.edit_matches %}
+                            <select form="match-form-{{ m.id }}" name="target_status" class="admin-status-select compact">
+                                <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>Xác nhận</option>
+                                <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>Đã hủy</option>
+                            </select>
+                            {% else %}
+                            <span class="badge {{ m.status }}">{{ 'Xác nhận' if m.status == 'confirmed' else 'Đã hủy' if m.status == 'cancelled' else m.status }}</span>
+                            {% endif %}
                         </td>
                         <td>{% if admin_caps.edit_matches %}<input form="match-form-{{ m.id }}" class="admin-note-input compact" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú">{% else %}<span class="small">{{ m.note or '-' }}</span>{% endif %}</td>
                         <td>
@@ -987,6 +988,39 @@
 .standalone-create-match{max-width:980px;margin:0 auto}
 .standalone-create-match .admin-manual-match-form{display:grid;gap:14px}
 @media (max-width:900px){.admin-account-grid{grid-template-columns:1fr}.compact-permission-grid{grid-template-columns:1fr}.admin-permission-footer{justify-content:stretch;flex-direction:column}.standalone-create-match{max-width:none}}
+</style>
+
+
+<style>
+/* V1.10.57: quyền Admin chỉ hiển thị cho các tài khoản được phân quyền */
+.admin-account-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.admin-account-card{min-width:0;padding:16px}
+.compact-permission-grid{grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.compact-permission-grid .admin-permission-option{min-height:52px;padding:8px 10px}
+.admin-permission-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;margin-top:10px}
+.admin-permission-footer .btn{min-height:38px;padding:8px 14px}
+
+/* Bảng trận: thu các cột lại gần nhau và tránh khoảng trắng dư */
+.admin-match-table-wrap{overflow:auto;max-height:72vh}
+.admin-match-compact-table{width:100%;min-width:980px;table-layout:fixed}
+.admin-match-compact-table th,.admin-match-compact-table td{padding:8px 9px;font-size:13px}
+.admin-match-compact-table th:nth-child(1),.admin-match-compact-table td:nth-child(1){width:15%}
+.admin-match-compact-table th:nth-child(2),.admin-match-compact-table td:nth-child(2){width:5%;text-align:center}
+.admin-match-compact-table th:nth-child(3),.admin-match-compact-table td:nth-child(3){width:10%;text-align:center}
+.admin-match-compact-table th:nth-child(4),.admin-match-compact-table td:nth-child(4){width:15%}
+.admin-match-compact-table th:nth-child(5),.admin-match-compact-table td:nth-child(5){width:5%;text-align:center}
+.admin-match-compact-table th:nth-child(6),.admin-match-compact-table td:nth-child(6){width:11%}
+.admin-match-compact-table th:nth-child(7),.admin-match-compact-table td:nth-child(7){width:22%;min-width:0}
+.admin-match-compact-table th:nth-child(8),.admin-match-compact-table td:nth-child(8){width:17%}
+.admin-status-select.compact{width:100%;min-width:0;padding:8px 26px 8px 9px}
+.admin-note-input.compact{width:100%;min-width:0}
+.admin-match-actions-inline{display:flex;gap:5px;flex-wrap:nowrap}
+.admin-match-actions-inline .btn{padding:8px 10px;min-width:0}
+.admin-score-edit-inline{justify-content:center;gap:4px}
+.score-input.compact{width:48px;padding:7px 4px}
+.admin-player-cell strong,.admin-player-cell small{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@media (max-width:1200px){.admin-account-grid{grid-template-columns:1fr}.admin-match-compact-table{min-width:900px}}
+@media (max-width:760px){.compact-permission-grid{grid-template-columns:1fr}}
 </style>
 
 {% endblock %}

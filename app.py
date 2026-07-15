@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.55"
+APP_VERSION = "V1.10.56"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1951,6 +1951,98 @@ def list_all_users():
     return result.data or []
 
 
+def list_admin_player_picker(limit=1000):
+    """Danh sách player tối thiểu cho form chọn người, không tải thiết bị/IP/admin khác."""
+    require_db()
+    safe_limit = max(50, min(int(limit or 1000), 2000))
+    result = execute_query(
+        db.table("users")
+        .select(USER_PUBLIC_COLUMNS)
+        .eq("role", "player")
+        .eq("account_status", "approved")
+        .order("display_name")
+        .limit(safe_limit),
+        "list_admin_player_picker",
+    )
+    return result.data or []
+
+
+def decorate_matches(rows):
+    """Gắn tên/avatar cho danh sách trận đã có mà không tải lại bảng matches."""
+    matches = [dict(row) for row in (rows or [])]
+    users = users_map()
+    for match in matches:
+        player1 = users.get(match.get("player1_id"), {})
+        player2 = users.get(match.get("player2_id"), {})
+        match["player1_name"] = player1.get("display_name", "Unknown")
+        match["player2_name"] = player2.get("display_name", "Unknown")
+        match["player1_avatar_url"] = player1.get("avatar_url")
+        match["player2_avatar_url"] = player2.get("avatar_url")
+        match["player1_achievement"] = player1.get("featured_achievement")
+        match["player2_achievement"] = player2.get("featured_achievement")
+        match["submitted_by_name"] = users.get(match.get("submitted_by_id"), {}).get("display_name", "")
+        match["winner_name"] = users.get(match.get("winner_id"), {}).get("display_name", "")
+        match["loser_name"] = users.get(match.get("loser_id"), {}).get("display_name", "")
+    return matches
+
+
+def list_recent_matches(limit=80):
+    """Query riêng cho Admin: chỉ lấy số trận cần hiển thị, tránh tải cả bảng."""
+    require_db()
+    safe_limit = max(20, min(int(limit or 80), 200))
+    result = execute_query(
+        db.table("matches")
+        .select(MATCH_LIST_COLUMNS)
+        .order("created_at", desc=True)
+        .limit(safe_limit),
+        "list_recent_matches",
+    )
+    return decorate_matches(result.data or [])
+
+
+def list_admin_active_rooms(limit=80):
+    """Chỉ lấy phòng còn hoạt động cho Admin thay vì toàn bộ lịch sử phòng."""
+    require_db()
+    statuses = ["waiting_ready", "playing", "friendly_playing", "waiting_result_confirm", "disputed"]
+    result = execute_query(
+        db.table("match_rooms")
+        .select("*")
+        .in_("status", statuses)
+        .order("created_at", desc=True)
+        .limit(max(20, min(int(limit or 80), 200))),
+        "list_admin_active_rooms",
+    )
+    rooms = []
+    for raw in (result.data or []):
+        room = expire_room_if_needed(dict(raw))
+        enrich_room(room)
+        rooms.append(room)
+    return rooms
+
+
+def list_admin_pending_invites(limit=100):
+    """Chỉ lấy lời mời pending cho trang Admin."""
+    require_db()
+    result = execute_query(
+        db.table("match_invites")
+        .select("*")
+        .eq("status", "pending")
+        .order("created_at", desc=True)
+        .limit(max(20, min(int(limit or 100), 300))),
+        "list_admin_pending_invites",
+    )
+    rows = []
+    for raw in (result.data or []):
+        invite = expire_invite_if_needed(dict(raw))
+        if invite.get("status") == "pending":
+            rows.append(invite)
+    users = users_map()
+    for invite in rows:
+        invite["from_name"] = users.get(invite.get("from_user_id"), {}).get("display_name", "Unknown")
+        invite["to_name"] = users.get(invite.get("to_user_id"), {}).get("display_name", "Unknown")
+    return rows
+
+
 def log_admin_action(action, target_type="system", target_id=None, target_label="", details=""):
     """Ghi nhật ký quản trị; lỗi ghi log không được làm hỏng thao tác chính."""
     try:
@@ -2220,22 +2312,26 @@ def list_matches(status=None):
         cache_set("_rz_matches_all", cached)
 
     matches = [dict(m) for m in cached if not status or m.get("status") == status]
-    users = users_map()
+    return decorate_matches(matches)
 
-    for match in matches:
-        player1 = users.get(match.get("player1_id"), {})
-        player2 = users.get(match.get("player2_id"), {})
-        match["player1_name"] = player1.get("display_name", "Unknown")
-        match["player2_name"] = player2.get("display_name", "Unknown")
-        match["player1_avatar_url"] = player1.get("avatar_url")
-        match["player2_avatar_url"] = player2.get("avatar_url")
-        match["player1_achievement"] = player1.get("featured_achievement")
-        match["player2_achievement"] = player2.get("featured_achievement")
-        match["submitted_by_name"] = users.get(match.get("submitted_by_id"), {}).get("display_name", "")
-        match["winner_name"] = users.get(match.get("winner_id"), {}).get("display_name", "")
-        match["loser_name"] = users.get(match.get("loser_id"), {}).get("display_name", "")
 
-    return matches
+def list_user_matches_page(user_id, page=1, page_size=20):
+    """Phân trang thật tại Supabase; lấy thêm 1 dòng để biết còn trang sau."""
+    require_db()
+    safe_page = max(1, int(page or 1))
+    safe_size = max(5, min(int(page_size or 20), 50))
+    offset = (safe_page - 1) * safe_size
+    query = (
+        db.table("matches")
+        .select(MATCH_LIST_COLUMNS)
+        .or_(f"player1_id.eq.{user_id},player2_id.eq.{user_id}")
+        .order("created_at", desc=True)
+        .range(offset, offset + safe_size)
+    )
+    result = execute_query(query, "list_user_matches_page")
+    rows = [dict(row) for row in (result.data or [])]
+    has_next = len(rows) > safe_size
+    return decorate_matches(rows[:safe_size]), has_next
 
 
 def list_user_matches(user_id, limit=200):
@@ -4981,16 +5077,14 @@ def profile(user_id):
     viewer = current_user()
     page = max(1, request.args.get("page", 1, type=int) or 1)
     page_size = 20
-    # Chỉ lấy các trận liên quan đến hồ sơ đang xem; không tải toàn bộ bảng matches.
-    player_matches_raw = list_user_matches(user_id, limit=200)
-    start = (page - 1) * page_size
-    page_rows = player_matches_raw[start:start + page_size]
+    # Phân trang ngay tại Supabase: mỗi lần chỉ lấy 20 trận + 1 dòng kiểm tra trang sau.
+    page_rows, has_next = list_user_matches_page(user_id, page=page, page_size=page_size)
     matches = [decorate_match_for_view(match, user_id) for match in page_rows]
     history_pagination = {
         "page": page,
         "page_size": page_size,
         "has_prev": page > 1,
-        "has_next": start + page_size < len(player_matches_raw),
+        "has_next": has_next,
         "prev_page": page - 1,
         "next_page": page + 1,
     }
@@ -6970,30 +7064,38 @@ def redirect_admin(tab="overview"):
 @admin_required
 def admin():
     user = current_user()
-    admin_caps = get_admin_permissions(user, force=True)
+    admin_caps = get_admin_permissions(user)
     owner = is_owner_user(user)
 
-    need_users = owner or any(admin_caps.get(code) for code in (
+    needs_full_user_admin = owner or any(admin_caps.get(code) for code in (
         "view_users", "approve_users", "reset_passwords", "edit_users", "delete_users",
-        "create_matches", "manage_test_data",
     ))
-    need_matches = any(admin_caps.get(code) for code in (
+    needs_player_picker = bool(admin_caps.get("create_matches") or admin_caps.get("manage_test_data"))
+    needs_matches = any(admin_caps.get(code) for code in (
         "view_matches", "create_matches", "edit_matches", "delete_matches", "manage_disputes",
     ))
-    need_rooms = bool(admin_caps.get("manage_rooms"))
+    needs_rooms = bool(admin_caps.get("manage_rooms"))
 
-    admin_users = decorate_admin_users(list_all_users()) if need_users else []
-    admin_users.sort(key=lambda item: (
-        0 if item.get("duplicate_ips") else 1,
-        (item.get("duplicate_ips") or [item.get("latest_ip") or "~"])[0],
-        (item.get("username") or "").lower(),
-    ))
-    players = [item for item in admin_users if item.get("role") == "player"]
+    if needs_full_user_admin:
+        admin_users = decorate_admin_users(list_all_users())
+        admin_users.sort(key=lambda item: (
+            0 if item.get("duplicate_ips") else 1,
+            (item.get("duplicate_ips") or [item.get("latest_ip") or "~"])[0],
+            (item.get("username") or "").lower(),
+        ))
+        players = [item for item in admin_users if item.get("role") == "player"]
+    elif needs_player_picker:
+        admin_users = []
+        players = list_admin_player_picker()
+    else:
+        admin_users = []
+        players = []
+
     admins = [item for item in admin_users if is_admin_user(item)] if owner else []
     pending_users = [item for item in players if item.get("account_status") == "pending"] if admin_caps.get("approve_users") else []
 
-    all_matches = list_matches() if need_matches else []
-    all_rooms = list_rooms() if need_rooms else []
+    all_matches = list_recent_matches(80) if needs_matches else []
+    all_rooms = list_admin_active_rooms(80) if needs_rooms else []
     pending_disputes = (
         [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
         if admin_caps.get("manage_disputes") else []
@@ -7015,9 +7117,9 @@ def admin():
         for account in group.get("accounts", [])
         if account.get("id")
     })
-    chat_states = chat_features_enabled(force=True) if admin_caps.get("manage_chat") else {"lobby": True, "room": True}
+    chat_states = chat_features_enabled() if admin_caps.get("manage_chat") else {"lobby": True, "room": True}
     sub_admin_permissions = {
-        str(item.get("id")): get_admin_permissions(item, force=True)
+        str(item.get("id")): get_admin_permissions(item)
         for item in admins if item.get("admin_level") == "admin"
     } if owner else {}
 
@@ -7027,12 +7129,12 @@ def admin():
         players=players,
         admins=admins,
         pending_users=pending_users,
-        all_matches=all_matches[:80],
+        all_matches=all_matches,
         disputed=[m for m in all_matches if m.get("status") == "disputed"],
-        playing=[m for m in all_matches if m.get("status") == "playing"],
-        rooms=[r for r in all_rooms if r.get("status") in ["waiting_ready", "playing", "waiting_result_confirm", "disputed"]],
-        all_rooms=all_rooms[:80],
-        invites=list_invites("pending") if need_rooms else [],
+        playing=[m for m in all_matches if m.get("status") in {"playing", "friendly_playing"}],
+        rooms=all_rooms,
+        all_rooms=all_rooms,
+        invites=list_admin_pending_invites(100) if needs_rooms else [],
         active_announcement=get_active_announcement() if admin_caps.get("manage_announcements") else None,
         password_reset_requests=password_reset_requests,
         audit_logs=audit_logs,
@@ -7041,7 +7143,7 @@ def admin():
         pending_disputes=pending_disputes,
         can_create_test_account=bool(admin_caps.get("manage_test_data")),
         can_import_accounts_csv=bool(admin_caps.get("manage_test_data")),
-        friendly_matches_enabled=friendly_matches_enabled(force=True) if admin_caps.get("manage_friendly") else False,
+        friendly_matches_enabled=friendly_matches_enabled() if admin_caps.get("manage_friendly") else False,
         lobby_chat_enabled=chat_states.get("lobby", True),
         room_chat_enabled=chat_states.get("room", True),
         gift_codes=gift_codes,

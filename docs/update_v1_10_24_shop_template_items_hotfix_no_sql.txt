@@ -1,0 +1,37 @@
+V1.10.24_SHOP_TEMPLATE_ITEMS_HOTFIX_NO_SQL
+
+Mục tiêu:
+- Hotfix lỗi 500 khi mở /shop sau bản V1.10.23.
+
+Lỗi gốc:
+- shop.html dùng `{% for item in section.items %}`.
+- Với Jinja, `section.items` bị hiểu thành method dictionary `.items`, không phải field `items`.
+- Kết quả: TypeError: 'builtin_function_or_method' object is not iterable.
+
+Sửa đổi:
+- Dùng cú pháp bracket trong shop.html:
+  - section['items']
+  - section['key']
+  - section['icon']
+  - section['title']
+  - section['subtitle']
+- Cập nhật APP_VERSION = V1.10.24.
+
+File thay đổi:
+- app.py
+- templates/shop.html
+- README.md
+- Log.md
+- docs/update_v1_10_24_shop_template_items_hotfix_no_sql.txt
+
+SQL:
+- Không cần SQL.
+
+Không thay đổi:
+- Không thay đổi database.
+- Không đụng Gift Code RPC/table.
+- Không đụng ZCOIN/Điểm danh.
+- Không đụng phòng đấu/BXH/Admin logic.
+
+Commit khuyến nghị:
+- V1.10.24_SHOP_TEMPLATE_ITEMS_HOTFIX_NO_SQL

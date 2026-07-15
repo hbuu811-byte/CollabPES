@@ -1,0 +1,56 @@
+V1.10.33_SHOP_ITEM_REPLACE_PREVIEW_NO_SQL
+=========================================
+
+Mục tiêu
+--------
+- Thay các vật phẩm banner mẫu cũ trong Cửa Hàng / Trang trí bằng bộ ảnh mới người dùng cung cấp.
+- Thêm chức năng xem trước vật phẩm trực tiếp ngay trong Shop.
+
+Phạm vi thay đổi
+----------------
+1. app.py
+   - APP_VERSION -> V1.10.33.
+   - Cập nhật PROFILE_BANNER_SHOP_ITEMS:
+     + đổi file banner sang PNG mới,
+     + đổi icon sang bộ icon mới,
+     + cập nhật tên/mô tả vật phẩm.
+
+2. templates/shop.html
+   - Card banner giờ là vật phẩm rõ ràng hơn.
+   - Thêm nút "Xem trước".
+   - Thêm modal preview với banner lớn, icon, tên, giá, độ hiếm và mockup người chơi.
+
+3. templates/base.html
+   - Nâng cache CSS sang ?v=1.10.33.
+
+4. static/style.css
+   - Thêm CSS cho nhóm nút vật phẩm.
+   - Thêm CSS cho modal xem trước của Shop.
+
+5. Tài nguyên ảnh mới
+   - static/shop/profile_banners/profile_banner_locker_room.png
+   - static/shop/profile_banners/profile_banner_tactical_master.png
+   - static/shop/profile_banners/profile_banner_neon_derby.png
+   - static/shop/profile_banners/profile_banner_trophy_gallery.png
+   - static/shop/profile_banners/profile_banner_coronation.png
+   - static/shop/profile_banner_icons/profile_banner_locker_room_icon.png
+   - static/shop/profile_banner_icons/profile_banner_tactical_master_icon.png
+   - static/shop/profile_banner_icons/profile_banner_neon_derby_icon.png
+   - static/shop/profile_banner_icons/profile_banner_trophy_gallery_icon.png
+   - static/shop/profile_banner_icons/profile_banner_coronation_icon.png
+
+Không thay đổi
+--------------
+- Không cần SQL.
+- Không thay đổi database.
+- Chưa mở mua thật / kho đồ / trang bị thật.
+- Không đụng Gift Code, ZCOIN, Điểm danh, BXH, Admin, phòng đấu hoặc logic tính điểm.
+
+Cách deploy
+-----------
+- Upload đè các file trong gói ZIP này lên source hiện tại.
+- Commit gợi ý: V1.10.33_SHOP_ITEM_REPLACE_PREVIEW_NO_SQL
+
+Rollback
+--------
+- Quay lại deployment/commit V1.10.32 nếu cần.

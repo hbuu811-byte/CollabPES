@@ -1,0 +1,63 @@
+V1.10.36_SHOP_PURCHASE_INVENTORY_SAFE
+=====================================
+
+Mục tiêu
+--------
+- Chốt tab Nổi bật trong Cửa Hàng thành nơi hiển thị vật phẩm thật.
+- Mở bán thử nghiệm 5 banner hồ sơ bằng ZCOIN.
+- Sau khi mua, vật phẩm được lưu vào Kho đồ của người chơi.
+
+Thay đổi chính
+--------------
+1. Shop
+   - Tab Nổi bật hiển thị 5 banner hồ sơ thật thay vì placeholder.
+   - Tab Trang trí vẫn hiển thị toàn bộ 5 banner.
+   - Card vật phẩm có Xem trước + Mua ngay.
+   - Nếu đã sở hữu: hiển thị Đã sở hữu.
+   - Nếu thiếu ZCOIN: hiển thị số ZCOIN còn thiếu.
+
+2. Kho đồ
+   - /inventory hiển thị vật phẩm đã mua.
+   - Giai đoạn này chưa mở trang bị vào hồ sơ.
+
+3. Database
+   - Thêm bảng user_inventory.
+   - Thêm bảng shop_purchases.
+   - Thêm RPC buy_shop_item để mua vật phẩm an toàn:
+     + khóa user khi mua,
+     + kiểm tra đủ ZCOIN,
+     + chống mua trùng,
+     + trừ ZCOIN,
+     + ghi lịch sử giao dịch,
+     + thêm vật phẩm vào Kho đồ.
+
+4. Version
+   - APP_VERSION = V1.10.36.
+   - CSS cache = ?v=1.10.36.
+
+Cần chạy SQL
+------------
+1. docs/01_install_v1_10_36_shop_purchase_inventory.sql
+2. docs/02_check_v1_10_36_shop_purchase_inventory.sql
+
+Không chạy rollback nếu app đang ổn:
+- docs/99_rollback_v1_10_36_shop_purchase_inventory.sql
+
+Không thay đổi
+--------------
+- Không đụng phòng đấu.
+- Không đụng BXH.
+- Không đụng Admin sửa trận.
+- Không đụng Gift Code hiện có.
+- Không đụng Điểm danh.
+- Không đổi logic tính điểm.
+- Chưa mở trang bị banner lên hồ sơ ở bản này.
+
+Commit gợi ý
+------------
+V1.10.36_SHOP_PURCHASE_INVENTORY_SAFE
+
+Rollback
+--------
+- Rollback code về deployment V1.10.35.
+- Chỉ chạy file 99_rollback nếu muốn xóa dữ liệu Shop/Kho đồ đã phát sinh.

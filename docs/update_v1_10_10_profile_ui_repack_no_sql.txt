@@ -1,0 +1,46 @@
+V1.10.10_PROFILE_UI_REORGANIZE_REPACK_NO_SQL
+
+MỤC ĐÍCH
+- Triển khai lại bản tối ưu giao diện Hồ sơ cá nhân vì lần trước app chưa hiển thị đúng giao diện mới.
+- Bản này được đóng gói root-only: chỉ chứa các file cần ghi đè vào gốc repo, không chứa thư mục source lồng nhau.
+
+TÍNH NĂNG
+- Làm lại Hồ sơ cá nhân theo giao diện tab gọn hơn.
+- Các tab gồm:
+  1. Tổng quan
+  2. Thành tích
+  3. Lịch sử
+  4. ZCOIN
+  5. Điểm danh
+  6. Tài khoản
+- Tab ZCOIN và Điểm danh chỉ là khung sườn giao diện, chưa kết nối database thật.
+- Không thêm route mới.
+- Không thêm bảng/cột database.
+- Không ảnh hưởng dữ liệu người dùng.
+
+CÓ CẦN SQL KHÔNG?
+- Không cần SQL.
+
+FILE THAY ĐỔI
+- app.py
+- templates/profile.html
+- static/style.css
+- Log.md
+- docs/update_v1_10_10_profile_ui_repack_no_sql.txt
+
+CÁCH KIỂM TRA SAU DEPLOY
+1. Vercel phải hiện Ready/Production.
+2. Vào app và kiểm tra góc/sidebar phải thấy APP_VERSION = V1.10.10.
+3. Vào Hồ sơ cá nhân.
+4. Phải thấy các tab: Tổng quan, Thành tích, Lịch sử, ZCOIN, Điểm danh, Tài khoản.
+
+LƯU Ý UPLOAD GITHUB
+- Chỉ upload các file/thư mục nằm bên trong ZIP này vào gốc repo.
+- Không upload nguyên thư mục cha của ZIP.
+- Không upload .env.
+- Không upload __pycache__.
+- Không upload *.pyc.
+
+ROLLBACK
+- Nếu lỗi, rollback về deployment/commit trước trên Vercel/GitHub.
+- Không cần restore Supabase vì bản này không thay đổi database.

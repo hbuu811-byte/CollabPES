@@ -1,0 +1,46 @@
+V1.10.34_SHOP_PREVIEW_MODAL_HIDDEN_HOTFIX_NO_SQL
+=================================================
+
+Mục tiêu
+--------
+- Sửa lỗi vào Cửa Hàng thì popup xem trước vật phẩm tự hiện ngay lập tức.
+- Sửa lỗi bấm dấu X / nút Đóng nhưng popup không tắt.
+
+Nguyên nhân
+-----------
+- Modal `#shopPreviewBackdrop` có thuộc tính `hidden`, nhưng CSS của `.shop-preview-backdrop` đang khai báo `display:grid`.
+- Trên một số trình duyệt, CSS author `display:grid` có thể làm modal vẫn hiển thị dù HTML có `hidden`.
+- Vì modal hiện trước khi người dùng bấm Xem trước nên ảnh preview chưa có `src`, dẫn đến dòng alt `Preview item banner` bị lộ.
+
+Thay đổi
+--------
+1. static/style.css
+   - Thêm rule bắt buộc:
+     `.shop-preview-backdrop[hidden], #shopPreviewBackdrop[hidden] { display:none!important; }`
+   - Chỉ cho modal hiện khi không còn thuộc tính `hidden`.
+
+2. templates/shop.html
+   - Khi Shop load, ép modal về trạng thái ẩn.
+   - Khi mở preview thì remove `hidden`.
+   - Khi đóng preview thì set lại `hidden`.
+
+3. templates/base.html
+   - Cập nhật cache CSS từ `?v=1.10.33` lên `?v=1.10.34`.
+
+4. app.py
+   - APP_VERSION -> V1.10.34.
+
+Không thay đổi
+--------------
+- Không cần SQL.
+- Không thay đổi database.
+- Không đụng Shop catalog, ảnh vật phẩm, Gift Code, ZCOIN, Điểm danh, BXH, Admin, phòng đấu hoặc logic tính điểm.
+
+Deploy
+------
+- Upload đè các file trong gói ZIP này lên source hiện tại.
+- Commit gợi ý: V1.10.34_SHOP_PREVIEW_MODAL_HIDDEN_HOTFIX_NO_SQL
+
+Rollback
+--------
+- Quay lại deployment/commit V1.10.33 nếu cần.

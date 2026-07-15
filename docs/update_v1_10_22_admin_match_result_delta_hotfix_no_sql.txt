@@ -1,0 +1,31 @@
+# V1.10.22_ADMIN_MATCH_RESULT_DELTA_HOTFIX_NO_SQL
+
+## Mục tiêu
+Sửa lỗi Admin không lưu được kết quả trận đấu vì database báo `matches.delta1` không được NULL.
+
+## Nguyên nhân
+Luồng Admin sửa kết quả đang đưa `delta1` và `delta2` về `NULL` để chuẩn bị tính lại RP. Trong production hiện tại, cột `delta1`/`delta2` của bảng `matches` có ràng buộc NOT NULL, nên Supabase từ chối cập nhật.
+
+## Thay đổi
+- Khi Admin sửa kết quả, hệ thống dùng `delta1 = 0` và `delta2 = 0` làm giá trị tạm thay vì `NULL`.
+- Sau đó `apply_match_result()` vẫn tính lại RP thật và ghi delta thật vào trận.
+- Luồng xử lý tranh chấp của Admin cũng không chuyển trận thẳng sang `confirmed` trước khi tính RP; trận được đưa về `waiting_confirm` với delta tạm 0/0 rồi mới apply kết quả.
+- Rollback nội bộ của Admin luôn restore delta về số nguyên an toàn, tránh ghi NULL ngược lại vào bảng `matches`.
+
+## Không thay đổi
+- Không đổi database/schema.
+- Không cần SQL.
+- Không đụng ZCOIN, Điểm danh, BXH, Dashboard, Players, menu user, SHOP/Kho đồ.
+- Không thay đổi công thức tính RP.
+
+## File thay đổi
+- `app.py`
+- `README.md`
+- `Log.md`
+- `docs/update_v1_10_22_admin_match_result_delta_hotfix_no_sql.txt`
+
+## Commit khuyến nghị
+`V1.10.22_ADMIN_MATCH_RESULT_DELTA_HOTFIX_NO_SQL`
+
+## Rollback
+Nếu lỗi giao diện/code, rollback Vercel về deployment trước. Không cần rollback Supabase.

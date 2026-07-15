@@ -1,0 +1,26 @@
+V1.10.28_ROOM_RANK_FRAME_CARD_BACKGROUND_CLEANUP_NO_SQL
+
+Mục tiêu:
+- Bỏ hẳn nền xanh/đỏ phía sau 2 ô người chơi trong phòng đấu để khung rank trở thành lớp hiển thị chính, nhìn sạch và chuyên nghiệp hơn.
+
+Thay đổi:
+- Xóa/override nền `room-team-card.home` và `room-team-card.away`.
+- Bỏ border/box-shadow ngoài của card người chơi.
+- Tắt lớp overlay `room-team-card::after` để không còn màu nền phủ dưới khung.
+- Tăng nhẹ opacity/drop-shadow của ảnh khung rank để khung nổi rõ hơn sau khi bỏ nền màu.
+- Cập nhật APP_VERSION lên V1.10.28.
+
+File thay đổi:
+- app.py
+- static/style.css
+- README.md
+- Log.md
+- docs/update_v1_10_28_room_rank_frame_card_background_cleanup_no_sql.txt
+
+Không thay đổi:
+- Không cần SQL.
+- Không đổi database.
+- Không đụng Shop / Gift Code / ZCOIN / Điểm danh / BXH / Admin / logic phòng đấu.
+
+Rollback:
+- Rollback về deployment hoặc commit V1.10.27 nếu cần.

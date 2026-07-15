@@ -1,0 +1,47 @@
+V1.10.35_SHOP_PRICE_ROOM_HEADER_BALANCE_NO_SQL
+================================================
+
+Mục tiêu
+--------
+- Chốt lại giá ZCOIN của 5 banner hồ sơ trong Cửa Hàng.
+- Hạ cụm avatar/tên/rank trong khung phòng đấu xuống một chút để không che phần đỉnh khung rank.
+
+Thay đổi giá Shop
+-----------------
+- Phòng Thay Đồ Elite: 300 ZCOIN.
+- Bậc Thầy Chiến Thuật: 700 ZCOIN.
+- Sân Đấu Neon: 1.400 ZCOIN.
+- Hành Lang Vinh Quang: 2.600 ZCOIN.
+- Đăng Quang Hoàng Kim: 4.500 ZCOIN.
+
+Thay đổi giao diện phòng đấu
+----------------------------
+- Tăng padding-top và min-height của cụm `.room-player-heading-plain`.
+- Hạ avatar/tên/rank/trạng thái xuống nhẹ để cân lại với khung rank.
+- Giảm padding-top của vùng CLB để tổng thể vẫn giữ khoảng cách đẹp.
+- Có breakpoint riêng cho màn hình nhỏ để không làm vỡ layout mobile.
+
+File thay đổi
+-------------
+- app.py
+- templates/base.html
+- static/style.css
+- README.md
+- Log.md
+- docs/update_v1_10_35_shop_price_room_header_balance_no_sql.txt
+
+Không thay đổi
+--------------
+- Không cần SQL.
+- Không thay đổi database.
+- Không mở mua thật / kho đồ / trang bị thật.
+- Không đụng Gift Code, Điểm danh, BXH, Admin, phòng đấu logic hoặc logic tính điểm.
+
+Deploy
+------
+- Upload đè các file trong gói ZIP này lên source hiện tại.
+- Commit gợi ý: V1.10.35_SHOP_PRICE_ROOM_HEADER_BALANCE_NO_SQL
+
+Rollback
+--------
+- Quay lại deployment/commit V1.10.34 nếu cần.

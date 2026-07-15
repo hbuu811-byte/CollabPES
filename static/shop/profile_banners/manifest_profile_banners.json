@@ -1,0 +1,46 @@
+{
+  "pack_name": "PES 2026 – 5 Banner Hồ Sơ",
+  "banner_size": "1600x480",
+  "items": [
+    {
+      "name": "Phòng Thay Đồ",
+      "rarity": "Thường",
+      "price": 350,
+      "file": "profile_banner_locker_room.webp",
+      "icon": "profile_banner_locker_room_icon.png",
+      "desc": "Không khí phòng thay đồ chuyên nghiệp, hiện đại và gần gũi."
+    },
+    {
+      "name": "Chiến Thuật Gia",
+      "rarity": "Hiếm",
+      "price": 750,
+      "file": "profile_banner_tactical_master.webp",
+      "icon": "profile_banner_tactical_master_icon.png",
+      "desc": "Sơ đồ chiến thuật hologram dành cho người chơi thích kiểm soát trận đấu."
+    },
+    {
+      "name": "Derby Neon",
+      "rarity": "Sử Thi",
+      "price": 1500,
+      "file": "profile_banner_neon_derby.webp",
+      "icon": "profile_banner_neon_derby_icon.png",
+      "desc": "Đêm derby bùng nổ giữa hai luồng năng lượng xanh và tím."
+    },
+    {
+      "name": "Phòng Truyền Thống",
+      "rarity": "Huyền Thoại",
+      "price": 2800,
+      "file": "profile_banner_trophy_gallery.webp",
+      "icon": "profile_banner_trophy_gallery_icon.png",
+      "desc": "Phòng trưng bày thành tích với cúp vàng và ánh sáng danh vọng."
+    },
+    {
+      "name": "Đăng Quang",
+      "rarity": "Tuyệt Phẩm",
+      "price": 5200,
+      "file": "profile_banner_coronation.webp",
+      "icon": "profile_banner_coronation_icon.png",
+      "desc": "Khoảnh khắc bước lên bục vô địch dưới ánh đèn sân vận động."
+    }
+  ]
+}

@@ -13,6 +13,7 @@
 
     <div class="room-match-shell">
         <section class="room-side-card room-team-card home">
+            <img class="room-rank-frame-bg" src="{{ url_for('static', filename='rank_frames/' ~ room.host_rank_info.slug ~ '.png') }}" alt="Khung rank {{ room.host_rank_info.name }}" loading="eager" aria-hidden="true">
             <div class="room-player-heading-plain">
                 {{ player_avatar(name=room.host_name, avatar_url=room.host_avatar_url, achievement=room.host_achievement, size='sm') }}
                 <div class="room-player-name">{{ room.host_name }}</div>
@@ -146,6 +147,11 @@
         </section>
 
         <section class="room-side-card room-team-card away">
+            {% if room.has_guest and room.guest_rank_info %}
+            <img class="room-rank-frame-bg" src="{{ url_for('static', filename='rank_frames/' ~ room.guest_rank_info.slug ~ '.png') }}" alt="Khung rank {{ room.guest_rank_info.name }}" loading="eager" aria-hidden="true">
+            {% else %}
+            <img class="room-rank-frame-bg muted" src="{{ url_for('static', filename='rank_frames/ga.png') }}" alt="Khung chờ người chơi" loading="eager" aria-hidden="true">
+            {% endif %}
             <div class="room-player-heading-plain">
                 {{ player_avatar(name=room.guest_name, avatar_url=room.guest_avatar_url, achievement=room.guest_achievement, size='sm') }}
                 <div class="room-player-name">{{ room.guest_name }}</div>
@@ -409,20 +415,72 @@ function showRoomActionOverlay() {
     requestAnimationFrame(function () { overlay.classList.add("is-visible"); });
 }
 
-document.addEventListener("submit", function (event) {
+function hideRoomActionOverlay() {
+    const overlay = document.getElementById("roomActionOverlay");
+    if (!overlay) return;
+    overlay.classList.remove("is-visible");
+    window.setTimeout(function () { overlay.hidden = true; }, 120);
+}
+
+function replaceRoomShellFromHtml(htmlText) {
+    const parsed = new DOMParser().parseFromString(htmlText, "text/html");
+    const incoming = parsed.querySelector(".room-view-shell");
+    const current = document.querySelector(".room-view-shell");
+    if (!incoming || !current) return false;
+    current.replaceWith(incoming);
+    return true;
+}
+
+async function refreshRoomWithoutPageReload() {
+    const response = await fetch(window.location.href, {
+        method: "GET",
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "RoomPartialRefresh" },
+        cache: "no-store"
+    });
+    if (!response.ok) throw new Error("Không thể cập nhật phòng");
+    const htmlText = await response.text();
+    return replaceRoomShellFromHtml(htmlText);
+}
+
+document.addEventListener("submit", async function (event) {
     const form = event.target;
-    if (!(form instanceof HTMLFormElement)) return;
-    if (form.closest(".room-view-shell")) {
-        setTimeout(showRoomActionOverlay, 0);
+    if (!(form instanceof HTMLFormElement) || !form.closest(".room-view-shell")) return;
+    if (form.dataset.nativeSubmit === "1") return;
+
+    event.preventDefault();
+    const submitButton = event.submitter;
+    if (submitButton) submitButton.disabled = true;
+    showRoomActionOverlay();
+
+    try {
+        const response = await fetch(form.action || window.location.href, {
+            method: (form.method || "POST").toUpperCase(),
+            body: new FormData(form),
+            credentials: "same-origin",
+            redirect: "follow",
+            headers: { "X-Requested-With": "RoomAction" }
+        });
+        if (response.url && new URL(response.url).pathname !== window.location.pathname) {
+            window.location.href = response.url;
+            return;
+        }
+        const htmlText = await response.text();
+        if (!response.ok || !replaceRoomShellFromHtml(htmlText)) {
+            throw new Error("Thao tác phòng không hoàn tất");
+        }
+        await checkRoomState(true);
+    } catch (error) {
+        console.error(error);
+        window.location.reload();
+        return;
+    } finally {
+        if (submitButton) submitButton.disabled = false;
+        hideRoomActionOverlay();
     }
 });
 
-document.addEventListener("click", function (event) {
-    const link = event.target.closest("a.room-center-invite-btn");
-    if (link) showRoomActionOverlay();
-});
-
-function checkRoomState() {
+function checkRoomState(forceRefresh) {
     fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
         method: "GET",
         credentials: "same-origin"
@@ -450,9 +508,9 @@ function checkRoomState() {
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
-        if (data.state_key !== currentRoomStateKey && !roomHasActiveInput()) {
-            showRoomActionOverlay();
-            window.location.reload();
+        if ((forceRefresh || data.state_key !== currentRoomStateKey) && !roomHasActiveInput()) {
+            currentRoomStateKey = data.state_key;
+            refreshRoomWithoutPageReload().catch(function () {});
         }
     })
     .catch(function () {});

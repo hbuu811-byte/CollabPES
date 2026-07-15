@@ -1506,6 +1506,11 @@ MATCH_MODE_RANKED = "ranked"
 MATCH_MODE_FRIENDLY = "friendly"
 
 
+def is_ranked_room(room):
+    """Only Rank mode affects RP, match statistics, and streaks."""
+    return str((room or {}).get("match_mode") or MATCH_MODE_RANKED).strip().lower() == MATCH_MODE_RANKED
+
+
 def get_rank_level(points: int) -> int:
     """Return rank level from 0 (lowest) to 9 (highest)."""
     safe_points = max(0, int(points or 0))

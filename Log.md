@@ -1,4 +1,4 @@
-# PES 2026 WEB — V1.10.67 Hybrid UI Fix
+# PES 2026 WEB — V1.10.68 Hybrid UI Fix
 
 ## Nền tảng
 
@@ -6,7 +6,7 @@
 - Giữ giao diện và bộ ảnh tương thích với V1.10.64c.
 - Không bổ sung polling dày, HTMX room refresh hoặc state-fragment.
 
-## Sửa lỗi V1.10.67
+## Sửa lỗi V1.10.68
 
 - Bổ sung `WIN_STREAK_TITLES`.
 - Khôi phục `get_streak_title()` và `get_streak_badge()` bị thiếu khi ghép Hybrid.
@@ -21,3 +21,10 @@
 3. Giữ nguyên toàn bộ ảnh trong `static` của V1.10.64c.
 4. Commit lên nhánh test trước.
 5. Kiểm tra `/players`, hồ sơ người chơi, `/api/active-room`, Quay quân, Xác nhận và Đá tiếp.
+
+
+## V1.10.68 Hybrid UI – Submit Result Fix
+- Khôi phục hàm `is_ranked_room()` bị thiếu sau khi ghép Hybrid.
+- Sửa lỗi 500 khi chủ phòng gửi kết quả.
+- Sửa luồng xác nhận kết quả dùng chung kiểm tra chế độ Rank.
+- Giữ nguyên cơ chế phòng đấu nhẹ của V1.10.15; không thêm polling/fragment mới.

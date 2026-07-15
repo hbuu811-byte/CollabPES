@@ -1,3 +1,15 @@
+# V1.10.61 — Đồng bộ phòng ổn định, không phụ thuộc HTMX CDN
+
+- Sửa lỗi phía đối thủ không thấy tỷ số mới cho đến khi F5.
+- Thay cơ chế tải fragment phụ thuộc `htmx.ajax()` bằng `fetch()` nguyên bản; HTMX chỉ còn là lớp tăng cường giao diện.
+- Gom Realtime, polling và cập nhật fragment vào một bộ điều phối duy nhất để tránh request chồng chéo.
+- Realtime cập nhật ngay khung `#roomDynamicState`; polling 2 giây khi chưa có Realtime và 12 giây khi Realtime đã kết nối để làm lớp bảo hiểm.
+- Thêm chống request trùng, hàng đợi một lần refresh tiếp theo và không ghi đè khi người dùng đang nhập tỷ số.
+- Gửi tỷ số và xác nhận kết quả dùng fetch tại chỗ; nếu fetch lỗi mới fallback về submit HTML chuẩn.
+- Thêm `Cache-Control: no-store` cho API trạng thái và fragment phòng để tránh trình duyệt/CDN trả nội dung cũ.
+- Xóa cache phòng/trận ngay sau xác nhận kết quả.
+- Không thay đổi schema Supabase và không thay đổi công thức RP.
+
 # V1.10.60 — Phòng đấu cập nhật từng phần bằng HTMX + Supabase Realtime
 
 ## Mục tiêu

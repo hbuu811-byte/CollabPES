@@ -55,7 +55,7 @@
                         {% set _can_review_result = (_viewer_id == _guest_id and _viewer_id != _submitted_by) %}
                         {% if _can_review_result %}
                         <div class="room-result-actions">
-                            <form method="post" action="{{ url_for('room_confirm_result', room_id=room.id) }}" hx-post="{{ url_for('room_confirm_result', room_id=room.id) }}" hx-target="#roomDynamicState" hx-swap="outerHTML" hx-disabled-elt="button">
+                            <form method="post" action="{{ url_for('room_confirm_result', room_id=room.id) }}" data-room-async="1">
                                 <button class="room-result-btn confirm" type="submit">✓ Xác Nhận</button>
                             </form>
                             <details class="room-result-dispute">
@@ -264,7 +264,7 @@
 
     {% if room.status == "playing" and room.match_mode != "friendly" and (current_user.id == room.host_user_id or current_user.role == "admin") %}
     <h3 class="room-score-title">Kết quả trận đấu</h3>
-    <form method="post" action="{{ url_for('room_submit_result', room_id=room.id) }}" class="grid-form room-score-form" hx-post="{{ url_for('room_submit_result', room_id=room.id) }}" hx-target="#roomDynamicState" hx-swap="outerHTML" hx-disabled-elt="button">
+    <form method="post" action="{{ url_for('room_submit_result', room_id=room.id) }}" class="grid-form room-score-form" data-room-async="1">
         <div class="two-col">
             <div>
                 <label>Sân Nhà</label>

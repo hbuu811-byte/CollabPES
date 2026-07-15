@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.60"
+APP_VERSION = "V1.10.61"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -3804,7 +3804,7 @@ def api_room_state(room_id):
         or (user["id"] == room.get("guest_user_id") and room.get("rematch_guest_declined"))
     )
 
-    return jsonify({
+    response = jsonify({
         "ok": True,
         "state_key": state_key,
         "status": room.get("status"),
@@ -3814,6 +3814,8 @@ def api_room_state(room_id):
         "timeout_seconds": int(room.get("timeout_seconds") or 0),
         "timeout_label": room.get("timeout_label") or "",
     })
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
 
 # =========================
 # Auth
@@ -5778,7 +5780,11 @@ def room_state_fragment(room_id):
         return '<div id="roomDynamicState" class="panel">Không tìm thấy phòng.</div>', 404
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
         return '<div id="roomDynamicState" class="panel">Bạn không thuộc phòng này.</div>', 403
-    return render_template("partials/room_dynamic_state.html", **room_view_context(room))
+    response = make_response(render_template("partials/room_dynamic_state.html", **room_view_context(room)))
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
 
 
 @app.route("/room/<room_id>/leave", methods=["POST"])
@@ -6472,6 +6478,8 @@ def room_confirm_result(room_id):
             }).eq("id", room_id).eq("status", "waiting_result_confirm"),
             "confirm_result_room",
         )
+        cache_delete("_rz_rooms_all")
+        ttl_cache_delete("rooms_raw", "matches_raw")
     except ValueError as exc:
         print(f"room_confirm_result validation room={room_id} match={match.get('id')}: {exc}")
         return respond(str(exc), "warning")

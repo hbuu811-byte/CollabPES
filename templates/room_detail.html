@@ -3,6 +3,14 @@
 {% include "partials/room_dynamic_state.html" %}
 <script>
 var currentRoomStateKey = document.getElementById("roomDynamicState")?.dataset.stateKey || "";
+var roomSync = {
+    fragmentRunning: false,
+    stateRunning: false,
+    pendingRefresh: false,
+    realtimeConnected: false,
+    lastSuccessAt: Date.now(),
+    failures: 0
+};
 
 function renderRoomCountdown(seconds) {
     const countdown = document.getElementById("roomCountdown");
@@ -13,11 +21,9 @@ function renderRoomCountdown(seconds) {
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
 
-var roomCountdownSeconds = Number(document.getElementById("roomCountdown")?.dataset.seconds || 0);
-var roomStartCountdownElement = document.getElementById("roomStartCountdown");
-var roomStartCountdownSeconds = Number(roomStartCountdownElement?.dataset.seconds || 0);
-var roomStartCountdownMode = roomStartCountdownElement?.dataset.mode || "down";
-
+var roomCountdownSeconds = 0;
+var roomStartCountdownSeconds = 0;
+var roomStartCountdownMode = "down";
 function renderRoomStartCountdown(seconds) {
     const countdown = document.getElementById("roomStartCountdown");
     if (!countdown) return;
@@ -26,73 +32,106 @@ function renderRoomStartCountdown(seconds) {
     const remain = Math.floor(safeSeconds % 60);
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
-renderRoomCountdown(roomCountdownSeconds);
-renderRoomStartCountdown(roomStartCountdownSeconds);
-setInterval(function () {
-    if (document.hidden) return;
-    if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
-    if (roomStartCountdownMode === "up") {
-        roomStartCountdownSeconds += 1;
-    } else if (roomStartCountdownSeconds > 0) {
-        roomStartCountdownSeconds -= 1;
-    }
-    renderRoomCountdown(roomCountdownSeconds);
-    renderRoomStartCountdown(roomStartCountdownSeconds);
-}, 1000);
-
-function roomHasActiveInput() {
-    const active = document.activeElement;
-    if (!active) return false;
-    return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
-}
 
 function resetRoomDynamicRuntime() {
     const dynamicState = document.getElementById("roomDynamicState");
     currentRoomStateKey = dynamicState?.dataset.stateKey || currentRoomStateKey;
     roomCountdownSeconds = Number(document.getElementById("roomCountdown")?.dataset.seconds || 0);
-    roomStartCountdownElement = document.getElementById("roomStartCountdown");
-    roomStartCountdownSeconds = Number(roomStartCountdownElement?.dataset.seconds || 0);
-    roomStartCountdownMode = roomStartCountdownElement?.dataset.mode || "down";
+    const startElement = document.getElementById("roomStartCountdown");
+    roomStartCountdownSeconds = Number(startElement?.dataset.seconds || 0);
+    roomStartCountdownMode = startElement?.dataset.mode || "down";
     renderRoomCountdown(roomCountdownSeconds);
     renderRoomStartCountdown(roomStartCountdownSeconds);
 }
+resetRoomDynamicRuntime();
 
-let roomFragmentRequestRunning = false;
-function refreshRoomDynamicState() {
-    if (roomFragmentRequestRunning || roomHasActiveInput() || !window.htmx) return Promise.resolve();
-    roomFragmentRequestRunning = true;
-    return Promise.resolve(window.htmx.ajax("GET", "{{ url_for('room_state_fragment', room_id=room.id) }}", {
-        target: "#roomDynamicState",
-        swap: "outerHTML"
-    })).finally(function () {
-        roomFragmentRequestRunning = false;
-        resetRoomDynamicRuntime();
-    });
+setInterval(function () {
+    if (document.hidden) return;
+    if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
+    if (roomStartCountdownMode === "up") roomStartCountdownSeconds += 1;
+    else if (roomStartCountdownSeconds > 0) roomStartCountdownSeconds -= 1;
+    renderRoomCountdown(roomCountdownSeconds);
+    renderRoomStartCountdown(roomStartCountdownSeconds);
+}, 1000);
+
+function roomHasActiveScoreInput() {
+    const active = document.activeElement;
+    return !!(active && active.closest && active.closest(".room-score-form"));
 }
 
-document.body.addEventListener("htmx:afterSwap", function (event) {
-    if (event.detail && event.detail.target && event.detail.target.id === "roomDynamicState") {
-        resetRoomDynamicRuntime();
-    }
-});
+function replaceRoomDynamicState(html) {
+    const current = document.getElementById("roomDynamicState");
+    if (!current) return false;
+    const wrapper = document.createElement("div");
+    wrapper.innerHTML = String(html || "").trim();
+    const next = wrapper.querySelector("#roomDynamicState");
+    if (!next) return false;
+    current.replaceWith(next);
+    if (window.htmx) window.htmx.process(next);
+    resetRoomDynamicRuntime();
+    document.dispatchEvent(new CustomEvent("rz:room-state-updated", { detail: { stateKey: currentRoomStateKey } }));
+    return true;
+}
 
-let roomStateRequestRunning = false;
-function checkRoomState() {
-    if (!pollingEnabled || roomStateRequestRunning) return Promise.resolve();
-    roomStateRequestRunning = true;
-    return fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
-        method: "GET",
-        credentials: "same-origin"
-    })
-    .then(function (res) { return res.json(); })
-    .then(function (data) {
+async function refreshRoomDynamicState(options) {
+    options = options || {};
+    if (roomSync.fragmentRunning) {
+        roomSync.pendingRefresh = true;
+        return false;
+    }
+    if (!options.force && roomHasActiveScoreInput()) {
+        roomSync.pendingRefresh = true;
+        return false;
+    }
+    roomSync.fragmentRunning = true;
+    try {
+        const url = "{{ url_for('room_state_fragment', room_id=room.id) }}" + "?sync=" + Date.now();
+        const response = await fetch(url, {
+            method: "GET",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "X-RZ-Fragment": "1" }
+        });
+        if (response.status === 401 || response.status === 403) {
+            window.location.href = "{{ url_for('login') }}";
+            return false;
+        }
+        if (!response.ok) throw new Error("fragment_http_" + response.status);
+        const changed = replaceRoomDynamicState(await response.text());
+        if (!changed) throw new Error("invalid_room_fragment");
+        roomSync.lastSuccessAt = Date.now();
+        roomSync.failures = 0;
+        return true;
+    } catch (error) {
+        roomSync.failures += 1;
+        console.warn("Không thể đồng bộ giao diện phòng; polling sẽ thử lại.", error);
+        return false;
+    } finally {
+        roomSync.fragmentRunning = false;
+        if (roomSync.pendingRefresh && !roomHasActiveScoreInput()) {
+            roomSync.pendingRefresh = false;
+            setTimeout(function () { refreshRoomDynamicState({ force: true }); }, 120);
+        }
+    }
+}
+
+async function checkRoomState() {
+    if (!pollingEnabled || roomSync.stateRunning) return;
+    roomSync.stateRunning = true;
+    try {
+        const response = await fetch("{{ url_for('api_room_state', room_id=room.id) }}?sync=" + Date.now(), {
+            credentials: "same-origin",
+            cache: "no-store"
+        });
+        if (!response.ok) throw new Error("state_http_" + response.status);
+        const data = await response.json();
         if (!data.ok) return;
         if (data.status === "cancelled") {
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
-        if (data.rematch_expired) {
-            window.alert("Yêu cầu đá tiếp đã hết hạn sau 60 giây. Bạn sẽ được đưa về sảnh chính.");
+        if (data.rematch_expired || data.rematch_declined) {
+            if (data.rematch_declined && !data.rematch_declined_by_me) alert("Đối thủ không muốn đá tiếp.");
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
@@ -100,36 +139,37 @@ function checkRoomState() {
             roomCountdownSeconds = Number(data.timeout_seconds) || 0;
             renderRoomCountdown(roomCountdownSeconds);
         }
-        if (data.rematch_declined) {
-            if (!data.rematch_declined_by_me) {
-                window.alert("Đối thủ không muốn đá tiếp. Bạn sẽ được đưa về sảnh chính.");
-            }
-            window.location.href = "{{ url_for('dashboard') }}";
-            return;
+        if (data.state_key !== currentRoomStateKey) {
+            await refreshRoomDynamicState();
         }
-        if (data.state_key !== currentRoomStateKey && !roomHasActiveInput()) {
-            return refreshRoomDynamicState();
-        }
-    })
-    .catch(function () {})
-    .finally(function () { roomStateRequestRunning = false; });
+        roomSync.lastSuccessAt = Date.now();
+    } catch (error) {
+        roomSync.failures += 1;
+    } finally {
+        roomSync.stateRunning = false;
+    }
 }
 
-window.RZ_ROOM_CHAT_ENABLED = {{ "true" if room_chat_enabled else "false" }};
-window.RZ_ROOM_RUNTIME = window.RZ_ROOM_RUNTIME || { stateRealtime: false, chatRealtime: false };
+function roomPollDelay() {
+    if (!pollingEnabled) return 15000;
+    if (!roomSync.realtimeConnected) return roomSync.failures >= 3 ? 5000 : 2000;
+    return 12000; // Realtime là chính, polling 12 giây chỉ làm lớp bảo hiểm.
+}
 function scheduleRoomStatePoll() {
-    const delay = pollingEnabled ? (window.RZ_ROOM_RUNTIME.stateRealtime ? 90000 : 3000) : 30000;
-    setTimeout(function () {
-        Promise.resolve(checkRoomState()).finally(scheduleRoomStatePoll);
-    }, delay);
+    setTimeout(async function () {
+        await checkRoomState();
+        scheduleRoomStatePoll();
+    }, roomPollDelay());
 }
 checkRoomState();
 scheduleRoomStatePoll();
 
+window.RZ_ROOM_CHAT_ENABLED = {{ "true" if room_chat_enabled else "false" }};
+window.RZ_ROOM_RUNTIME = window.RZ_ROOM_RUNTIME || { stateRealtime: false, chatRealtime: false };
 function subscribeCurrentRoomRealtime() {
     if (!window.RZ_REALTIME?.enabled) return;
     let attempts = 0;
-    const attach = function () {
+    function attach() {
         attempts += 1;
         if (!window.RZ_SUPABASE) {
             if (attempts < 40) setTimeout(attach, 250);
@@ -137,44 +177,65 @@ function subscribeCurrentRoomRealtime() {
         }
         window.RZ_SUPABASE.channel("rz-room-{{ room.id }}")
             .on("postgres_changes", {
-                event: "*",
-                schema: "public",
-                table: "match_rooms",
-                filter: "id=eq.{{ room.id }}"
+                event: "*", schema: "public", table: "match_rooms", filter: "id=eq.{{ room.id }}"
             }, function () {
-                if (pollingEnabled) {
-                    clearTimeout(window.RZ_ROOM_RUNTIME.stateEventTimer);
-                    window.RZ_ROOM_RUNTIME.stateEventTimer = setTimeout(refreshRoomDynamicState, 80);
-                }
+                clearTimeout(window.RZ_ROOM_RUNTIME.stateEventTimer);
+                window.RZ_ROOM_RUNTIME.stateEventTimer = setTimeout(function () {
+                    refreshRoomDynamicState({ force: true });
+                }, 100);
             })
             .subscribe(function (status) {
-                window.RZ_ROOM_RUNTIME.stateRealtime = status === "SUBSCRIBED";
+                roomSync.realtimeConnected = status === "SUBSCRIBED";
+                window.RZ_ROOM_RUNTIME.stateRealtime = roomSync.realtimeConnected;
+                if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) checkRoomState();
             });
 
-        // Chat phòng nhận sự kiện trực tiếp; polling chỉ còn là fallback.
         if (window.RZ_ROOM_CHAT_ENABLED) window.RZ_SUPABASE.channel("rz-room-chat-{{ room.id }}")
             .on("postgres_changes", {
-                event: "INSERT",
-                schema: "public",
-                table: "chat_messages",
-                filter: "room_id=eq.{{ room.id }}"
+                event: "INSERT", schema: "public", table: "chat_messages", filter: "room_id=eq.{{ room.id }}"
             }, function () {
-                if (pollingEnabled) {
-                    clearTimeout(window.RZ_ROOM_RUNTIME.chatEventTimer);
-                    window.RZ_ROOM_RUNTIME.chatEventTimer = setTimeout(loadRoomChat, 80);
-                }
+                clearTimeout(window.RZ_ROOM_RUNTIME.chatEventTimer);
+                window.RZ_ROOM_RUNTIME.chatEventTimer = setTimeout(loadRoomChat, 100);
             })
             .subscribe(function (status) {
                 window.RZ_ROOM_RUNTIME.chatRealtime = status === "SUBSCRIBED";
             });
-    };
+    }
     attach();
 }
-if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", subscribeCurrentRoomRealtime, { once: true });
-} else {
-    subscribeCurrentRoomRealtime();
-}
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", subscribeCurrentRoomRealtime, { once: true });
+else subscribeCurrentRoomRealtime();
+
+// Form phòng vẫn hoạt động khi CDN HTMX lỗi: fetch trực tiếp rồi thay fragment.
+document.addEventListener("submit", async function (event) {
+    const form = event.target.closest("form[data-room-async='1']");
+    if (!form || form.dataset.submitting === "1") return;
+    event.preventDefault();
+    form.dataset.submitting = "1";
+    form.querySelectorAll("button, input[type='submit']").forEach(function (el) { el.disabled = true; });
+    try {
+        const response = await fetch(form.action, {
+            method: (form.method || "POST").toUpperCase(),
+            body: new FormData(form),
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: { "HX-Request": "true", "X-RZ-Fragment": "1" }
+        });
+        if (!response.ok) throw new Error("form_http_" + response.status);
+        if (!replaceRoomDynamicState(await response.text())) throw new Error("invalid_form_fragment");
+    } catch (error) {
+        console.warn("Gửi thao tác nhanh thất bại, chuyển sang submit chuẩn.", error);
+        form.removeAttribute("data-room-async");
+        form.submit();
+    } finally {
+        form.dataset.submitting = "0";
+    }
+});
+
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) checkRoomState();
+});
+window.addEventListener("online", function () { checkRoomState(); });
 </script>
 
 <script>

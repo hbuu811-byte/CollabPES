@@ -173,7 +173,7 @@
                 {% else %}<strong>Không tính điểm</strong>{% endif %}
                 <small>{{ m.status_label }}</small>
             </div>
-            {% if current_user and (current_user.role == 'admin' or current_user.admin_level in ['owner', 'admin']) %}
+            {% if current_user and ADMIN_CAPS.edit_matches %}
             <details class="panel" style="margin-top:10px; padding:10px;">
                 <summary><strong>🛠 Admin sửa trực tiếp trận này</strong></summary>
                 <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}" class="grid-form" style="margin-top:10px;">

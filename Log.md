@@ -1,3 +1,8 @@
+# V1.10.52  
+- Loại `mode` khỏi `MATCH_LIST_COLUMNS` vì các màn hình hiện tại không sử dụng `matches.mode`.
+- Giữ nguyên tối ưu chọn đúng cột, không quay lại `select(*)`.
+- Không thay đổi database, RP, lịch sử trận hoặc cấu trúc bảng. Không cần chạy SQL.
+
 # V1.10.51 — Giao diện quản lý trận đấu gọn hơn + Admin tạo trận thủ công
 
 - Làm gọn giao diện quản lý trận đấu trong Admin để nhìn được nhiều dòng hơn: gộp nút hành động vào cùng một hàng, thêm vùng cuộn riêng và header cố định.

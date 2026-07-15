@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.51"
+APP_VERSION = "V1.10.52"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -754,20 +754,100 @@ def can_review_room_result(user, room) -> bool:
 
 
 
-ADMIN_PERMISSION_FIELDS = {
-    "create_test_account": "admin_can_create_test_account",
-    "import_accounts_csv": "admin_can_import_accounts_csv",
+ADMIN_PERMISSION_DEFINITIONS = {
+    "view_users": ("Xem người dùng", "Xem danh sách tài khoản và thông tin cơ bản."),
+    "approve_users": ("Duyệt tài khoản", "Duyệt hoặc từ chối tài khoản đăng ký mới."),
+    "reset_passwords": ("Xử lý quên mật khẩu", "Cấp mật khẩu tạm hoặc từ chối yêu cầu."),
+    "edit_users": ("Sửa người dùng", "Khóa/mở khóa, sửa RP, thống kê và trạng thái online."),
+    "delete_users": ("Xóa người dùng", "Xóa tài khoản và dữ liệu liên quan."),
+    "view_matches": ("Xem trận đấu", "Xem danh sách trận, phòng và thông tin RP."),
+    "create_matches": ("Tạo trận thủ công", "Chọn 2 người chơi, nhập tỷ số và cập nhật RP."),
+    "edit_matches": ("Sửa trận đấu", "Sửa tỷ số, trạng thái và xác nhận kết quả."),
+    "delete_matches": ("Hủy/Xóa trận", "Hủy hoặc xóa trận và tính lại dữ liệu."),
+    "manage_rooms": ("Quản lý phòng & lời mời", "Hủy/xóa phòng và lời mời đang chờ."),
+    "manage_disputes": ("Xử lý tranh chấp", "Chấp nhận, sửa hoặc hủy tranh chấp."),
+    "manage_announcements": ("Quản lý thông báo", "Đăng và xóa thông báo hệ thống."),
+    "manage_chat": ("Bật/tắt Chat", "Bật hoặc tắt Chat Sảnh và Chat Phòng."),
+    "manage_friendly": ("Bật/tắt Giao hữu", "Bật hoặc khóa tính năng Giao hữu."),
+    "manage_gift_codes": ("Quản lý Gift Code", "Tạo và bật/tắt Gift Code."),
+    "manage_invite_codes": ("Quản lý mã đăng ký", "Tạo và vô hiệu hóa mã đăng ký."),
+    "manage_test_data": ("Tài khoản test & Import", "Tạo tài khoản test và import CSV."),
+    "view_logs": ("Xem nhật ký Admin", "Xem lịch sử thao tác của quản trị viên."),
 }
+ADMIN_PERMISSION_CODES = tuple(ADMIN_PERMISSION_DEFINITIONS.keys())
+_admin_permission_cache = {}
+
+
+def _admin_permission_setting_key(user_id):
+    return f"admin_permissions:{str(user_id or '').strip()}"
+
+
+def _normalize_admin_permissions(value):
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except Exception:
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+    return {code: bool(value.get(code, False)) for code in ADMIN_PERMISSION_CODES}
+
+
+def get_admin_permissions(user, force=False):
+    if is_owner_user(user):
+        return {code: True for code in ADMIN_PERMISSION_CODES}
+    if not is_admin_user(user):
+        return {code: False for code in ADMIN_PERMISSION_CODES}
+
+    user_id = str((user or {}).get("id") or "")
+    now_ts = time.time()
+    cached = _admin_permission_cache.get(user_id)
+    if not force and cached and cached.get("expires_at", 0) > now_ts:
+        return dict(cached.get("value") or {})
+
+    permissions = {code: False for code in ADMIN_PERMISSION_CODES}
+    # Giữ tương thích với 2 cột quyền cũ.
+    permissions["manage_test_data"] = bool(
+        user.get("admin_can_create_test_account") or user.get("admin_can_import_accounts_csv")
+    )
+    try:
+        result = execute_query(
+            db.table("system_settings")
+            .select("setting_value")
+            .eq("setting_key", _admin_permission_setting_key(user_id))
+            .limit(1),
+            "get_admin_permissions",
+            attempts=2,
+        )
+        rows = result.data or []
+        if rows:
+            permissions.update(_normalize_admin_permissions(rows[0].get("setting_value")))
+    except Exception as exc:
+        print(f"get_admin_permissions warning user={user_id}: {type(exc).__name__}: {exc}")
+
+    _admin_permission_cache[user_id] = {"value": dict(permissions), "expires_at": now_ts + 15}
+    return permissions
+
+
+def save_admin_permissions(user_id, permissions):
+    normalized = _normalize_admin_permissions(permissions)
+    payload = {
+        "setting_key": _admin_permission_setting_key(user_id),
+        "setting_value": normalized,
+        "updated_at": now_iso(),
+    }
+    execute_query(
+        db.table("system_settings").upsert(payload, on_conflict="setting_key"),
+        "save_admin_permissions",
+    )
+    _admin_permission_cache.pop(str(user_id), None)
+    return normalized
 
 
 def has_admin_permission(user, permission_code: str) -> bool:
-    """Owner always has access; sub-admins only have explicitly checked permissions."""
     if is_owner_user(user):
         return True
-    if not is_admin_user(user):
-        return False
-    field = ADMIN_PERMISSION_FIELDS.get(permission_code)
-    return bool(field and user.get(field) is True)
+    return bool(get_admin_permissions(user).get(permission_code, False))
 
 
 FRIENDLY_MATCHES_SETTING_KEY = "friendly_matches_enabled"
@@ -3361,8 +3441,7 @@ def admin_permission_required(permission_code: str):
         def wrapped(*args, **kwargs):
             user = current_user()
             if not has_admin_permission(user, permission_code):
-                flash("Admin phụ chưa được Chủ hệ thống cấp quyền sử dụng chức năng này.", "danger")
-                return redirect_admin("overview")
+                return redirect(url_for("dashboard"))
             return view(*args, **kwargs)
         return wrapped
     return decorator
@@ -3405,6 +3484,7 @@ def inject_globals():
         return {
             "APP_NAME": APP_NAME,
             "current_user": user,
+            "ADMIN_CAPS": get_admin_permissions(user) if user else {},
             "get_rank_name": get_rank_name,
             "get_rank_info": get_rank_info,
             "get_rank_display": get_rank_display,
@@ -3443,6 +3523,7 @@ def inject_globals():
     return {
         "APP_NAME": APP_NAME,
         "current_user": user,
+        "ADMIN_CAPS": get_admin_permissions(user) if user else {},
         "get_rank_name": get_rank_name,
         "get_rank_info": get_rank_info,
         "get_rank_display": get_rank_display,
@@ -3987,6 +4068,7 @@ def send_room_chat(room_id):
 @app.route("/admin/announcement", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_announcements")
 def admin_create_announcement():
     user = current_user()
     title = request.form.get("title", "THÔNG BÁO").strip() or "THÔNG BÁO"
@@ -4012,6 +4094,7 @@ def admin_create_announcement():
 @app.route("/admin/announcement/clear", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_announcements")
 def admin_clear_announcement():
     db.table("admin_announcements").update({"is_active": False}).eq("is_active", True).execute()
     ttl_cache_delete("api_current_announcement")
@@ -4023,6 +4106,7 @@ def admin_clear_announcement():
 @app.route("/admin/settings/friendly-matches", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_friendly")
 def admin_toggle_friendly_matches():
     raw_value = (request.form.get("friendly_matches_enabled") or "0").strip().lower()
     enabled = raw_value in {"1", "true", "on", "yes", "enable", "enabled"}
@@ -4040,6 +4124,7 @@ def admin_toggle_friendly_matches():
 @app.route("/admin/settings/chat", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_chat")
 def admin_toggle_chat_features():
     feature = (request.form.get("feature") or "").strip().lower()
     raw_value = (request.form.get("enabled") or "0").strip().lower()
@@ -6899,12 +6984,17 @@ def admin():
     pending_users = [u for u in players if u.get("account_status") == "pending"]
     password_reset_requests = list_password_reset_requests("pending")
     pending_disputes = [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
-    audit_logs = list_admin_activity_logs() if is_owner_user(current_user()) else []
+    audit_logs = list_admin_activity_logs() if has_admin_permission(current_user(), "view_logs") else []
     gift_codes, gift_code_setup_required = list_gift_codes()
     gift_redemptions, gift_redemption_setup_required = list_gift_code_redemptions()
     gift_code_setup_required = gift_code_setup_required or gift_redemption_setup_required
     duplicate_ip_groups = build_duplicate_ip_groups(admin_users)
     chat_states = chat_features_enabled(force=True)
+    admin_caps = get_admin_permissions(current_user(), force=True)
+    sub_admin_permissions = {
+        str(item.get("id")): get_admin_permissions(item, force=True)
+        for item in admins if item.get("admin_level") == "admin"
+    }
     duplicate_ip_user_count = len({
         str(account.get("id"))
         for group in duplicate_ip_groups
@@ -6938,6 +7028,9 @@ def admin():
         gift_codes=gift_codes,
         gift_redemptions=gift_redemptions,
         gift_code_setup_required=gift_code_setup_required,
+        admin_caps=admin_caps,
+        admin_permission_definitions=ADMIN_PERMISSION_DEFINITIONS,
+        sub_admin_permissions=sub_admin_permissions,
     )
 
 
@@ -7005,6 +7098,7 @@ def _build_test_user_payload(row, default_password="Test@12345"):
 @app.route("/admin/gift-code/create", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_gift_codes")
 def admin_create_gift_code():
     custom_code = normalize_gift_code(request.form.get("code"))
     code = custom_code or generate_gift_code(request.form.get("prefix") or GIFT_CODE_DEFAULT_PREFIX)
@@ -7054,6 +7148,7 @@ def admin_create_gift_code():
 @app.route("/admin/gift-code/<code_id>/toggle", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_gift_codes")
 def admin_toggle_gift_code(code_id):
     action = (request.form.get("action") or "disable").strip()
     is_active = action == "enable"
@@ -7073,7 +7168,7 @@ def admin_toggle_gift_code(code_id):
 @app.route("/admin/test-account/create", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("create_test_account")
+@admin_permission_required("manage_test_data")
 def admin_create_test_account():
     row = {
         "username": request.form.get("username", ""),
@@ -7101,7 +7196,7 @@ def admin_create_test_account():
 @app.route("/admin/test-account/sample.csv")
 @login_required
 @admin_required
-@admin_permission_required("import_accounts_csv")
+@admin_permission_required("manage_test_data")
 def admin_download_test_account_sample():
     sample_rows = [
         ["username", "display_name", "password", "zalo_name", "rank_points", "wins", "draws", "losses", "total_matches", "goals_for", "goals_against"],
@@ -7121,7 +7216,7 @@ def admin_download_test_account_sample():
 @app.route("/admin/test-account/import", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("import_accounts_csv")
+@admin_permission_required("manage_test_data")
 def admin_import_test_accounts():
     upload = request.files.get("csv_file")
     pasted_csv = request.form.get("csv_text", "").strip()
@@ -7275,6 +7370,7 @@ def admin_import_test_accounts():
 @app.route("/admin/password-reset/<request_id>/resolve", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("reset_passwords")
 def admin_resolve_password_reset(request_id):
     reset_request = get_password_reset_request(request_id)
     if not reset_request or reset_request.get("status") != "pending":
@@ -7322,6 +7418,7 @@ def admin_resolve_password_reset(request_id):
 @app.route("/admin/password-reset/<request_id>/reject", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("reset_passwords")
 def admin_reject_password_reset(request_id):
     reset_request = get_password_reset_request(request_id)
     if not reset_request or reset_request.get("status") != "pending":
@@ -7353,6 +7450,7 @@ def admin_reject_password_reset(request_id):
 @app.route("/admin/account/<user_id>/approve", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("approve_users")
 def admin_approve_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -7377,6 +7475,7 @@ def admin_approve_account(user_id):
 @app.route("/admin/account/<user_id>/reject", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("approve_users")
 def admin_reject_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -7400,6 +7499,7 @@ def admin_reject_account(user_id):
 @app.route("/admin/account/<user_id>/ban", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("edit_users")
 def admin_ban_account(user_id):
     user = get_user(user_id)
     actor = current_user()
@@ -7424,6 +7524,7 @@ def admin_ban_account(user_id):
 @app.route("/admin/account/<user_id>/unban", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("edit_users")
 def admin_unban_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -7442,6 +7543,7 @@ def admin_unban_account(user_id):
 @app.route("/admin/invite-code/create", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_invite_codes")
 def admin_create_invite_code():
     actor = current_user()
     label = request.form.get("label", "").strip()[:80]
@@ -7469,6 +7571,7 @@ def admin_create_invite_code():
 @app.route("/admin/invite-code/<code_id>/disable", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_invite_codes")
 def admin_disable_invite_code(code_id):
     execute_query(
         db.table("registration_invite_codes").update({"is_active": False}).eq("id", code_id),
@@ -7497,6 +7600,7 @@ def admin_promote_user(user_id):
         db.table("users").update({"admin_level": "admin", "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
         "promote_admin",
     )
+    save_admin_permissions(user_id, {code: False for code in ADMIN_PERMISSION_CODES})
     log_admin_action("Thêm Admin phụ", "user", user_id, user.get("username"), "admin_level: none → admin")
     flash(f"Đã thêm {user.get('username')} làm admin phụ. Người này vẫn có thể thi đấu.", "success")
     return redirect_admin("users")
@@ -7512,35 +7616,23 @@ def admin_update_permissions(user_id):
         return redirect_admin("overview")
 
     payload = {
-        "admin_can_create_test_account": request.form.get("can_create_test_account") == "1",
-        "admin_can_import_accounts_csv": request.form.get("can_import_accounts_csv") == "1",
+        code: request.form.get(f"permission_{code}") == "1"
+        for code in ADMIN_PERMISSION_CODES
     }
     try:
+        payload = save_admin_permissions(user_id, payload)
+        # Đồng bộ hai cột cũ để các phiên bản cũ hơn vẫn hoạt động hợp lý.
         execute_query(
-            db.table("users").update(payload).eq("id", user_id),
-            "update_admin_permissions",
+            db.table("users").update({
+                "admin_can_create_test_account": bool(payload.get("manage_test_data")),
+                "admin_can_import_accounts_csv": bool(payload.get("manage_test_data")),
+            }).eq("id", user_id),
+            "sync_legacy_admin_permissions",
+            attempts=2,
         )
-    except Exception as exc:
-        error_text = str(exc)
-        lowered = error_text.lower()
-        missing_permission_columns = (
-            "admin_can_create_test_account" in lowered
-            or "admin_can_import_accounts_csv" in lowered
-            or "pgrst204" in lowered
-            or "column" in lowered and "schema cache" in lowered
-        )
+    except Exception:
         app.logger.exception("Không thể lưu quyền Admin phụ")
-        if missing_permission_columns:
-            flash(
-                "Supabase chưa có cột quyền Admin phụ. Hãy chạy file "
-                "docs/update_admin_permissions_v1_9_1.sql trong Supabase SQL Editor rồi lưu lại.",
-                "danger",
-            )
-        else:
-            flash(
-                "Không thể lưu quyền Admin phụ do lỗi kết nối dữ liệu. Vui lòng thử lại và kiểm tra Runtime Logs.",
-                "danger",
-            )
+        flash("Không thể lưu quyền Admin phụ. Vui lòng kiểm tra Runtime Logs.", "danger")
         return redirect_admin("overview")
 
     cache_delete("_rz_players_all")
@@ -7562,6 +7654,15 @@ def admin_demote_user(user_id):
         db.table("users").update({"admin_level": "none", "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
         "demote_admin",
     )
+    try:
+        execute_query(
+            db.table("system_settings").delete().eq("setting_key", _admin_permission_setting_key(user_id)),
+            "delete_admin_permissions",
+            attempts=2,
+        )
+        _admin_permission_cache.pop(str(user_id), None)
+    except Exception as exc:
+        print(f"delete_admin_permissions warning: {exc}")
     log_admin_action("Gỡ Admin phụ", "user", user_id, user.get("username"), "admin_level: admin → none")
     flash("Đã gỡ quyền admin phụ.", "success")
     return redirect_admin("users")
@@ -7569,6 +7670,7 @@ def admin_demote_user(user_id):
 @app.route("/admin/dispute/<dispute_id>/accept", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_disputes")
 def admin_dispute_accept(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -7595,6 +7697,7 @@ def admin_dispute_accept(dispute_id):
 @app.route("/admin/dispute/<dispute_id>/edit", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_disputes")
 def admin_dispute_edit(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -7623,6 +7726,7 @@ def admin_dispute_edit(dispute_id):
 @app.route("/admin/dispute/<dispute_id>/cancel", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_disputes")
 def admin_dispute_cancel(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -7643,6 +7747,7 @@ def admin_dispute_cancel(dispute_id):
 @app.route("/admin/cancel/<match_id>", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("delete_matches")
 def admin_cancel(match_id):
     match = get_match(match_id)
     if not match:
@@ -7679,6 +7784,7 @@ def admin_cancel(match_id):
 @app.route("/admin/confirm-disputed/<match_id>", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_disputes")
 def admin_confirm_disputed(match_id):
     match = get_match(match_id)
     if not match:
@@ -7713,6 +7819,7 @@ def admin_confirm_disputed(match_id):
 @app.route("/admin/toggle-online/<user_id>", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("edit_users")
 def admin_toggle_online(user_id):
     user = get_user(user_id)
     if not user:
@@ -7729,6 +7836,7 @@ def admin_toggle_online(user_id):
 @app.route("/admin/player/<user_id>/update", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("edit_users")
 def admin_update_player(user_id):
     player = get_user(user_id)
     actor = current_user()
@@ -7806,6 +7914,7 @@ def admin_update_player(user_id):
 @app.route("/admin/player/<user_id>/reset-stats", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("edit_users")
 def admin_reset_player_stats(user_id):
     player = get_user(user_id)
     if not player or is_admin_user(player):
@@ -7831,6 +7940,7 @@ def admin_reset_player_stats(user_id):
 @app.route("/admin/player/<user_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("delete_users")
 def admin_delete_player(user_id):
     player = get_user(user_id)
     player_label = player.get("username") if player else "Không xác định"
@@ -7858,6 +7968,7 @@ def _normalize_manual_team_name(value):
 @app.route("/admin/matches/create-manual", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("create_matches")
 def admin_create_manual_match():
     try:
         player1_id = str(request.form.get("player1_id") or "").strip()
@@ -7990,6 +8101,7 @@ def admin_create_manual_match():
 @app.route("/admin/match/<match_id>/update-result", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("edit_matches")
 def admin_update_match_result(match_id):
     match = get_match(match_id)
     if not match:
@@ -8185,6 +8297,7 @@ def admin_update_match_result(match_id):
 @app.route("/admin/match/<match_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("delete_matches")
 def admin_delete_match(match_id):
     match = get_match(match_id)
     if not match:
@@ -8200,6 +8313,7 @@ def admin_delete_match(match_id):
 @app.route("/admin/room/<room_id>/cancel", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_rooms")
 def admin_cancel_room(room_id):
     room = get_room(room_id)
     if not room:
@@ -8228,6 +8342,7 @@ def admin_cancel_room(room_id):
 @app.route("/admin/room/<room_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_rooms")
 def admin_delete_room(room_id):
     room = get_room(room_id)
     if not room:
@@ -8243,6 +8358,7 @@ def admin_delete_room(room_id):
 @app.route("/admin/invite/<invite_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("manage_rooms")
 def admin_delete_invite(invite_id):
     invite = get_invite(invite_id)
     if not invite:

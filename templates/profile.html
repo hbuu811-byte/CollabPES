@@ -24,7 +24,7 @@
             </div>
             <div class="rzp-profile-chips">
                 <span>@{{ player.username }}</span>
-                {% if player.admin_level == 'owner' %}<span>👑 Chủ hệ thống</span>{% elif player.admin_level == 'admin' %}<span>🛡 Admin phụ</span>{% endif %}
+                {% if player.admin_level in ['owner','admin'] %}<span>🛡 Admin</span>{% endif %}
                 <span>{{ player.total_matches or 0 }} trận</span>
                 <span>{{ player.winrate }}% winrate</span>
                 {% if player.featured_achievement %}<span>{{ player.featured_achievement.icon }} {{ player.featured_achievement.name }}</span>{% endif %}

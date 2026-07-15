@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.53"
+APP_VERSION = "V1.10.55"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1878,7 +1878,7 @@ def get_device_link(device_id):
 
 
 def link_device_to_user(user):
-    # Tài khoản admin chính không bị giới hạn thiết bị; admin phụ vẫn là player.
+    # Tài khoản admin không bị giới hạn thiết bị; admin vẫn là player.
     if user.get("role") == "admin":
         return True, ""
 
@@ -3330,35 +3330,34 @@ def mark_current_user_active():
 
 
 def ensure_admin():
+    """Create the first owner only when it does not exist.
+
+    Never reset an existing owner's password or role during a cold start. The
+    initial password must come from an environment variable instead of source.
+    """
     global _admin_checked
     if _admin_checked or db is None:
         return
 
-    admin_password_hash = hash_password("Do12345")
     admin = get_user_by_username("admin")
     if not admin:
+        initial_password = (os.getenv("INITIAL_ADMIN_PASSWORD") or "").strip()
+        if len(initial_password) < 8:
+            print("ensure_admin skipped: set INITIAL_ADMIN_PASSWORD (minimum 8 characters) to create the first owner.")
+            _admin_checked = True
+            return
         execute_query(
             db.table("users").insert({
                 "username": "admin",
-                "password_hash": admin_password_hash,
+                "password_hash": hash_password(initial_password),
                 "display_name": "Admin",
                 "role": "admin",
                 "admin_level": "owner",
                 "account_status": "approved",
-                "zalo_name": "Chủ hệ thống",
+                "zalo_name": "Admin",
                 "rank_points": DEFAULT_POINTS,
             }),
             "ensure_admin_create",
-        )
-    else:
-        execute_query(
-            db.table("users").update({
-                "password_hash": admin_password_hash,
-                "role": "admin",
-                "admin_level": "owner",
-                "account_status": "approved",
-            }).eq("username", "admin"),
-            "ensure_admin_update",
         )
 
     _admin_checked = True
@@ -6939,7 +6938,7 @@ def delete_player_safe(user_id):
         return False, "Không tìm thấy tài khoản."
 
     if is_admin_user(user):
-        return False, "Không được xóa tài khoản admin chính."
+        return False, "Không được xóa tài khoản admin."
 
     for room in list_rooms():
         if user_id in [room.get("host_user_id"), room.get("guest_user_id")]:
@@ -6970,37 +6969,57 @@ def redirect_admin(tab="overview"):
 @login_required
 @admin_required
 def admin():
-    all_rooms = list_rooms()
-    all_matches = list_matches()
-    admin_users = decorate_admin_users(list_all_users())
-    # Ưu tiên nhóm IP trùng lên đầu và đặt các tài khoản cùng IP cạnh nhau.
+    user = current_user()
+    admin_caps = get_admin_permissions(user, force=True)
+    owner = is_owner_user(user)
+
+    need_users = owner or any(admin_caps.get(code) for code in (
+        "view_users", "approve_users", "reset_passwords", "edit_users", "delete_users",
+        "create_matches", "manage_test_data",
+    ))
+    need_matches = any(admin_caps.get(code) for code in (
+        "view_matches", "create_matches", "edit_matches", "delete_matches", "manage_disputes",
+    ))
+    need_rooms = bool(admin_caps.get("manage_rooms"))
+
+    admin_users = decorate_admin_users(list_all_users()) if need_users else []
     admin_users.sort(key=lambda item: (
         0 if item.get("duplicate_ips") else 1,
         (item.get("duplicate_ips") or [item.get("latest_ip") or "~"])[0],
         (item.get("username") or "").lower(),
     ))
-    players = [u for u in admin_users if u.get("role") == "player"]
-    admins = [u for u in admin_users if is_admin_user(u)]
-    pending_users = [u for u in players if u.get("account_status") == "pending"]
-    password_reset_requests = list_password_reset_requests("pending")
-    pending_disputes = [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
-    audit_logs = list_admin_activity_logs() if has_admin_permission(current_user(), "view_logs") else []
-    gift_codes, gift_code_setup_required = list_gift_codes()
-    gift_redemptions, gift_redemption_setup_required = list_gift_code_redemptions()
-    gift_code_setup_required = gift_code_setup_required or gift_redemption_setup_required
-    duplicate_ip_groups = build_duplicate_ip_groups(admin_users)
-    chat_states = chat_features_enabled(force=True)
-    admin_caps = get_admin_permissions(current_user(), force=True)
-    sub_admin_permissions = {
-        str(item.get("id")): get_admin_permissions(item, force=True)
-        for item in admins if item.get("admin_level") == "admin"
-    }
+    players = [item for item in admin_users if item.get("role") == "player"]
+    admins = [item for item in admin_users if is_admin_user(item)] if owner else []
+    pending_users = [item for item in players if item.get("account_status") == "pending"] if admin_caps.get("approve_users") else []
+
+    all_matches = list_matches() if need_matches else []
+    all_rooms = list_rooms() if need_rooms else []
+    pending_disputes = (
+        [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
+        if admin_caps.get("manage_disputes") else []
+    )
+    password_reset_requests = list_password_reset_requests("pending") if admin_caps.get("reset_passwords") else []
+    audit_logs = list_admin_activity_logs() if admin_caps.get("view_logs") else []
+
+    if admin_caps.get("manage_gift_codes"):
+        gift_codes, gift_code_setup_required = list_gift_codes()
+        gift_redemptions, gift_redemption_setup_required = list_gift_code_redemptions()
+        gift_code_setup_required = gift_code_setup_required or gift_redemption_setup_required
+    else:
+        gift_codes, gift_redemptions, gift_code_setup_required = [], [], False
+
+    duplicate_ip_groups = build_duplicate_ip_groups(admin_users) if admin_caps.get("view_users") else []
     duplicate_ip_user_count = len({
         str(account.get("id"))
         for group in duplicate_ip_groups
         for account in group.get("accounts", [])
         if account.get("id")
     })
+    chat_states = chat_features_enabled(force=True) if admin_caps.get("manage_chat") else {"lobby": True, "room": True}
+    sub_admin_permissions = {
+        str(item.get("id")): get_admin_permissions(item, force=True)
+        for item in admins if item.get("admin_level") == "admin"
+    } if owner else {}
 
     return render_template(
         "admin.html",
@@ -7009,20 +7028,20 @@ def admin():
         admins=admins,
         pending_users=pending_users,
         all_matches=all_matches[:80],
-        disputed=[m for m in all_matches if m["status"] == "disputed"],
-        playing=[m for m in all_matches if m["status"] == "playing"],
-        rooms=[r for r in all_rooms if r["status"] in ["waiting_ready", "playing", "waiting_result_confirm", "disputed"]],
+        disputed=[m for m in all_matches if m.get("status") == "disputed"],
+        playing=[m for m in all_matches if m.get("status") == "playing"],
+        rooms=[r for r in all_rooms if r.get("status") in ["waiting_ready", "playing", "waiting_result_confirm", "disputed"]],
         all_rooms=all_rooms[:80],
-        invites=list_invites("pending"),
-        active_announcement=get_active_announcement(),
+        invites=list_invites("pending") if need_rooms else [],
+        active_announcement=get_active_announcement() if admin_caps.get("manage_announcements") else None,
         password_reset_requests=password_reset_requests,
         audit_logs=audit_logs,
         duplicate_ip_groups=duplicate_ip_groups,
         duplicate_ip_user_count=duplicate_ip_user_count,
         pending_disputes=pending_disputes,
-        can_create_test_account=has_admin_permission(current_user(), "create_test_account"),
-        can_import_accounts_csv=has_admin_permission(current_user(), "import_accounts_csv"),
-        friendly_matches_enabled=friendly_matches_enabled(force=True),
+        can_create_test_account=bool(admin_caps.get("manage_test_data")),
+        can_import_accounts_csv=bool(admin_caps.get("manage_test_data")),
+        friendly_matches_enabled=friendly_matches_enabled(force=True) if admin_caps.get("manage_friendly") else False,
         lobby_chat_enabled=chat_states.get("lobby", True),
         room_chat_enabled=chat_states.get("room", True),
         gift_codes=gift_codes,
@@ -7507,7 +7526,7 @@ def admin_ban_account(user_id):
         flash("Không tìm thấy tài khoản player.", "danger")
         return redirect_admin("users")
     if is_admin_user(user) and not is_owner_user(actor):
-        flash("Chỉ chủ hệ thống mới có thể xử lý tài khoản Admin phụ.", "danger")
+        flash("Chỉ chủ hệ thống mới có thể xử lý tài khoản Admin.", "danger")
         return redirect_admin("users")
     if is_admin_user(user):
         flash("Hãy gỡ quyền Admin trước khi khóa tài khoản.", "danger")
@@ -7601,8 +7620,8 @@ def admin_promote_user(user_id):
         "promote_admin",
     )
     save_admin_permissions(user_id, {code: False for code in ADMIN_PERMISSION_CODES})
-    log_admin_action("Thêm Admin phụ", "user", user_id, user.get("username"), "admin_level: none → admin")
-    flash(f"Đã thêm {user.get('username')} làm admin phụ. Người này vẫn có thể thi đấu.", "success")
+    log_admin_action("Thêm Admin", "user", user_id, user.get("username"), "admin_level: none → admin")
+    flash(f"Đã thêm {user.get('username')} làm admin. Người này vẫn có thể thi đấu.", "success")
     return redirect_admin("users")
 
 
@@ -7612,7 +7631,7 @@ def admin_promote_user(user_id):
 def admin_update_permissions(user_id):
     user = get_user(user_id)
     if not user or user.get("admin_level") != "admin":
-        flash("Không tìm thấy Admin phụ.", "danger")
+        flash("Không tìm thấy Admin.", "danger")
         return redirect_admin("overview")
 
     payload = {
@@ -7631,14 +7650,14 @@ def admin_update_permissions(user_id):
             attempts=2,
         )
     except Exception:
-        app.logger.exception("Không thể lưu quyền Admin phụ")
-        flash("Không thể lưu quyền Admin phụ. Vui lòng kiểm tra Runtime Logs.", "danger")
+        app.logger.exception("Không thể lưu quyền Admin")
+        flash("Không thể lưu quyền Admin. Vui lòng kiểm tra Runtime Logs.", "danger")
         return redirect_admin("overview")
 
     cache_delete("_rz_players_all")
     cache_delete("_rz_users_map")
-    log_admin_action("Cập nhật quyền Admin phụ", "user", user_id, user.get("username"), payload)
-    flash(f"Đã cập nhật quyền cho Admin phụ {user.get('username')}.", "success")
+    log_admin_action("Cập nhật quyền Admin", "user", user_id, user.get("username"), payload)
+    flash(f"Đã cập nhật quyền cho Admin {user.get('username')}.", "success")
     return redirect_admin("overview")
 
 @app.route("/admin/user/<user_id>/demote", methods=["POST"])
@@ -7647,7 +7666,7 @@ def admin_update_permissions(user_id):
 def admin_demote_user(user_id):
     user = get_user(user_id)
     if not user or user.get("admin_level") != "admin":
-        flash("Không tìm thấy admin phụ.", "danger")
+        flash("Không tìm thấy admin.", "danger")
         return redirect_admin("users")
 
     execute_query(
@@ -7663,8 +7682,8 @@ def admin_demote_user(user_id):
         _admin_permission_cache.pop(str(user_id), None)
     except Exception as exc:
         print(f"delete_admin_permissions warning: {exc}")
-    log_admin_action("Gỡ Admin phụ", "user", user_id, user.get("username"), "admin_level: admin → none")
-    flash("Đã gỡ quyền admin phụ.", "success")
+    log_admin_action("Gỡ Admin", "user", user_id, user.get("username"), "admin_level: admin → none")
+    flash("Đã gỡ quyền admin.", "success")
     return redirect_admin("users")
 
 @app.route("/admin/dispute/<dispute_id>/accept", methods=["POST"])
@@ -7845,7 +7864,7 @@ def admin_update_player(user_id):
         return redirect(url_for("admin") + "#users")
 
     if is_admin_user(player) and not is_owner_user(actor):
-        flash("Chỉ Chủ hệ thống mới được sửa tài khoản Admin.", "danger")
+        flash("Chỉ Admin mới được sửa tài khoản Admin.", "danger")
         return redirect(url_for("admin") + "#users")
 
     display_name = request.form.get("display_name", "").strip()
@@ -8006,6 +8025,9 @@ def admin_create_manual_match():
     loser_id = player2_id if score1 > score2 else player1_id if score2 > score1 else None
     host_user_id = player1_id if host_side != "player2" else player2_id
 
+    match = None
+    room = None
+    result_applied = False
     try:
         match_result = execute_query(
             db.table("matches").insert({
@@ -8030,7 +8052,7 @@ def admin_create_manual_match():
         if not match:
             raise RuntimeError("Không tạo được bản ghi trận đấu.")
 
-        execute_query(
+        room_result = execute_query(
             db.table("match_rooms").insert({
                 "host_user_id": host_user_id,
                 "guest_user_id": player2_id if host_user_id == player1_id else player1_id,
@@ -8051,11 +8073,15 @@ def admin_create_manual_match():
             "admin_create_manual_room_insert",
             attempts=2,
         )
+        room = (room_result.data or [None])[0]
+        if not room:
+            raise RuntimeError("Không tạo được phòng liên kết cho trận thủ công.")
 
         refreshed = get_match(match.get("id"))
         if not refreshed:
             raise RuntimeError("Không đọc lại được trận vừa tạo.")
         delta1, delta2 = apply_match_result(refreshed)
+        result_applied = True
         execute_query(
             db.table("matches").update({"note": note, "updated_at": now_iso()}).eq("id", match.get("id")),
             "admin_create_manual_match_note",
@@ -8077,6 +8103,18 @@ def admin_create_manual_match():
         cache_delete("_rz_users_map")
     except Exception as exc:
         print(f"admin_create_manual_match ERROR: {type(exc).__name__}: {exc}")
+        # Best-effort rollback prevents orphan rooms/matches after a partial failure.
+        try:
+            if result_applied and match:
+                fresh_match = get_match(match.get("id"))
+                if fresh_match:
+                    reverse_confirmed_match_result(fresh_match)
+            if room and room.get("id"):
+                execute_query(db.table("match_rooms").delete().eq("id", room.get("id")), "rollback_manual_room", attempts=2)
+            if match and match.get("id"):
+                execute_query(db.table("matches").delete().eq("id", match.get("id")), "rollback_manual_match", attempts=2)
+        except Exception as rollback_exc:
+            print(f"admin_create_manual_match ROLLBACK ERROR: {type(rollback_exc).__name__}: {rollback_exc}")
         flash(f"Không thể tạo trận thủ công: {exc}", "danger")
         return redirect_admin("matches")
 

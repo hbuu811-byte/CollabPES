@@ -33,7 +33,8 @@
     {% if admin_caps.reset_passwords %}<button class="admin-tab-button" type="button" data-admin-tab="passwords">🔑 Quên mật khẩu</button>{% endif %}
     {% if admin_caps.manage_disputes %}<button class="admin-tab-button" type="button" data-admin-tab="disputes">⚠️ Tranh chấp</button>{% endif %}
     {% if admin_caps.manage_rooms %}<button class="admin-tab-button" type="button" data-admin-tab="rooms">🚪 Phòng & lời mời</button>{% endif %}
-    {% if admin_caps.view_matches or admin_caps.create_matches or admin_caps.edit_matches or admin_caps.delete_matches %}<button class="admin-tab-button" type="button" data-admin-tab="matches">🎮 Trận đấu</button>{% endif %}
+    {% if admin_caps.view_matches or admin_caps.edit_matches or admin_caps.delete_matches %}<button class="admin-tab-button" type="button" data-admin-tab="matches">🎮 Trận đấu</button>{% endif %}
+    {% if admin_caps.create_matches %}<button class="admin-tab-button" type="button" data-admin-tab="create-match">➕ Tạo trận</button>{% endif %}
     {% if admin_caps.manage_test_data %}<button class="admin-tab-button" type="button" data-admin-tab="test-data">🧪 Tài khoản test & Import</button>{% endif %}
     {% if admin_caps.manage_gift_codes %}<button class="admin-tab-button" type="button" data-admin-tab="gift-codes">🎟️ Gift Code</button>{% endif %}
     {% if admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_invite_codes %}<button class="admin-tab-button" type="button" data-admin-tab="system">⚙️ Hệ thống</button>{% endif %}
@@ -41,7 +42,7 @@
 </div>
 
 <section class="admin-tab-panel" data-admin-panel="overview">
-{% if not (admin_caps.values()|select|list) %}<div class="panel empty-state">Tài khoản này chưa được Chủ hệ thống cấp chức năng quản trị.</div>{% endif %}
+{% if not (admin_caps.view_users or admin_caps.approve_users or admin_caps.reset_passwords or admin_caps.edit_users or admin_caps.delete_users or admin_caps.view_matches or admin_caps.create_matches or admin_caps.edit_matches or admin_caps.delete_matches or admin_caps.manage_rooms or admin_caps.manage_disputes or admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_gift_codes or admin_caps.manage_invite_codes or admin_caps.manage_test_data or admin_caps.view_logs) %}<div class="panel empty-state">Tài khoản này chưa được Admin cấp chức năng quản trị.</div>{% endif %}
     {% if duplicate_ip_groups %}
     <div class="panel admin-clone-alert" role="alert">
         <div>
@@ -52,7 +53,8 @@
         <a class="btn red" href="#users">Kiểm tra danh sách IP trùng</a>
     </div>
     {% endif %}
-    <div class="panel admin-highlight">
+    {% if admin_caps.approve_users %}
+<div class="panel admin-highlight">
         <div class="admin-section-heading">
             <div>
                 <h2>⏳ Tài khoản đang chờ duyệt</h2>
@@ -93,53 +95,49 @@
         </div>
     </div>
 
-    <div class="panel">
-        <div class="admin-section-heading">
-            <div>
-                <h2>🛡️ Đội ngũ quản trị</h2>
-                <p class="small">Chủ hệ thống quản lý quyền của Admin phụ.</p>
-            </div>
-            <span class="admin-count">{{ admins|length }}</span>
+    {% endif %}
+
+{% if current_user.admin_level == 'owner' %}
+<div class="panel admin-team-panel">
+    <div class="admin-section-heading">
+        <div>
+            <h2>🛡️ Đội ngũ quản trị</h2>
+            <p class="small">Tất cả tài khoản quản trị đều hiển thị chung là <strong>Admin</strong>. Bạn vẫn có thể bật hoặc tắt riêng từng chức năng.</p>
         </div>
-        <div class="table-wrap admin-table-wrap">
-            <table>
-                <thead><tr><th>Tài khoản</th><th>Tên Zalo</th><th>Quyền</th><th>Hành động</th></tr></thead>
-                <tbody>
-                {% for a in admins %}
-                <tr>
-                    <td>{{ a.username }}</td>
-                    <td>{{ a.zalo_name or '-' }}</td>
-                    <td>{{ 'Chủ hệ thống' if a.admin_level == 'owner' else 'Admin phụ' }}</td>
-                    <td>
-                        {% if current_user.admin_level == 'owner' and a.admin_level == 'admin' %}
-                        <div class="admin-permission-card">
-                            <form method="post" action="{{ url_for('admin_update_permissions', user_id=a.id) }}" class="admin-permission-form">
-                                {% set saved_permissions = sub_admin_permissions.get(a.id|string, {}) %}
-                                <div class="admin-permission-list admin-permission-grid">
-                                {% for permission_code, permission_info in admin_permission_definitions.items() %}
-                                    <label class="admin-permission-option">
-                                        <span class="admin-permission-copy"><strong>{{ permission_info[0] }}</strong><small>{{ permission_info[1] }}</small></span>
-                                        <span class="admin-switch"><input type="checkbox" name="permission_{{ permission_code }}" value="1" {% if saved_permissions.get(permission_code) %}checked{% endif %}><span class="admin-switch-track"></span></span>
-                                    </label>
-                                {% endfor %}
-                                </div>
-                                <div class="admin-permission-actions"><button class="btn green admin-save-permissions" type="submit">✓ Lưu toàn bộ quyền</button></div>
-                            </form>
-                            <form method="post" action="{{ url_for('admin_demote_user', user_id=a.id) }}" class="admin-demote-form" onsubmit="return confirm('Gỡ quyền Admin phụ?')">
-                                <button class="btn red admin-demote-btn" type="submit">Gỡ quyền Admin</button>
-                            </form>
-                        </div>
-                        {% else %}
-                        <span class="small">Toàn quyền</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
-        </div>
+        <span class="admin-count">{{ admins|length }}</span>
     </div>
+    <div class="admin-account-grid">
+    {% for a in admins %}
+        <article class="admin-account-card">
+            <header class="admin-account-head">
+                <div><strong>{{ a.username }}</strong><small>{{ a.zalo_name or '-' }}</small></div>
+                <span class="badge success">Admin</span>
+            </header>
+            {% if a.admin_level == 'admin' %}
+            <form method="post" action="{{ url_for('admin_update_permissions', user_id=a.id) }}" class="admin-permission-form compact-permission-form">
+                {% set saved_permissions = sub_admin_permissions.get(a.id|string, {}) %}
+                <div class="admin-permission-grid compact-permission-grid">
+                {% for permission_code, permission_info in admin_permission_definitions.items() %}
+                    <label class="admin-permission-option">
+                        <span class="admin-permission-copy"><strong>{{ permission_info[0] }}</strong><small>{{ permission_info[1] }}</small></span>
+                        <span class="admin-switch"><input type="checkbox" name="permission_{{ permission_code }}" value="1" {% if saved_permissions.get(permission_code) %}checked{% endif %}><span class="admin-switch-track"></span></span>
+                    </label>
+                {% endfor %}
+                </div>
+                <div class="admin-permission-footer">
+                    <button class="btn green" type="submit">✓ Lưu quyền</button>
+                    <button class="btn red" type="submit" formaction="{{ url_for('admin_demote_user', user_id=a.id) }}" onclick="return confirm('Gỡ quyền Admin?')">Gỡ quyền Admin</button>
+                </div>
+            </form>
+            {% else %}
+            <p class="small admin-full-access-note">Tài khoản Admin hiện tại.</p>
+            {% endif %}
+        </article>
+    {% endfor %}
+    </div>
+</div>
 </section>
+{% endif %}
 
 {% if admin_caps.reset_passwords %}
 <section class="admin-tab-panel" data-admin-panel="passwords">
@@ -181,7 +179,6 @@
 </section>
 
 {% if admin_caps.view_users or admin_caps.approve_users or admin_caps.edit_users or admin_caps.delete_users %}
-{% endif %}
 <section class="admin-tab-panel" data-admin-panel="users">
     <div class="panel">
         <div class="admin-section-heading admin-user-toolbar">
@@ -247,7 +244,7 @@
                         </td>
                         <td>
                             <span class="badge {{ 'gold' if p.role == 'admin' or p.admin_level in ['owner', 'admin'] else (p.account_status or 'approved') }}">
-                                {% if p.admin_level == 'owner' %}Chủ hệ thống{% elif p.admin_level == 'admin' %}Admin phụ{% else %}{{ p.account_status or 'approved' }}{% endif %}
+                                {% if p.admin_level in ['owner','admin'] %}Admin{% else %}{{ p.account_status or 'approved' }}{% endif %}
                             </span>
                         </td>
                         <td><code class="admin-ip-code">{{ p.register_ip or '-' }}</code></td>
@@ -303,7 +300,7 @@
                                     {% if can_edit %}
                                     <button class="btn green" type="submit">💾 Lưu thay đổi</button>
                                     {% else %}
-                                    <span class="small">Chỉ Chủ hệ thống được sửa tài khoản Admin.</span>
+                                    <span class="small">Chỉ Admin được sửa tài khoản Admin.</span>
                                     {% endif %}
                                 </div>
                             </form>{% endif %}
@@ -316,7 +313,7 @@
                                 {% if admin_caps.edit_users %}<form class="inline-form" method="post" action="{{ url_for('admin_ban_account', user_id=p.id) }}" onsubmit="return confirm('Khóa tài khoản này?')"><button class="btn red" type="submit">Khóa</button></form>{% endif %}
                                 {% endif %}
                                 {% if current_user.admin_level == 'owner' and p.account_status == 'approved' and p.admin_level == 'none' %}
-                                <form class="inline-form" method="post" action="{{ url_for('admin_promote_user', user_id=p.id) }}" onsubmit="return confirm('Thêm người này làm Admin phụ?')"><button class="btn gold" type="submit">Thêm làm Admin</button></form>
+                                <form class="inline-form" method="post" action="{{ url_for('admin_promote_user', user_id=p.id) }}" onsubmit="return confirm('Thêm người này làm Admin?')"><button class="btn gold" type="submit">Thêm làm Admin</button></form>
                                 {% endif %}
                                 {% if p.admin_level == 'none' %}
                                 {% if admin_caps.edit_users %}<form class="inline-form" method="post" action="{{ url_for('admin_reset_player_stats', user_id=p.id) }}" onsubmit="return confirm('Reset toàn bộ chỉ số thi đấu?')"><button class="btn gold" type="submit">Reset chỉ số</button></form>{% endif %}
@@ -337,8 +334,9 @@
     </div>
 </section>
 
-{% if admin_caps.manage_disputes %}
 {% endif %}
+
+{% if admin_caps.manage_disputes %}
 <section class="admin-tab-panel" data-admin-panel="disputes">
     <div class="panel">
         <div class="admin-section-heading">
@@ -420,8 +418,9 @@
     </div>
 </section>
 
-{% if admin_caps.manage_rooms %}
 {% endif %}
+
+{% if admin_caps.manage_rooms %}
 <section class="admin-tab-panel" data-admin-panel="rooms">
     <div class="panel">
         <div class="admin-section-heading"><h2>🚪 Phòng đang hoạt động</h2><span class="admin-count">{{ rooms|length }}</span></div>
@@ -465,11 +464,69 @@
     </div>
 </section>
 
-{% if admin_caps.view_matches or admin_caps.create_matches or admin_caps.edit_matches or admin_caps.delete_matches %}
 {% endif %}
+
+{% if admin_caps.view_matches or admin_caps.edit_matches or admin_caps.delete_matches %}
 <section class="admin-tab-panel" data-admin-panel="matches">
-    <div class="admin-match-layout">
-        {% if admin_caps.create_matches %}<aside class="panel admin-manual-match-card">
+
+
+    <div class="panel admin-recent-match-panel">
+            <div class="admin-section-heading admin-match-head">
+                <div>
+                    <h2>🎮 Quản lý trận đấu gần đây</h2>
+                    <p class="small">Bảng gọn hơn để nhìn được nhiều dòng. Sửa tỉ số sẽ xác nhận lại trận và tính lại RP.</p>
+                </div>
+                <span class="admin-count">{{ all_matches|length }}</span>
+            </div>
+            <div class="admin-match-table-wrap">
+                <table class="admin-match-compact-table">
+                    <thead><tr><th>Player 1</th><th>RP</th><th>Tỉ số</th><th>Player 2</th><th>RP</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
+                    <tbody>
+                    {% for m in all_matches %}
+                    {% if admin_caps.edit_matches %}<form id="match-form-{{ m.id }}" method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}"></form>{% endif %}
+                    <tr>
+                        <td class="admin-player-cell"><strong>{{ m.player1_name }}</strong><small>{{ m.team1 or '-' }}</small></td>
+                        <td><strong class="{{ 'positive' if (m.delta1 or 0) > 0 else 'negative' if (m.delta1 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta1 or 0) }}</strong></td>
+                        <td>
+                            {% if admin_caps.edit_matches %}<div class="admin-score-edit-inline">
+                                <input form="match-form-{{ m.id }}" class="score-input compact" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}">
+                                <span>-</span>
+                                <input form="match-form-{{ m.id }}" class="score-input compact" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}">
+                            </div>{% else %}<strong>{{ m.score1 }} - {{ m.score2 }}</strong>{% endif %}
+                        </td>
+                        <td class="admin-player-cell"><strong>{{ m.player2_name }}</strong><small>{{ m.team2 or '-' }}</small></td>
+                        <td><strong class="{{ 'positive' if (m.delta2 or 0) > 0 else 'negative' if (m.delta2 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta2 or 0) }}</strong></td>
+                        <td>
+                            {% if admin_caps.edit_matches %}<select form="match-form-{{ m.id }}" name="target_status" class="admin-status-select compact">
+                                <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>confirmed</option>
+                                <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>cancelled</option>
+                            </select>{% endif %}
+                            <span class="badge {{ m.status }}">{{ m.status }}</span>
+                        </td>
+                        <td>{% if admin_caps.edit_matches %}<input form="match-form-{{ m.id }}" class="admin-note-input compact" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú">{% else %}<span class="small">{{ m.note or '-' }}</span>{% endif %}</td>
+                        <td>
+                            <div class="admin-match-actions-inline">
+                                {% if admin_caps.edit_matches %}<button form="match-form-{{ m.id }}" class="btn green small" type="submit">Lưu</button>{% endif %}
+                                {% if admin_caps.manage_disputes and m.status == 'disputed' %}<button form="match-form-{{ m.id }}" class="btn green small" type="submit" formaction="{{ url_for('admin_confirm_disputed', match_id=m.id) }}" formmethod="post">Xác nhận TC</button>{% endif %}
+                                {% if admin_caps.delete_matches %}<button form="match-form-{{ m.id }}" class="btn gold small" type="submit" formaction="{{ url_for('admin_cancel', match_id=m.id) }}" formmethod="post" onclick="return confirm('Hủy trận này?')">Hủy</button>
+                                <button form="match-form-{{ m.id }}" class="btn red small" type="submit" formaction="{{ url_for('admin_delete_match', match_id=m.id) }}" formmethod="post" onclick="return confirm('XÓA trận này và tính lại BXH?')">Xóa</button>{% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% else %}<tr><td colspan="8">Chưa có trận đấu.</td></tr>{% endfor %}
+                    </tbody>
+                </table>
+            </div>
+    </div>
+</section>
+
+
+{% endif %}
+
+{% if admin_caps.create_matches %}
+<section class="admin-tab-panel" data-admin-panel="create-match">
+    <div class="panel admin-manual-match-card standalone-create-match">
+
             <div class="admin-section-heading">
                 <div>
                     <h2>➕ Admin tạo trận thủ công</h2>
@@ -510,64 +567,11 @@
                 </div>
                 <button class="btn admin-primary-action" type="submit" onclick="return confirm('Tạo trận thủ công và cập nhật RP cho 2 người chơi?');">Tạo trận và cập nhật RP</button>
             </form>
-        </aside>{% endif %}
-
-        <div class="panel admin-recent-match-panel">
-            <div class="admin-section-heading admin-match-head">
-                <div>
-                    <h2>🎮 Quản lý trận đấu gần đây</h2>
-                    <p class="small">Bảng gọn hơn để nhìn được nhiều dòng. Sửa tỉ số sẽ xác nhận lại trận và tính lại RP.</p>
-                </div>
-                <span class="admin-count">{{ all_matches|length }}</span>
             </div>
-            <div class="admin-match-table-wrap">
-                <table class="admin-match-compact-table">
-                    <thead><tr><th>Player 1</th><th>RP</th><th>Tỉ số</th><th>Player 2</th><th>RP</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
-                    <tbody>
-                    {% for m in all_matches %}
-                    <tr>
-                        {% if admin_caps.edit_matches %}<form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}">
-                            <td class="admin-player-cell"><strong>{{ m.player1_name }}</strong><small>{{ m.team1 or '-' }}</small></td>
-                            <td><strong class="{{ 'positive' if (m.delta1 or 0) > 0 else 'negative' if (m.delta1 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta1 or 0) }}</strong></td>
-                            <td>
-                                <div class="admin-score-edit-inline">
-                                    <input class="score-input compact" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}">
-                                    <span>-</span>
-                                    <input class="score-input compact" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}">
-                                </div>
-                            </td>
-                            <td class="admin-player-cell"><strong>{{ m.player2_name }}</strong><small>{{ m.team2 or '-' }}</small></td>
-                            <td><strong class="{{ 'positive' if (m.delta2 or 0) > 0 else 'negative' if (m.delta2 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta2 or 0) }}</strong></td>
-                            <td>
-                                <select name="target_status" class="admin-status-select compact">
-                                    <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>confirmed</option>
-                                    <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>cancelled</option>
-                                </select>
-                                <span class="badge {{ m.status }}">{{ m.status }}</span>
-                            </td>
-                            <td><input class="admin-note-input compact" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td>
-                            <td>
-                                <div class="admin-match-actions-inline">
-                                    <button class="btn green small" type="submit">Lưu</button>
-                                    {% if m.status == 'disputed' %}<button class="btn green small" type="submit" formaction="{{ url_for('admin_confirm_disputed', match_id=m.id) }}" formmethod="post">Xác nhận TC</button>{% endif %}
-                                    <button class="btn gold small" type="submit" formaction="{{ url_for('admin_cancel', match_id=m.id) }}" formmethod="post" onclick="return confirm('Hủy trận này?')">Hủy</button>
-                                    <button class="btn red small" type="submit" formaction="{{ url_for('admin_delete_match', match_id=m.id) }}" formmethod="post" onclick="return confirm('XÓA trận này và tính lại BXH?')">Xóa</button>
-                                </div>
-                            </td>
-                        </form>{% endif %}
-                    </tr>
-                    {% else %}<tr><td colspan="8">Chưa có trận đấu.</td></tr>{% endfor %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
 </section>
-
-
-{% if admin_caps.manage_test_data %}
-{% if admin_caps.manage_test_data %}
 {% endif %}
+
+{% if admin_caps.manage_test_data %}
 <section class="admin-tab-panel" data-admin-panel="test-data">
     <div class="admin-tool-grid">
         {% if can_create_test_account %}
@@ -621,8 +625,9 @@
 {% endif %}
 
 
-{% if admin_caps.manage_gift_codes %}
 {% endif %}
+
+{% if admin_caps.manage_gift_codes %}
 <section class="admin-tab-panel" data-admin-panel="gift-codes">
     <div class="panel admin-highlight">
         <div class="admin-section-heading">
@@ -717,10 +722,12 @@
     </div>
 </section>
 
-{% if admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_invite_codes %}
 {% endif %}
+
+{% if admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_invite_codes %}
 <section class="admin-tab-panel" data-admin-panel="system">
-    <div class="panel">
+    {% if admin_caps.manage_announcements %}
+<div class="panel">
         <h2>📢 Thông báo Admin chạy ngang</h2>
         {% if active_announcement %}
         <p>Đang bật: <strong>{{ active_announcement.title }}</strong> — {{ active_announcement.message }}</p>
@@ -733,7 +740,10 @@
         </form>{% endif %}
     </div>
 
-    <div class="panel admin-system-toggle-panel">
+    {% endif %}
+
+{% if admin_caps.manage_friendly %}
+<div class="panel admin-system-toggle-panel">
         <div class="admin-section-heading">
             <div>
                 <h2>🤝 Trận giao hữu</h2>
@@ -757,7 +767,10 @@
         </form>{% endif %}
     </div>
 
-    <div class="panel admin-system-toggle-panel">
+    {% endif %}
+
+{% if admin_caps.manage_chat %}
+<div class="panel admin-system-toggle-panel">
         <div class="admin-section-heading">
             <div>
                 <h2>💬 Quản lý Chat</h2>
@@ -793,15 +806,15 @@
 </section>
 
 
-{% if current_user.admin_level == 'owner' %}
-{% if admin_caps.view_logs %}
 {% endif %}
+
+{% if admin_caps.view_logs %}
 <section class="admin-tab-panel" data-admin-panel="logs">
     <div class="panel">
         <div class="admin-section-heading">
             <div>
                 <h2>🧾 Nhật ký hoạt động Admin</h2>
-                <p class="small">Chỉ Chủ hệ thống được xem. Nhật ký ghi hành động, đối tượng, thời gian và IP thao tác.</p>
+                <p class="small">Chỉ Admin được xem. Nhật ký ghi hành động, đối tượng, thời gian và IP thao tác.</p>
             </div>
             <span class="admin-count">{{ audit_logs|length }}</span>
         </div>
@@ -823,9 +836,9 @@
             </table>
         </div>
     </div>
-</section>
 {% endif %}
 
+</section>
 {% endif %}
 <script>
 (function () {
@@ -951,6 +964,29 @@
 .history-card .history-result,.history-card .history-points{min-width:110px}
 @media (max-width: 1100px){.admin-match-layout{grid-template-columns:1fr}.admin-manual-match-card{position:static}.admin-inline-3{grid-template-columns:1fr}.admin-note-input.compact{min-width:120px}}
 .admin-permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}.admin-permission-grid .admin-permission-option{margin:0}@media(max-width:900px){.admin-permission-grid{grid-template-columns:1fr}}
+</style>
+
+
+<style>
+.admin-team-panel{overflow:hidden}
+.admin-account-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(460px,1fr));gap:16px}
+.admin-account-card{border:1px solid rgba(148,163,184,.18);border-radius:16px;background:rgba(7,20,38,.72);padding:16px;min-width:0}
+.admin-account-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid rgba(148,163,184,.14)}
+.admin-account-head div{display:grid;gap:3px}.admin-account-head small{color:#9fb2d5}
+.compact-permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+.compact-permission-grid .admin-permission-option{min-height:56px;padding:9px 11px}
+.compact-permission-grid .admin-permission-copy small{display:block;white-space:normal;line-height:1.25}
+.admin-permission-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:12px;padding-top:12px;border-top:1px solid rgba(148,163,184,.14)}
+.admin-full-access-note{margin:0;color:#9fb2d5}
+.admin-recent-match-panel{width:100%;max-width:none;margin:0}
+.admin-match-table-wrap{width:100%;max-height:72vh;overflow:auto}
+.admin-match-compact-table{min-width:1180px;table-layout:auto}
+.admin-match-compact-table th,.admin-match-compact-table td{white-space:nowrap}
+.admin-match-compact-table td:nth-child(7){min-width:220px}
+.admin-match-compact-table td:nth-child(8){min-width:210px}
+.standalone-create-match{max-width:980px;margin:0 auto}
+.standalone-create-match .admin-manual-match-form{display:grid;gap:14px}
+@media (max-width:900px){.admin-account-grid{grid-template-columns:1fr}.compact-permission-grid{grid-template-columns:1fr}.admin-permission-footer{justify-content:stretch;flex-direction:column}.standalone-create-match{max-width:none}}
 </style>
 
 {% endblock %}

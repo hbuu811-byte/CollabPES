@@ -78,22 +78,6 @@
 </table>
 </div>
 
-<script>
-function checkActiveRoomFromInvitesPage() {
-    fetch("{{ url_for('api_active_room') }}", {
-        method: "GET",
-        credentials: "same-origin"
-    })
-    .then(function (res) { return res.json(); })
-    .then(function (data) {
-        if (!data.ok || !data.has_room || !data.room_url || data.auto_redirect === false) return;
-        window.location.href = data.room_url;
-    })
-    .catch(function () {});
-}
 
-setTimeout(checkActiveRoomFromInvitesPage, 1500);
-setInterval(checkActiveRoomFromInvitesPage, 5000);
-</script>
 
 {% endblock %}

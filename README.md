@@ -1,4 +1,4 @@
-# Rank PES Collaboration V1.10.49
+# Rank PES Collaboration V1.10.50
 
 Bản hotfix tương thích schema Supabase: bỏ yêu cầu cột không tồn tại `matches.room_id`.
 

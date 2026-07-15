@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.49"
+APP_VERSION = "V1.10.50"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -255,10 +255,14 @@ USER_PUBLIC_COLUMNS = ",".join([
     "zcoin_balance", "created_at"
 ])
 
+# Lưu ý: không chọn cột `mode` ở đây. Trong PostgREST/PostgreSQL, `mode` cũng là
+# tên một ordered-set aggregate. Với một số phiên bản PostgREST, chuỗi select bare
+# `mode` bị phân tích thành hàm aggregate và phát sinh lỗi 42809 (WITHIN GROUP).
+# Luồng hiển thị hiện tại không dùng matches.mode, nên bỏ cột này là an toàn.
 MATCH_LIST_COLUMNS = ",".join([
     "id", "player1_id", "player2_id", "score1", "score2", "team1", "team2",
     "status", "winner_id", "loser_id", "delta1", "delta2", "submitted_by_id",
-    "mode", "note", "created_at", "updated_at"
+    "note", "created_at", "updated_at"
 ])
 
 

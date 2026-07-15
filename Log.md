@@ -1,3 +1,11 @@
+# V1.10.50 — Sửa xung đột tên cột `mode` với PostgreSQL aggregate
+
+- Sửa lỗi `42809: WITHIN GROUP is required for ordered-set aggregate mode` trên `/matches`, `/profile/<id>`, `/players` và `/admin`.
+- Nguyên nhân: danh sách cột tối ưu của V1.10.47–V1.10.49 có cột `mode`; PostgREST của dự án phân tích tên này như ordered-set aggregate `mode()` thay vì cột dữ liệu.
+- Loại `mode` khỏi `MATCH_LIST_COLUMNS` vì các màn hình hiện tại không sử dụng `matches.mode`.
+- Giữ nguyên tối ưu chọn đúng cột, không quay lại `select(*)`.
+- Không thay đổi database, RP, lịch sử trận hoặc cấu trúc bảng. Không cần chạy SQL.
+
 # V1.10.45 — Giảm delay Realtime, loại bỏ xử lý chồng và chống render thừa
 
 - Sửa lỗi quan trọng: trước đây chỉ cần cấu hình Realtime được bật là polling bị giãn tới 60–120 giây, kể cả WebSocket chưa đăng ký thành công. Bản mới chỉ coi Realtime hoạt động khi channel báo `SUBSCRIBED`.

@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.59"
+APP_VERSION = "V1.10.60"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -5744,11 +5744,41 @@ def room_detail(room_id):
 
     return render_template(
         "room_detail.html",
-        room=room,
-        friendly_tiers=get_available_team_tiers(),
-        friendly_matches_enabled=friendly_matches_enabled(force=True),
-        room_chat_enabled=chat_features_enabled().get("room", True),
+        **room_view_context(room),
     )
+
+
+def room_view_context(room, room_action_message=None, room_action_category=None):
+    return {
+        "room": room,
+        "friendly_tiers": get_available_team_tiers(),
+        "friendly_matches_enabled": friendly_matches_enabled(force=True),
+        "room_chat_enabled": chat_features_enabled().get("room", True),
+        "room_action_message": room_action_message,
+        "room_action_category": room_action_category,
+    }
+
+
+def render_room_dynamic_state(room_id, message=None, category="success"):
+    room = get_room(room_id)
+    if not room:
+        return '<div id="roomDynamicState" class="panel">Không tìm thấy phòng.</div>', 404
+    return render_template(
+        "partials/room_dynamic_state.html",
+        **room_view_context(room, message, category),
+    )
+
+
+@app.route("/room/<room_id>/state-fragment")
+@login_required
+def room_state_fragment(room_id):
+    user = current_user()
+    room = get_room(room_id)
+    if not room:
+        return '<div id="roomDynamicState" class="panel">Không tìm thấy phòng.</div>', 404
+    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
+        return '<div id="roomDynamicState" class="panel">Bạn không thuộc phòng này.</div>', 403
+    return render_template("partials/room_dynamic_state.html", **room_view_context(room))
 
 
 @app.route("/room/<room_id>/leave", methods=["POST"])
@@ -6331,33 +6361,35 @@ def room_submit_result(room_id):
     user = current_user()
     room = get_room(room_id)
 
+    def respond(message, category="success", fallback="room_detail"):
+        if is_htmx_request() and room:
+            return render_room_dynamic_state(room_id, message, category)
+        flash(message, category)
+        if fallback == "rooms":
+            return redirect(url_for("rooms"))
+        return redirect(url_for("room_detail", room_id=room_id))
+
     if not room:
-        flash("Không tìm thấy phòng.", "danger")
-        return redirect(url_for("rooms"))
+        return respond("Không tìm thấy phòng.", "danger", "rooms")
 
     if user["id"] != room["host_user_id"] and not is_admin_user(user):
-        flash("Chỉ chủ phòng mới được nhập kết quả.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Chỉ chủ phòng mới được nhập kết quả.", "danger")
 
     if room["status"] != "playing":
-        flash("Chỉ trận đang đá mới được nhập kết quả.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Chỉ trận đang đá mới được nhập kết quả.", "warning")
 
     try:
         host_score = int(request.form.get("host_score", "0"))
         guest_score = int(request.form.get("guest_score", "0"))
     except (TypeError, ValueError):
-        flash("Tỉ số phải là số nguyên.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Tỉ số phải là số nguyên.", "danger")
 
     if host_score < 0 or guest_score < 0:
-        flash("Tỉ số không được âm.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Tỉ số không được âm.", "danger")
 
     match = get_match(room["match_id"])
     if not match:
-        flash("Không tìm thấy match gắn với phòng.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Không tìm thấy match gắn với phòng.", "danger")
 
     if host_score > guest_score:
         winner_id = room["host_user_id"]
@@ -6396,11 +6428,9 @@ def room_submit_result(room_id):
         ttl_cache_delete("rooms_raw")
     except Exception as exc:
         print(f"room_submit_result ERROR room={room_id} match={match.get('id')}: {type(exc).__name__}: {exc}")
-        flash("Không thể lưu kết quả do lỗi dữ liệu/kết nối. Vui lòng thử lại; chưa cộng hoặc trừ RP.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Không thể lưu kết quả do lỗi dữ liệu/kết nối. Vui lòng thử lại; chưa cộng hoặc trừ RP.", "danger")
 
-    flash("Đã nhập kết quả. Đang chờ người được mời xác nhận.", "success")
-    return redirect(url_for("room_detail", room_id=room_id))
+    return respond("Đã nhập kết quả. Đang chờ người được mời xác nhận.", "success")
 
 
 @app.route("/room/<room_id>/confirm-result", methods=["POST"])
@@ -6409,22 +6439,26 @@ def room_confirm_result(room_id):
     user = current_user()
     room = get_room(room_id)
 
+    def respond(message, category="success", fallback="room_detail"):
+        if is_htmx_request() and room:
+            return render_room_dynamic_state(room_id, message, category)
+        flash(message, category)
+        if fallback == "rooms":
+            return redirect(url_for("rooms"))
+        return redirect(url_for("room_detail", room_id=room_id))
+
     if not room:
-        flash("Không tìm thấy phòng.", "danger")
-        return redirect(url_for("rooms"))
+        return respond("Không tìm thấy phòng.", "danger", "rooms")
 
     if not can_review_room_result(user, room):
-        flash("Chỉ người được mời mới được xác nhận kết quả. Người đã nhập kết quả không thể tự xác nhận.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Chỉ người được mời mới được xác nhận kết quả. Người đã nhập kết quả không thể tự xác nhận.", "danger")
 
     if room["status"] != "waiting_result_confirm":
-        flash("Phòng chưa có kết quả cần xác nhận.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Phòng chưa có kết quả cần xác nhận.", "warning")
 
     match = get_match(room["match_id"])
     if not match:
-        flash("Không tìm thấy trận.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Không tìm thấy trận.", "danger")
 
     try:
         delta1, delta2 = apply_match_result(match)
@@ -6440,15 +6474,12 @@ def room_confirm_result(room_id):
         )
     except ValueError as exc:
         print(f"room_confirm_result validation room={room_id} match={match.get('id')}: {exc}")
-        flash(str(exc), "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond(str(exc), "warning")
     except Exception as exc:
         print(f"room_confirm_result ERROR room={room_id} match={match.get('id')}: {type(exc).__name__}: {exc}")
-        flash("Không thể xác nhận kết quả do lỗi kết nối dữ liệu. Điểm chưa được xử lý thêm; vui lòng thử lại sau vài giây.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Không thể xác nhận kết quả do lỗi kết nối dữ liệu. Điểm chưa được xử lý thêm; vui lòng thử lại sau vài giây.", "danger")
 
-    flash(f"Đã xác nhận. Chủ phòng: {int(delta1):+d}, Khách: {int(delta2):+d}. Hai người có thể bấm Đá tiếp.", "success")
-    return redirect(url_for("room_detail", room_id=room_id))
+    return respond(f"Đã xác nhận. Chủ phòng: {int(delta1):+d}, Khách: {int(delta2):+d}. Hai người có thể bấm Đá tiếp.", "success")
 
 
 @app.route("/room/<room_id>/dispute-result", methods=["POST"])

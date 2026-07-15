@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.58"
+APP_VERSION = "V1.10.59"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -4558,6 +4558,19 @@ def ranking():
         player["record_text"] = f"{wins}T • {draws}H • {losses}B"
         player["recent_form"] = recent_form_map.get(player.get("id"), [])
 
+    if is_htmx_request():
+        response = make_response(render_template(
+            "partials/ranking_results.html",
+            players=filtered,
+            current_player=current_player,
+            current_position=current_position,
+            q=query_raw,
+            rank_filter=rank_filter,
+        ))
+        response.headers["Cache-Control"] = "private, no-store"
+        response.headers["Vary"] = "HX-Request"
+        return response
+
     template_name = "ranking.html" if user else "public_ranking.html"
     html = render_template(
         template_name,
@@ -5156,6 +5169,14 @@ def profile(user_id):
         "balance": _safe_int(request.args.get("balance"), reward_state.get("balance", 0)),
     }
     user["equipped_profile_banner"] = get_equipped_profile_banner(user_id)
+
+    if is_htmx_request():
+        return render_template(
+            "partials/profile_history.html",
+            player=user,
+            matches=matches,
+            history_pagination=history_pagination,
+        )
 
     return render_template(
         "profile.html",
@@ -6262,6 +6283,9 @@ def room_guest_unready(room_id):
     )
     cache_delete("_rz_rooms_all")
     ttl_cache_delete("rooms_raw")
+    if is_htmx_request():
+        updated_room = get_room(room_id)
+        return render_template("partials/room_ready_controls.html", room=updated_room)
     flash("Đã hủy trạng thái sẵn sàng.", "success")
     return redirect(url_for("room_detail", room_id=room_id))
 
@@ -6286,6 +6310,9 @@ def room_guest_ready(room_id):
     )
     cache_delete("_rz_rooms_all")
     ttl_cache_delete("rooms_raw")
+    if is_htmx_request():
+        updated_room = get_room(room_id)
+        return render_template("partials/room_ready_controls.html", room=updated_room)
     flash("Bạn đã sẵn sàng.", "success")
     return redirect(url_for("room_detail", room_id=room_id))
 
@@ -7061,6 +7088,17 @@ def delete_player_safe(user_id):
 # =========================
 def redirect_admin(tab="overview"):
     return redirect(url_for("admin") + f"#{tab}")
+
+
+def is_htmx_request():
+    """Nhận diện request HTMX; backend vẫn dùng cùng logic xác thực và truy vấn dữ liệu."""
+    return request.headers.get("HX-Request", "").lower() == "true"
+
+
+def htmx_redirect(location):
+    response = make_response("", 204)
+    response.headers["HX-Redirect"] = location
+    return response
 
 
 @app.route("/admin")
@@ -8439,6 +8477,16 @@ def admin_update_match_result(match_id):
         "Sửa/Xác nhận kết quả", "match", match_id,
         details=f"{old_match.get('score1')}–{old_match.get('score2')} → {score1}–{score2}; RP {int(delta1):+d}/{int(delta2):+d}. {note}",
     )
+    if is_htmx_request():
+        refreshed = next((item for item in list_recent_matches(80) if item.get("id") == match_id), None)
+        if not refreshed:
+            return htmx_redirect(url_for("admin") + "#matches")
+        return render_template(
+            "partials/admin_match_row.html",
+            m=refreshed,
+            admin_caps=get_admin_permissions(current_user()),
+            saved_message=f"Đã lưu • RP {int(delta1):+d}/{int(delta2):+d}",
+        )
     flash(f"Đã sửa kết quả và cập nhật lại RP: {int(delta1):+d}/{int(delta2):+d}.", "success")
     return _admin_match_redirect("matches")
 

@@ -1,3 +1,21 @@
+# V1.10.59 — Tích hợp HTMX đúng khu vực và giữ Supabase Realtime
+
+## Thay đổi chính
+- Dùng HTMX cho Sẵn sàng/Hủy sẵn sàng trong phòng: chỉ cập nhật cụm nút, không tải lại toàn trang.
+- Dùng HTMX cho bộ lọc/tìm kiếm BXH: backend vẫn lọc từ dữ liệu Supabase và trả partial HTML.
+- Dùng HTMX cho phân trang lịch sử Profile: mỗi lần chỉ truy vấn đúng 20 trận từ Supabase.
+- Dùng HTMX cho nút Lưu từng trận trong Admin: chỉ thay lại đúng dòng vừa sửa sau khi backend hoàn tác/tính lại RP.
+- Giữ Supabase Realtime cho Chat phòng, trạng thái phòng live và Presence online; không thay bằng polling HTMX.
+- Mọi endpoint HTMX vẫn dùng chung đăng nhập, phân quyền Admin, kiểm tra trạng thái phòng và logic truy xuất hiện tại.
+- Có fallback form/link HTML thường khi HTMX hoặc CDN không hoạt động.
+- Nâng APP_VERSION lên V1.10.59.
+
+## File partial mới
+- `templates/partials/ranking_results.html`
+- `templates/partials/profile_history.html`
+- `templates/partials/room_ready_controls.html`
+- `templates/partials/admin_match_row.html`
+
 # V1.10.58 — Fix Profile NameError và giao diện Admin theo quyền
 
 - Sửa lỗi `player_matches_raw` chưa được khởi tạo khi mở hồ sơ người chơi khác.

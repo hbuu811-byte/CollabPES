@@ -1,5 +1,5 @@
-# Rank PES Collaboration V1.10.55
+# Rank PES Collaboration V1.10.59
 
-Bản hotfix tương thích schema Supabase: bỏ yêu cầu cột không tồn tại `matches.room_id`.
+Tích hợp HTMX cho các thao tác giao diện phù hợp, đồng thời giữ Supabase Realtime cho chat, trạng thái live và presence online.
 
-Không cần chạy SQL. Không thay đổi RP hoặc dữ liệu.
+Không cần chạy SQL. Không thay đổi schema Supabase.

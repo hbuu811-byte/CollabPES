@@ -486,39 +486,7 @@
                     <thead><tr><th>Player 1</th><th>RP</th><th>Tỉ số</th><th>Player 2</th><th>RP</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
                     <tbody>
                     {% for m in all_matches %}
-                    {% if admin_caps.edit_matches %}<form id="match-form-{{ m.id }}" method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}"></form>{% endif %}
-                    <tr>
-                        <td class="admin-player-cell"><strong>{{ m.player1_name }}</strong><small>{{ m.team1 or '-' }}</small></td>
-                        <td><strong class="{{ 'positive' if (m.delta1 or 0) > 0 else 'negative' if (m.delta1 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta1 or 0) }}</strong></td>
-                        <td>
-                            {% if admin_caps.edit_matches %}<div class="admin-score-edit-inline">
-                                <input form="match-form-{{ m.id }}" class="score-input compact" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}">
-                                <span>-</span>
-                                <input form="match-form-{{ m.id }}" class="score-input compact" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}">
-                            </div>{% else %}<strong>{{ m.score1 }} - {{ m.score2 }}</strong>{% endif %}
-                        </td>
-                        <td class="admin-player-cell"><strong>{{ m.player2_name }}</strong><small>{{ m.team2 or '-' }}</small></td>
-                        <td><strong class="{{ 'positive' if (m.delta2 or 0) > 0 else 'negative' if (m.delta2 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta2 or 0) }}</strong></td>
-                        <td>
-                            {% if admin_caps.edit_matches %}
-                            <select form="match-form-{{ m.id }}" name="target_status" class="admin-status-select compact">
-                                <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>Xác nhận</option>
-                                <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>Đã hủy</option>
-                            </select>
-                            {% else %}
-                            <span class="badge {{ m.status }}">{{ 'Xác nhận' if m.status == 'confirmed' else 'Đã hủy' if m.status == 'cancelled' else m.status }}</span>
-                            {% endif %}
-                        </td>
-                        <td>{% if admin_caps.edit_matches %}<input form="match-form-{{ m.id }}" class="admin-note-input compact" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú">{% else %}<span class="small">{{ m.note or '-' }}</span>{% endif %}</td>
-                        <td>
-                            <div class="admin-match-actions-inline">
-                                {% if admin_caps.edit_matches %}<button form="match-form-{{ m.id }}" class="btn green small" type="submit">Lưu</button>{% endif %}
-                                {% if admin_caps.manage_disputes and m.status == 'disputed' %}<button form="match-form-{{ m.id }}" class="btn green small" type="submit" formaction="{{ url_for('admin_confirm_disputed', match_id=m.id) }}" formmethod="post">Xác nhận TC</button>{% endif %}
-                                {% if admin_caps.delete_matches %}<button form="match-form-{{ m.id }}" class="btn gold small" type="submit" formaction="{{ url_for('admin_cancel', match_id=m.id) }}" formmethod="post" onclick="return confirm('Hủy trận này?')">Hủy</button>
-                                <button form="match-form-{{ m.id }}" class="btn red small" type="submit" formaction="{{ url_for('admin_delete_match', match_id=m.id) }}" formmethod="post" onclick="return confirm('XÓA trận này và tính lại BXH?')">Xóa</button>{% endif %}
-                            </div>
-                        </td>
-                    </tr>
+                    {% include "partials/admin_match_row.html" %}
                     {% else %}<tr><td colspan="8">Chưa có trận đấu.</td></tr>{% endfor %}
                     </tbody>
                 </table>

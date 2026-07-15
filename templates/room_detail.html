@@ -213,21 +213,7 @@
         {% endif %}
 
         {% if current_user.id == room.guest_user_id %}
-        <div class="room-guest-control-actions">
-            {% if not room.guest_ready %}
-            <form method="post" action="{{ url_for('room_guest_ready', room_id=room.id) }}">
-                <button class="btn green" type="submit">Sẵn sàng</button>
-            </form>
-            {% else %}
-            <form method="post" action="{{ url_for('room_guest_unready', room_id=room.id) }}">
-                <button class="btn gray" type="submit">Hủy sẵn sàng</button>
-            </form>
-            {% endif %}
-            <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn đã chấp nhận vào phòng. Thoát lúc này được tính là Bỏ Cuộc và bị trừ 20 RP. Tiếp tục?');">
-                <button class="btn red" type="submit">Thoát phòng</button>
-            </form>
-        </div>
-        <p class="small danger-text">Thoát phòng sau khi đã chấp nhận lời mời được tính là bỏ cuộc và bị trừ 20 RP.</p>
+        {% include "partials/room_ready_controls.html" %}
         {% elif current_user.id == room.host_user_id %}
         <form class="inline-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}">
             <button class="btn red" type="submit">🚪 Thoát phòng</button>

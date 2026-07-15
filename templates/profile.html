@@ -148,65 +148,7 @@
         </div>
     </section>
 
-    <section class="rzp-tab-panel" data-tab-panel="history">
-        <div class="rzp-tab-head">
-            <div><span class="eyebrow">LỊCH SỬ ĐẤU</span><h2>20 trận mỗi trang</h2></div>
-            <p class="small">Kết quả được nhìn từ góc độ của {{ player.display_name }}.</p>
-        </div>
-        <div class="history-list rzp-history-list">
-        {% for m in matches %}
-        <article class="history-card is-mine rzp-history-card">
-            <div class="history-result"><span class="result-pill result-{{ m.result_code }}">{{ m.result_label }}</span><small>{{ m.created_at_display }}</small></div>
-            <div class="history-matchup">
-                <div>
-                    <span class="match-player-inline">{{ player_avatar(player, size='xs') }}<strong>{{ player.display_name }}</strong></span>
-                    <small>{{ m.my_team or '-' }}</small>
-                </div>
-                <strong>{{ m.score_display }}</strong>
-                <div class="right">
-                    <a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.opponent_id) }}"><span>{{ m.opponent_name }}</span>{{ player_avatar(name=m.opponent_name, avatar_url=m.opponent_avatar_url, achievement=m.opponent_achievement, size='xs') }}</a>
-                    <small>{{ m.opponent_team or '-' }}</small>
-                </div>
-            </div>
-            <div class="history-points">
-                {% if m.status == 'confirmed' %}
-                <strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>
-                {% else %}<strong>Không tính điểm</strong>{% endif %}
-                <small>{{ m.status_label }}</small>
-            </div>
-            {% if current_user and ADMIN_CAPS.edit_matches %}
-            <details class="panel" style="margin-top:10px; padding:10px;">
-                <summary><strong>🛠 Admin sửa trực tiếp trận này</strong></summary>
-                <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}" class="grid-form" style="margin-top:10px;">
-                    <input type="hidden" name="return_url" value="{{ url_for('profile', user_id=player.id) }}#history">
-                    <label>Tỷ số Player 1<input type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}" required></label>
-                    <label>Tỷ số Player 2<input type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}" required></label>
-                    <label>Trạng thái
-                        <select name="target_status">
-                            <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>confirmed</option>
-                            <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>cancelled</option>
-                        </select>
-                    </label>
-                    <label>Ghi chú<input name="note" maxlength="500" value="{{ m.note or '' }}" placeholder="Lý do Admin chỉnh sửa"></label>
-                    <button class="btn green" type="submit" onclick="return confirm('Lưu tỷ số và trạng thái trận này?');">Lưu thay đổi</button>
-                </form>
-            </details>
-            {% endif %}
-        </article>
-        {% else %}<div class="panel empty-state">Player này chưa có trận nào.</div>{% endfor %}
-        </div>
-        {% if history_pagination and (history_pagination.has_prev or history_pagination.has_next) %}
-        <nav class="panel" style="display:flex;justify-content:center;gap:10px;align-items:center;margin-top:12px;" aria-label="Phân trang lịch sử">
-            {% if history_pagination.has_prev %}
-            <a class="btn small" href="{{ url_for('profile', user_id=player.id, page=history_pagination.prev_page) }}#history">← Trang trước</a>
-            {% endif %}
-            <strong>Trang {{ history_pagination.page }}</strong>
-            {% if history_pagination.has_next %}
-            <a class="btn small" href="{{ url_for('profile', user_id=player.id, page=history_pagination.next_page) }}#history">Trang sau →</a>
-            {% endif %}
-        </nav>
-        {% endif %}
-    </section>
+    {% include "partials/profile_history.html" %}
 
     <section class="rzp-tab-panel" data-tab-panel="zcoin">
         <div class="rzp-tab-head">

@@ -6,7 +6,8 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.10.54">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.10.59">
+    <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.4/dist/htmx.min.js"></script>
 
 <script>
 (function initTheme(){
@@ -23,6 +24,8 @@ function toggleTheme(){
 
 <style>
 .account-admin-role{display:inline-flex;align-items:center;width:max-content;margin-top:5px;padding:3px 8px;border-radius:999px;font-size:11px;font-weight:800;letter-spacing:.03em}.account-admin-role.owner-role{color:#ffe59a;background:rgba(255,190,43,.14);border:1px solid rgba(255,190,43,.35)}.account-admin-role.subadmin-role{color:#b9d7ff;background:rgba(68,137,255,.13);border:1px solid rgba(68,137,255,.3)}
+.htmx-request{opacity:.72;pointer-events:none}.htmx-save-ok{display:block;margin-top:5px;color:#65e59a;font-weight:700}
+/* V1.10.59 HTMX behavior */
 </style>
 </head>
 <body>

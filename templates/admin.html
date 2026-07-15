@@ -8,10 +8,11 @@
     </div>
     <div class="admin-heading-actions">
         <a class="btn gray" href="{{ url_for('dashboard') }}">⌂ Trang người chơi</a>
-        <a class="btn" href="#system">⚙ Cài đặt hệ thống</a>
+        {% if admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_invite_codes %}<a class="btn" href="#system">⚙ Cài đặt hệ thống</a>{% endif %}
     </div>
 </div>
 
+{% if current_user.admin_level == 'owner' %}
 <section class="admin-metric-grid" aria-label="Thống kê nhanh">
     <article class="admin-metric-card metric-purple">
         <div class="metric-icon">👥</div><div><span>Tổng người chơi</span><strong>{{ players|length }}</strong><small>{{ pending_users|length }} tài khoản chờ duyệt</small></div>
@@ -26,9 +27,10 @@
         <div class="metric-icon">⚠</div><div><span>Cần xử lý</span><strong>{{ (pending_disputes|length) + (password_reset_requests|length) }}</strong><small>Tranh chấp và quên mật khẩu</small></div>
     </article>
 </section>
+{% endif %}
 
 <div class="admin-tabs" role="tablist" aria-label="Khu vực quản trị">
-    <button class="admin-tab-button" type="button" data-admin-tab="overview">📌 Tổng quan</button>
+    {% if current_user.admin_level == 'owner' %}<button class="admin-tab-button" type="button" data-admin-tab="overview">📌 Tổng quan</button>{% endif %}
     {% if admin_caps.view_users or admin_caps.approve_users or admin_caps.edit_users or admin_caps.delete_users %}<button class="admin-tab-button" type="button" data-admin-tab="users">👥 Người dùng</button>{% endif %}
     {% if admin_caps.reset_passwords %}<button class="admin-tab-button" type="button" data-admin-tab="passwords">🔑 Quên mật khẩu</button>{% endif %}
     {% if admin_caps.manage_disputes %}<button class="admin-tab-button" type="button" data-admin-tab="disputes">⚠️ Tranh chấp</button>{% endif %}
@@ -41,8 +43,8 @@
     {% if admin_caps.view_logs %}<button class="admin-tab-button" type="button" data-admin-tab="logs">🧾 Nhật ký Admin</button>{% endif %}
 </div>
 
+{% if current_user.admin_level == 'owner' %}
 <section class="admin-tab-panel" data-admin-panel="overview">
-{% if not (admin_caps.view_users or admin_caps.approve_users or admin_caps.reset_passwords or admin_caps.edit_users or admin_caps.delete_users or admin_caps.view_matches or admin_caps.create_matches or admin_caps.edit_matches or admin_caps.delete_matches or admin_caps.manage_rooms or admin_caps.manage_disputes or admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_gift_codes or admin_caps.manage_invite_codes or admin_caps.manage_test_data or admin_caps.view_logs) %}<div class="panel empty-state">Tài khoản này chưa được Admin cấp chức năng quản trị.</div>{% endif %}
     {% if duplicate_ip_groups %}
     <div class="panel admin-clone-alert" role="alert">
         <div>
@@ -97,7 +99,6 @@
 
     {% endif %}
 
-{% if current_user.admin_level == 'owner' %}
 <div class="panel admin-team-panel">
     <div class="admin-section-heading">
         <div>
@@ -135,6 +136,10 @@
     </div>
 </div>
 </section>
+{% endif %}
+
+{% if not (admin_caps.view_users or admin_caps.approve_users or admin_caps.reset_passwords or admin_caps.edit_users or admin_caps.delete_users or admin_caps.view_matches or admin_caps.create_matches or admin_caps.edit_matches or admin_caps.delete_matches or admin_caps.manage_rooms or admin_caps.manage_disputes or admin_caps.manage_announcements or admin_caps.manage_chat or admin_caps.manage_friendly or admin_caps.manage_gift_codes or admin_caps.manage_invite_codes or admin_caps.manage_test_data or admin_caps.view_logs) %}
+<div class="panel empty-state">Tài khoản này chưa được cấp chức năng quản trị.</div>
 {% endif %}
 
 {% if admin_caps.reset_passwords %}
@@ -848,7 +853,8 @@
     const allowedTabs = new Set(buttons.map(function (button) { return button.dataset.adminTab; }));
 
     function activateAdminTab(tabName) {
-        const selected = allowedTabs.has(tabName) ? tabName : 'overview';
+        const firstAllowed = buttons.length ? buttons[0].dataset.adminTab : '';
+        const selected = allowedTabs.has(tabName) ? tabName : firstAllowed;
         buttons.forEach(function (button) {
             const active = button.dataset.adminTab === selected;
             button.classList.toggle('active', active);

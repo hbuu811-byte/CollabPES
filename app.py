@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.57"
+APP_VERSION = "V1.10.58"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -5108,6 +5108,10 @@ def profile(user_id):
     decorate_player_achievements(user, position)
     user["is_online"] = is_user_online_now(user)
 
+    # Dữ liệu tổng hợp hồ sơ cần nhiều hơn 20 trận của trang hiện tại.
+    # V1.10.57 đã chuyển lịch sử sang phân trang Supabase nhưng bỏ quên biến raw dùng
+    # cho đội yêu thích, đối thủ thường gặp và H2H, gây NameError khi mở Profile.
+    player_matches_raw = list_user_matches(user_id, limit=200)
     confirmed = [match for match in player_matches_raw if match.get("status") == "confirmed"]
     teams = []
     opponents = []

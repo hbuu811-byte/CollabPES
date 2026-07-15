@@ -1,0 +1,13 @@
+RankZone FC V1.10.39_REPAIR_HISTORICAL_RP_SAFE
+
+Mục tiêu:
+- Sửa toàn bộ lịch sử trận confirmed bị +0 điểm khi thua hoặc sai dấu RP.
+- Giữ nguyên mức cộng thắng đã lưu nếu đang là số dương.
+- Trận thắng cũ chưa có delta sẽ dùng mức cơ bản +21 RP.
+- Trận thua dùng -20 RP.
+- Trận hòa dùng 0 RP.
+- Đồng bộ lại rank_points bằng đúng phần chênh lệch còn thiếu.
+- SQL chạy lại không cộng/trừ lặp.
+
+BẮT BUỘC CHẠY SQL:
+docs/update_v1_10_39_repair_historical_rp.sql

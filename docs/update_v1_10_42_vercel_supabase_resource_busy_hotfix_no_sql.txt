@@ -1,0 +1,8 @@
+V1.10.42 - VERCEL/SUPABASE RESOURCE BUSY HOTFIX (NO SQL)
+
+- Giới hạn tối đa số truy vấn Supabase chạy đồng thời trên một Vercel warm instance.
+- Thêm exponential backoff và jitter cho lỗi mạng tạm thời như [Errno 16] Device or resource busy.
+- load_rank_ranges không còn làm sập toàn bộ trang khi Supabase chập chờn; dùng cache cũ hoặc DEFAULT_RANKS.
+- Cache danh sách matches trong 8 giây để giảm số lần mở kết nối khi nhiều người cùng xem BXH.
+- Không thay đổi database và không cần chạy SQL.
+- Có thể điều chỉnh biến SUPABASE_MAX_CONCURRENT trên Vercel; mặc định là 3.

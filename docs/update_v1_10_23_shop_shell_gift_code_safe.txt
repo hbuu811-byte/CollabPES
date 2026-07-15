@@ -1,0 +1,33 @@
+# V1.10.23_SHOP_SHELL_GIFT_CODE_SAFE
+
+## Mục tiêu
+- Thêm khung Cửa Hàng trước, chưa triển khai vật phẩm thật.
+- Thêm Kho đồ dạng khung để chuẩn bị phát triển vật phẩm sau.
+- Thêm Gift Code thật: người dùng nhập code nhận ZCOIN, Admin tạo/tắt code.
+
+## SQL
+Cần chạy:
+1. docs/01_install_v1_10_23_shop_shell_gift_code.sql
+2. docs/02_check_v1_10_23_shop_shell_gift_code.sql
+
+Không chạy rollback nếu hệ thống đang ổn.
+
+## File thay đổi
+- app.py
+- templates/base.html
+- templates/shop.html
+- templates/inventory.html
+- templates/admin.html
+- static/style.css
+- README.md
+- Log.md
+- docs/*v1_10_23*
+
+## Không thay đổi
+- Không đụng logic rank.
+- Không đụng phòng đấu.
+- Không đụng BXH.
+- Không đụng điểm danh hằng ngày, chỉ dùng chung ví ZCOIN.
+
+## Tên commit đề xuất
+V1.10.23_SHOP_SHELL_GIFT_CODE_SAFE

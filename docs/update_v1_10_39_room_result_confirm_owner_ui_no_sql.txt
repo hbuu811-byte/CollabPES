@@ -1,0 +1,39 @@
+V1.10.39_ROOM_RESULT_CONFIRM_OWNER_UI_NO_SQL
+============================================
+
+Mục tiêu
+--------
+- Sửa lỗi khi chủ phòng/Admin nhập kết quả xong vẫn thấy nút "Xác Nhận" và "Không Đồng Ý" trong phòng đấu.
+- Chỉ người được mời / đối thủ cần xác nhận mới thấy 2 nút này.
+
+Nguyên nhân
+-----------
+- Template phòng đấu đang cho hiển thị nút xác nhận nếu current_user là guest hoặc role admin.
+- Khi tài khoản Admin cũng là chủ phòng và là người nhập kết quả, điều kiện role admin làm nút xác nhận xuất hiện sai.
+
+Thay đổi
+--------
+1. templates/room_detail.html
+   - Nếu người đang xem chính là người đã nhập kết quả (`submitted_by_id`) thì không hiển thị nút Xác Nhận / Không Đồng Ý.
+   - Chủ phòng sau khi nhập kết quả chỉ thấy trạng thái: "Đã gửi kết quả. Đang chờ đối thủ xác nhận".
+   - Người được mời vẫn thấy nút Xác Nhận / Không Đồng Ý như bình thường.
+
+2. app.py
+   - APP_VERSION -> V1.10.39.
+   - Thêm helper `can_review_room_result(user, room)` để chặn backend việc người nhập kết quả tự xác nhận hoặc tự tranh chấp kết quả của chính mình.
+   - Route `/room/<room_id>/confirm-result` và `/room/<room_id>/dispute-result` dùng helper này để tránh lỗi UI bị bypass bằng request thủ công.
+
+Không thay đổi
+--------------
+- Không cần SQL.
+- Không thay đổi database.
+- Không đụng Shop, Gift Code, ZCOIN, Điểm danh, BXH, Admin panel, tính RP hoặc upload avatar.
+
+Cách deploy
+-----------
+- Upload đè các file trong ZIP lên source hiện tại.
+- Commit gợi ý: V1.10.39_ROOM_RESULT_CONFIRM_OWNER_UI_NO_SQL
+
+Rollback
+--------
+- Quay lại deployment/commit V1.10.38 nếu cần.

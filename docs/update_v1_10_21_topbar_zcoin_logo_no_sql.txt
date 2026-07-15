@@ -1,0 +1,25 @@
+V1.10.21_TOPBAR_ZCOIN_LOGO_NO_SQL
+
+Mục tiêu:
+- Dùng logo ZCOIN riêng trong app thay cho icon emoji trên topbar.
+
+File thay đổi:
+- app.py: cập nhật APP_VERSION = V1.10.21.
+- templates/base.html: topbar ZCOIN dùng ảnh static/zcoin-logo.png.
+- static/style.css: CSS cho icon/logo ZCOIN.
+- static/zcoin-logo.png: logo ZCOIN của dự án.
+- README.md, Log.md: ghi chú version.
+
+SQL:
+- Không cần SQL.
+
+Không thay đổi:
+- Không sửa database.
+- Không sửa điểm danh, ví ZCOIN, phòng đấu, BXH, Players, Admin hoặc logic tính điểm.
+
+Commit message nên dùng:
+V1.10.21_TOPBAR_ZCOIN_LOGO_NO_SQL
+
+Rollback:
+- Nếu lỗi giao diện, rollback Vercel về deployment V1.10.20 hoặc bản ổn định trước đó.
+- Không cần rollback Supabase.

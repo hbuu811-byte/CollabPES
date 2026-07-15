@@ -1,0 +1,36 @@
+# V1.10.26_ROOM_RANK_FRAME_ASSETS_NO_SQL
+
+Mục tiêu:
+- Thêm 10 ảnh khung rank mới do người dùng cung cấp vào phòng đấu.
+- Khung rank tự động hiển thị theo rank hiện tại của chủ phòng và khách trong phòng đấu.
+
+Mapping ảnh:
+- ga -> static/rank_frames/ga.png
+- non -> static/rank_frames/non.png
+- bao-thu -> static/rank_frames/bao-thu.png
+- moi-tap-choi -> static/rank_frames/moi-tap-choi.png
+- ban-chuyen -> static/rank_frames/ban-chuyen.png
+- chuyen-nghiep -> static/rank_frames/chuyen-nghiep.png
+- dang-cap -> static/rank_frames/dang-cap.png
+- sieu-sao -> static/rank_frames/sieu-sao.png
+- huyen-thoai -> static/rank_frames/huyen-thoai.png
+- goat -> static/rank_frames/goat.png
+
+Thay đổi chính:
+- Thêm thư mục static/rank_frames/ chứa 10 PNG khung rank đã xử lý nền ngoài thành trong suốt và tối ưu kích thước.
+- templates/room_detail.html: thêm lớp ảnh khung rank phía sau card chủ phòng/khách.
+- static/style.css: thêm CSS để đặt khung rank phía sau nội dung phòng đấu, không can thiệp logic.
+- app.py: cập nhật APP_VERSION thành V1.10.26.
+
+Không thay đổi:
+- Không cần SQL.
+- Không thay đổi database.
+- Không đụng Shop, Gift Code, ZCOIN, Điểm danh, BXH, Admin hoặc logic tính điểm.
+- Không thay đổi thuật toán random đội/phòng đấu.
+
+Rollback:
+- Rollback Vercel về deployment V1.10.25 nếu lỗi hiển thị.
+- Không cần restore Supabase.
+
+Commit khuyến nghị:
+V1.10.26_ROOM_RANK_FRAME_ASSETS_NO_SQL

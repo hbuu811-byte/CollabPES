@@ -385,3 +385,13 @@
 - Khi Chat bị tắt, giao diện, polling/Realtime và API gửi/đọc chat tương ứng đều bị vô hiệu hóa.
 - Cấu hình Chat dùng cache ngắn để tránh tăng truy vấn Supabase nhưng vẫn phản ánh thay đổi nhanh.
 - Không thay đổi schema database và không cần chạy SQL mới.
+
+## V1.10.47
+- Sửa lỗi `/admin` 500 do `SUPABASE_PUBLIC_URL` bị Jinja hiểu là `Undefined`.
+- Bảo đảm ba biến Public Realtime luôn được truyền vào mọi template, kể cả khi biến môi trường chưa được khai báo.
+- Giảm `select("*")` ở hai luồng đọc nhiều nhất: danh sách người chơi và danh sách trận đấu.
+- Giữ một Supabase client dùng lại trong mỗi Vercel warm instance.
+- Hồ sơ không còn tải toàn bộ bảng trận đấu; chỉ đọc trận có liên quan đến người chơi.
+- Lịch sử hồ sơ phân trang 20 trận/trang.
+- Giữ nguyên cache BXH, Realtime và cơ chế chống request chồng của các bản tối ưu trước.
+- Không cần chạy SQL.

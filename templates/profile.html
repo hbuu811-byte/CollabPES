@@ -149,7 +149,7 @@
 
     <section class="rzp-tab-panel" data-tab-panel="history">
         <div class="rzp-tab-head">
-            <div><span class="eyebrow">LỊCH SỬ ĐẤU</span><h2>10 trận gần nhất</h2></div>
+            <div><span class="eyebrow">LỊCH SỬ ĐẤU</span><h2>20 trận mỗi trang</h2></div>
             <p class="small">Kết quả được nhìn từ góc độ của {{ player.display_name }}.</p>
         </div>
         <div class="history-list rzp-history-list">
@@ -194,6 +194,17 @@
         </article>
         {% else %}<div class="panel empty-state">Player này chưa có trận nào.</div>{% endfor %}
         </div>
+        {% if history_pagination and (history_pagination.has_prev or history_pagination.has_next) %}
+        <nav class="panel" style="display:flex;justify-content:center;gap:10px;align-items:center;margin-top:12px;" aria-label="Phân trang lịch sử">
+            {% if history_pagination.has_prev %}
+            <a class="btn small" href="{{ url_for('profile', user_id=player.id, page=history_pagination.prev_page) }}#history">← Trang trước</a>
+            {% endif %}
+            <strong>Trang {{ history_pagination.page }}</strong>
+            {% if history_pagination.has_next %}
+            <a class="btn small" href="{{ url_for('profile', user_id=player.id, page=history_pagination.next_page) }}#history">Trang sau →</a>
+            {% endif %}
+        </nav>
+        {% endif %}
     </section>
 
     <section class="rzp-tab-panel" data-tab-panel="zcoin">

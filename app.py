@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.46"
+APP_VERSION = "V1.10.47"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -244,6 +244,22 @@ supabase_key = (
 ).strip()
 
 db = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
+
+# Chỉ lấy các cột thật sự cần cho các màn hình đọc nhiều.
+# Điều này giảm JSON, Supabase egress, thời gian giải mã và Fast Origin Transfer.
+USER_PUBLIC_COLUMNS = ",".join([
+    "id", "username", "display_name", "avatar_url", "role", "account_status",
+    "admin_level", "rank_points", "wins", "draws", "losses", "total_matches",
+    "goals_for", "goals_against", "streak",
+    "is_online", "last_seen_at", "matchmaking_cooldown_until", "must_change_password",
+    "zcoin_balance", "featured_achievement_id", "created_at"
+])
+
+MATCH_LIST_COLUMNS = ",".join([
+    "id", "player1_id", "player2_id", "score1", "score2", "team1", "team2",
+    "status", "winner_id", "loser_id", "delta1", "delta2", "submitted_by_id",
+    "room_id", "mode", "note", "created_at", "updated_at"
+])
 
 
 def cache_get(key):
@@ -1703,7 +1719,7 @@ def get_user_by_username(username):
 def get_user(user_id):
     require_db()
     result = execute_query(
-        db.table("users").select("*").eq("id", user_id).limit(1),
+        db.table("users").select(USER_PUBLIC_COLUMNS).eq("id", user_id).limit(1),
         "get_user",
     )
     return result.data[0] if result.data else None
@@ -1732,7 +1748,7 @@ def list_players(include_admin=False):
         shared = ttl_cache_get("players_raw")
         if shared is None:
             result = execute_query(
-                db.table("users").select("*").order("rank_points", desc=True),
+                db.table("users").select(USER_PUBLIC_COLUMNS).order("rank_points", desc=True),
                 "list_players",
             )
             shared = result.data or []
@@ -2112,7 +2128,7 @@ def list_matches(status=None):
     if cached is None:
         shared = ttl_cache_get("matches_raw")
         if shared is None:
-            query = db.table("matches").select("*").order("created_at", desc=True)
+            query = db.table("matches").select(MATCH_LIST_COLUMNS).order("created_at", desc=True)
             result = execute_query(query, "list_matches")
             shared = result.data or []
             ttl_cache_set("matches_raw", shared, 8)
@@ -2136,6 +2152,30 @@ def list_matches(status=None):
         match["loser_name"] = users.get(match.get("loser_id"), {}).get("display_name", "")
 
     return matches
+
+
+def list_user_matches(user_id, limit=200):
+    """Chỉ đọc lịch sử của một người thay vì tải toàn bộ bảng matches."""
+    require_db()
+    safe_limit = max(20, min(int(limit or 200), 500))
+    query = (
+        db.table("matches")
+        .select(MATCH_LIST_COLUMNS)
+        .or_(f"player1_id.eq.{user_id},player2_id.eq.{user_id}")
+        .order("created_at", desc=True)
+        .limit(safe_limit)
+    )
+    result = execute_query(query, "list_user_matches")
+    rows = [dict(row) for row in (result.data or [])]
+    users = users_map()
+    for match in rows:
+        p1 = users.get(match.get("player1_id"), {})
+        p2 = users.get(match.get("player2_id"), {})
+        match["player1_name"] = p1.get("display_name", "Unknown")
+        match["player2_name"] = p2.get("display_name", "Unknown")
+        match["player1_avatar_url"] = p1.get("avatar_url")
+        match["player2_avatar_url"] = p2.get("avatar_url")
+    return rows
 
 
 def match_status_label(status):
@@ -3370,11 +3410,8 @@ def inject_globals():
             "APP_VERSION": APP_VERSION,
             "RANKS": load_rank_ranges(),
             "format_vn_datetime": format_vn_datetime,
-        "SUPABASE_PUBLIC_URL": supabase_url,
-        "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key,
-        "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
-            "SUPABASE_PUBLIC_URL": supabase_url,
-            "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key,
+            "SUPABASE_PUBLIC_URL": supabase_url or "",
+            "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key or "",
             "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
             "lobby_chat_enabled": chat_features_enabled().get("lobby", True),
             "room_chat_enabled": chat_features_enabled().get("room", True),
@@ -3411,6 +3448,9 @@ def inject_globals():
         "APP_VERSION": APP_VERSION,
         "RANKS": load_rank_ranges(),
         "format_vn_datetime": format_vn_datetime,
+        "SUPABASE_PUBLIC_URL": supabase_url or "",
+        "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key or "",
+        "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
         "lobby_chat_enabled": chat_features_enabled().get("lobby", True),
         "room_chat_enabled": chat_features_enabled().get("room", True),
         "pending_invite_count": pending_count,
@@ -4851,12 +4891,21 @@ def profile(user_id):
         return redirect(url_for("players"))
 
     viewer = current_user()
-    all_matches = list_matches()
-    player_matches_raw = [
-        match for match in all_matches
-        if user_id in {match.get("player1_id"), match.get("player2_id")}
-    ]
-    matches = [decorate_match_for_view(match, user_id) for match in player_matches_raw[:10]]
+    page = max(1, request.args.get("page", 1, type=int) or 1)
+    page_size = 20
+    # Chỉ lấy các trận liên quan đến hồ sơ đang xem; không tải toàn bộ bảng matches.
+    player_matches_raw = list_user_matches(user_id, limit=200)
+    start = (page - 1) * page_size
+    page_rows = player_matches_raw[start:start + page_size]
+    matches = [decorate_match_for_view(match, user_id) for match in page_rows]
+    history_pagination = {
+        "page": page,
+        "page_size": page_size,
+        "has_prev": page > 1,
+        "has_next": start + page_size < len(player_matches_raw),
+        "prev_page": page - 1,
+        "next_page": page + 1,
+    }
 
     form = []
     for match in matches:
@@ -4893,7 +4942,7 @@ def profile(user_id):
     if viewer.get("id") != user_id:
         h2h_matches = [
             decorate_match_for_view(match, viewer.get("id"))
-            for match in all_matches
+            for match in player_matches_raw
             if match.get("status") == "confirmed"
             and {match.get("player1_id"), match.get("player2_id")} == {viewer.get("id"), user_id}
         ]
@@ -4932,6 +4981,7 @@ def profile(user_id):
         activity=activity,
         reward_state=reward_state,
         daily_checkin_event=daily_checkin_event,
+        history_pagination=history_pagination,
     )
 
 

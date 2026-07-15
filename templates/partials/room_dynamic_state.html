@@ -1,5 +1,18 @@
 {% from "_avatar_macros.html" import player_avatar %}
 <div id="roomDynamicState" data-state-key="{{ room.status }}|{{ room.host_team }}|{{ room.guest_team }}|{{ room.guest_ready }}|{{ room.host_score }}|{{ room.guest_score }}|{{ room.rematch_host_ready }}|{{ room.rematch_guest_ready }}|{{ room.rematch_host_declined }}|{{ room.rematch_guest_declined }}|{{ room.rematch_expired }}|{{ room.state_expires_at }}|{{ room.dispute.status if room.dispute else '' }}|{{ room.dispute.updated_at if room.dispute else '' }}">
+<style>
+#roomDynamicState .room-player-heading-plain { transform: translateY(10px); }
+#roomDynamicState .room-card-club-area { transform: translateY(8px); }
+#roomDynamicState .room-confirmed-center-actions { width:min(100%,310px);display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:10px;margin-top:18px;padding:16px;border:1px solid rgba(105,127,255,.38);border-radius:12px;background:rgba(5,15,30,.76);box-shadow:0 12px 30px rgba(0,0,0,.28); }
+#roomDynamicState .room-confirmed-center-actions form { margin:0; }
+#roomDynamicState .room-confirmed-center-actions .btn { min-width:126px; }
+#roomDynamicState .room-confirmed-center-note { flex-basis:100%;margin:0;text-align:center; }
+@media (max-width:760px) {
+#roomDynamicState .room-player-heading-plain{transform:translateY(6px); }
+#roomDynamicState .room-card-club-area{transform:translateY(5px); }
+#roomDynamicState .room-confirmed-center-actions{width:100%;padding:12px; }
+}
+</style>
 {% if room_action_message %}<div class="flash {{ room_action_category or 'success' }} room-htmx-message">{{ room_action_message }}</div>{% endif %}
 <div class="room-view-shell">
     <div class="room-stage-topbar panel">
@@ -89,6 +102,9 @@
                         <span>{{ room.guest_score if room.guest_score is not none else 0 }}</span>
                     </div>
                     <div class="room-center-state-pill">{{ 'Giao hữu' if room.status == 'friendly_playing' else 'Đang thi đấu' }}</div>
+                {% elif room.status == 'confirmed' %}
+                    <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
+                    {% include "partials/room_confirmed_actions.html" %}
                 {% else %}
                     <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
                     {% if room.status == 'waiting_ready' %}
@@ -282,44 +298,7 @@
     {% if room.status == "confirmed" %}
     <h3>✅ Trận đấu đã hoàn tất</h3>
     <p>{{ room.host_name }} {{ room.host_score }} - {{ room.guest_score }} {{ room.guest_name }}</p>
-
-    {% if current_user.id in [room.host_user_id, room.guest_user_id] %}
-        {% set current_has_rematch_ready = (current_user.id == room.host_user_id and room.rematch_host_ready) or (current_user.id == room.guest_user_id and room.rematch_guest_ready) %}
-        {% set opponent_has_rematch_ready = (current_user.id == room.host_user_id and room.rematch_guest_ready) or (current_user.id == room.guest_user_id and room.rematch_host_ready) %}
-
-        {% if room.rematch_expired %}
-        <p><strong>⌛ Yêu cầu đá tiếp đã hết hạn.</strong></p>
-        <p class="small">Không đủ hai người đồng ý trong 60 giây. Cả hai trở về sảnh chính.</p>
-        {% elif room.rematch_declined %}
-        <p><strong>❌ Một người đã chọn không đá tiếp.</strong></p>
-        <p class="small">Phiên đá tiếp đã kết thúc. Cả hai sẽ trở về sảnh chính.</p>
-        {% elif current_has_rematch_ready %}
-        <span class="btn gray">✅ Đã chọn đá tiếp</span>
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
-            <button class="btn red" type="submit">🚪 Rời phòng</button>
-        </form>
-        <p class="small">Đang chờ đối thủ chọn Đá tiếp hoặc Không đá tiếp.</p>
-        {% else %}
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch', room_id=room.id) }}">
-            <button class="btn gold" type="submit">🔁 Đá tiếp</button>
-        </form>
-        {% if opponent_has_rematch_ready %}
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
-            <button class="btn red" type="submit">🚪 Rời phòng</button>
-        </form>
-        <p class="small">Đối thủ đã chọn đá tiếp. Bạn có thể đồng ý hoặc từ chối; người kia sẽ được thông báo ngay.</p>
-        {% else %}
-        <p class="small">Bấm Đá tiếp để xác nhận sẵn sàng cho trận mới. Khi cả hai đồng ý, chủ phòng có thể Smart Random đội ngay.</p>
-        {% endif %}
-        {% endif %}
-        {% if not current_has_rematch_ready %}
-        <form class="inline-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
-            <button class="btn red" type="submit">🚪 Rời phòng</button>
-        </form>
-        {% endif %}
-    {% else %}
-        <a class="btn gray" href="{{ url_for('dashboard') }}">Về sảnh chính</a>
-    {% endif %}
+    <p class="small">Các lựa chọn Đá tiếp và Rời phòng đã được đưa lên khu vực giữa hai người chơi.</p>
     {% endif %}
 
     {% if room.status == "cancelled" %}

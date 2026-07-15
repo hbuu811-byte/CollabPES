@@ -1,3 +1,11 @@
+# V1.10.62 — Điều khiển sau trận và căn chỉnh khung Rank
+
+- Khi phòng chuyển sang `confirmed`, đưa hai nút **Đá tiếp** và **Rời phòng** lên khu vực giữa hai thẻ người chơi cho cả chủ phòng và khách.
+- Các form sau trận dùng cùng cơ chế cập nhật fragment (`data-room-async`) nên không tải lại toàn bộ trang.
+- Loại bỏ cụm nút trùng ở phần Điều khiển phòng để tránh hai nguồn thao tác chồng chéo.
+- Hạ nhẹ tên người chơi, dòng Rank và khu vực logo CLB trong khung Rank; có mức dịch riêng cho mobile.
+- Không thay đổi cơ chế tính RP, xác nhận tỷ số, Realtime hoặc cấu trúc dữ liệu Supabase.
+
 # V1.10.61 — Đồng bộ phòng ổn định, không phụ thuộc HTMX CDN
 
 - Sửa lỗi phía đối thủ không thấy tỷ số mới cho đến khi F5.

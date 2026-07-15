@@ -1,3 +1,30 @@
+# V1.10.64 — Tối ưu phản hồi Quay quân, Xác nhận và Đá tiếp
+
+## Mục tiêu
+
+Giảm thời gian chờ trực tiếp giữa hai màn hình người chơi tại ba thao tác quan trọng trong phòng đấu.
+
+## Thay đổi
+
+- Thêm `get_room_action_state()` chỉ lấy các cột cần thiết cho POST thao tác, không chạy `enrich_room()` và không tải toàn bộ danh sách người chơi.
+- `Quay quân`, `Xác nhận kết quả`, `Đá tiếp` dùng room state tối giản.
+- Lấy thông tin hai người chơi bằng một request `get_users_by_ids()` thay vì hai request tuần tự.
+- `enrich_room()` chỉ tải đúng chủ phòng và khách, không dùng `users_map()` để tải/sắp xếp toàn bộ BXH.
+- POST thành công trả `204` ngay; trình duyệt tải fragment mới bằng request riêng sau đó.
+- Đồng bộ Achievement được đẩy ra khỏi request Xác nhận bằng tác vụ hậu kỳ best-effort.
+- `apply_match_result()` nhận trực tiếp `host_user_id`, bỏ một truy vấn tìm chủ phòng trong luồng xác nhận.
+- Kiểm tra xung đột Đá tiếp được gộp thành hai query Supabase đã lọc trực tiếp.
+- Không thay đổi database, không cần chạy SQL.
+
+## Kết quả dự kiến
+
+- Quay quân: giảm tải room/user trước thao tác và không render fragment trong POST.
+- Xác nhận: giảm một request user, một request host và loại bỏ quét Achievement khỏi đường chờ chính.
+- Đá tiếp: giảm từ bốn lần kiểm tra riêng xuống hai query đã lọc.
+- Màn hình đối thủ vẫn nhận cập nhật qua Supabase Realtime; polling tiếp tục làm lớp dự phòng.
+
+---
+
 # V1.10.63 — Tối ưu phòng đấu giai đoạn 1 và backend nhẹ
 
 - Tạo `get_room_state_light()` cho API polling: chỉ đọc các cột trạng thái cần thiết, không gọi `users_map()`, dữ liệu Rank, achievement, logo CLB hoặc dữ liệu tranh chấp.

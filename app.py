@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.63"
+APP_VERSION = "V1.10.64"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -703,6 +703,23 @@ def sync_achievements_for_users(user_ids, notify=True):
     except Exception as exc:
         print(f"sync_achievements_for_users warning: {exc}")
         return []
+
+
+def schedule_achievement_sync(user_ids, match_id=None):
+    """Đẩy đồng bộ huy hiệu ra khỏi request xác nhận để giảm thời gian chờ."""
+    try:
+        from threading import Thread
+        ids = [value for value in dict.fromkeys(user_ids or []) if value]
+        if not ids:
+            return
+        def worker():
+            try:
+                sync_achievements_for_users(ids)
+            except Exception as exc:
+                print(f"achievement_sync deferred warning match={match_id}: {type(exc).__name__}: {exc}")
+        Thread(target=worker, name=f"achievement-sync-{match_id or 'match'}", daemon=True).start()
+    except Exception as exc:
+        print(f"schedule_achievement_sync warning match={match_id}: {type(exc).__name__}: {exc}")
 
 
 def hash_password(password: str) -> str:
@@ -1807,6 +1824,33 @@ def get_user(user_id):
         "get_user",
     )
     return result.data[0] if result.data else None
+
+
+def get_users_by_ids(user_ids):
+    """Lấy nhiều người chơi trong một request Supabase thay vì gọi get_user tuần tự."""
+    ids = [str(value) for value in dict.fromkeys(user_ids or []) if value]
+    if not ids:
+        return {}
+    mapped, missing = {}, []
+    for user_id in ids:
+        cached = ttl_cache_get(f"user:{user_id}")
+        if cached is not None:
+            mapped[user_id] = dict(cached)
+        else:
+            missing.append(user_id)
+    if missing:
+        result = execute_query(
+            db.table("users").select(USER_PUBLIC_COLUMNS).in_("id", missing),
+            "get_users_by_ids",
+            attempts=2,
+        )
+        for row in result.data or []:
+            item = dict(row)
+            user_id = str(item.get("id") or "")
+            if user_id:
+                mapped[user_id] = item
+                ttl_cache_set(f"user:{user_id}", item, 8)
+    return mapped
 
 
 def is_user_online_now(user):
@@ -2947,6 +2991,24 @@ def expire_room_if_needed(room):
     return room
 
 
+ROOM_ACTION_COLUMNS = ",".join([
+    "id", "host_user_id", "guest_user_id", "guest_ready", "status", "note",
+    "match_id", "match_mode", "friendly_tier", "team_tier",
+    "host_team", "guest_team", "host_score", "guest_score",
+    "submitted_by_id", "confirmed_by_id", "state_expires_at", "updated_at",
+])
+
+
+def get_room_action_state(room_id):
+    """Room tối giản dành cho POST thao tác; không enrich, không tải toàn bộ BXH."""
+    result = execute_query(
+        db.table("match_rooms").select(ROOM_ACTION_COLUMNS).eq("id", room_id).limit(1),
+        "get_room_action_state",
+        attempts=2,
+    )
+    return dict(result.data[0]) if result.data else None
+
+
 def get_room(room_id):
     result = execute_query(
         db.table("match_rooms").select("*").eq("id", room_id).limit(1),
@@ -2960,9 +3022,18 @@ def get_room(room_id):
 
 
 def enrich_room(room):
-    users = users_map()
-    host = users.get(room.get("host_user_id"), {})
-    guest = users.get(room.get("guest_user_id"), {})
+    user_ids = [room.get("host_user_id"), room.get("guest_user_id")]
+    users = get_users_by_ids(user_ids)
+    host = dict(users.get(str(room.get("host_user_id")), {}) or {})
+    guest = dict(users.get(str(room.get("guest_user_id")), {}) or {})
+    try:
+        achievement_map = list_user_achievement_map()
+        if host:
+            decorate_player_achievements(host, None, achievement_map)
+        if guest:
+            decorate_player_achievements(guest, None, achievement_map)
+    except Exception as exc:
+        print(f"enrich_room achievements warning: {exc}")
 
     raw_room_id = str(room.get("id") or "")
     compact_room_id = "".join(ch for ch in raw_room_id.upper() if ch.isalnum())
@@ -3288,6 +3359,40 @@ def room_is_active(room):
         and (room.get("note") or "") in {REMATCH_HOST_READY_NOTE, REMATCH_GUEST_READY_NOTE}
     )
 
+
+def users_have_other_active_game(user_ids, exclude_room_id=None):
+    """Kiểm tra xung đột của cả hai người bằng 2 query đã lọc trực tiếp ở Supabase."""
+    ids = [str(value) for value in dict.fromkeys(user_ids or []) if value]
+    if not ids:
+        return False
+    try:
+        csv_ids = ",".join(ids)
+        room_query = (
+            db.table("match_rooms")
+            .select("id,host_user_id,guest_user_id,status,note")
+            .in_("status", ["waiting_ready", "playing", "friendly_playing", "waiting_result_confirm", "disputed"])
+            .or_(f"host_user_id.in.({csv_ids}),guest_user_id.in.({csv_ids})")
+        )
+        if exclude_room_id:
+            room_query = room_query.neq("id", exclude_room_id)
+        room_result = execute_query(room_query.limit(1), "rematch_other_active_rooms", attempts=2)
+        if room_result.data or []:
+            return True
+
+        match_result = execute_query(
+            db.table("matches")
+            .select("id,player1_id,player2_id,status")
+            .in_("status", ["playing", "waiting_confirm", "processing_result"])
+            .or_(f"player1_id.in.({csv_ids}),player2_id.in.({csv_ids})")
+            .limit(1),
+            "rematch_other_active_matches",
+            attempts=2,
+        )
+        return bool(match_result.data or [])
+    except Exception as exc:
+        print(f"users_have_other_active_game warning: {exc}")
+        return any(active_room_for_user(uid, exclude_room_id=exclude_room_id) or active_match_for_user(uid) for uid in ids)
+    return False
 
 def active_room_for_user(user_id, exclude_room_id=None):
     rooms = list_rooms()
@@ -5797,6 +5902,11 @@ def is_room_fragment_request():
 
 
 def room_action_response(room_id, message, category="success", fallback="room_detail"):
+    if is_room_fragment_request() and category == "success":
+        response = make_response("", 204)
+        response.headers["X-RZ-Refresh-Room"] = "1"
+        response.headers["X-RZ-Message"] = str(message or "")[:240]
+        return response
     if is_room_fragment_request():
         return render_room_dynamic_state(room_id, message, category)
     flash(message, category)
@@ -5963,7 +6073,7 @@ def room_guest_forfeit(room_id):
 @login_required
 def room_rematch(room_id):
     user = current_user()
-    room = get_room(room_id)
+    room = get_room_action_state(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
         return room_action_response(room_id, message, category, fallback)
@@ -5977,11 +6087,10 @@ def room_rematch(room_id):
     if room["status"] != "confirmed":
         return respond("Chỉ có thể đá tiếp sau khi kết quả trận trước đã được xác nhận.", "warning")
 
-    host_active_room = active_room_for_user(room["host_user_id"], exclude_room_id=room_id)
-    guest_active_room = active_room_for_user(room["guest_user_id"], exclude_room_id=room_id)
-    host_active_match = active_match_for_user(room["host_user_id"])
-    guest_active_match = active_match_for_user(room["guest_user_id"])
-    if host_active_room or guest_active_room or host_active_match or guest_active_match:
+    if users_have_other_active_game(
+        [room["host_user_id"], room["guest_user_id"]],
+        exclude_room_id=room_id,
+    ):
         return respond("Một trong hai người đang có phòng hoặc trận khác nên chưa thể đá tiếp từ phòng này.", "warning")
 
     is_host = user["id"] == room["host_user_id"]
@@ -6126,7 +6235,7 @@ def room_rematch_decline(room_id):
 @login_required
 def room_random_teams(room_id):
     user = current_user()
-    room = get_room(room_id)
+    room = get_room_action_state(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
         return room_action_response(room_id, message, category, fallback)
@@ -6148,8 +6257,9 @@ def room_random_teams(room_id):
     if match_mode not in {MATCH_MODE_RANKED, MATCH_MODE_FRIENDLY}:
         match_mode = MATCH_MODE_RANKED
 
-    host = get_user(room["host_user_id"])
-    guest = get_user(room["guest_user_id"])
+    room_users = get_users_by_ids([room["host_user_id"], room["guest_user_id"]])
+    host = room_users.get(str(room["host_user_id"]))
+    guest = room_users.get(str(room["guest_user_id"]))
     if not host or not guest:
         return respond("Không tải được thông tin hai người chơi.", "danger")
 
@@ -6396,12 +6506,7 @@ def room_submit_result(room_id):
     room = get_room(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
-        if is_room_fragment_request() and room:
-            return render_room_dynamic_state(room_id, message, category)
-        flash(message, category)
-        if fallback == "rooms":
-            return redirect(url_for("rooms"))
-        return redirect(url_for("room_detail", room_id=room_id))
+        return room_action_response(room_id, message, category, fallback)
 
     if not room:
         return respond("Không tìm thấy phòng.", "danger", "rooms")
@@ -6471,7 +6576,7 @@ def room_submit_result(room_id):
 @login_required
 def room_confirm_result(room_id):
     user = current_user()
-    room = get_room(room_id)
+    room = get_room_action_state(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
         if is_room_fragment_request() and room:
@@ -6495,7 +6600,7 @@ def room_confirm_result(room_id):
         return respond("Không tìm thấy trận.", "danger")
 
     try:
-        delta1, delta2 = apply_match_result(match)
+        delta1, delta2 = apply_match_result(match, room.get("host_user_id"))
         execute_query(
             db.table("match_rooms").update({
                 "status": "confirmed",
@@ -6744,7 +6849,7 @@ def _safe_int(value, default=0):
         return int(default)
 
 
-def apply_match_result(match):
+def apply_match_result(match, host_user_id=None):
     """Apply one ranked result exactly once with clear validation and recovery.
 
     The match row is claimed by changing its status to ``processing_result``.
@@ -6766,8 +6871,9 @@ def apply_match_result(match):
     if not player1_id or not player2_id:
         raise ValueError("Trận đấu thiếu ID của một trong hai người chơi.")
 
-    player1 = get_user(player1_id)
-    player2 = get_user(player2_id)
+    players = get_users_by_ids([player1_id, player2_id])
+    player1 = players.get(str(player1_id))
+    player2 = players.get(str(player2_id))
     if not player1 or not player2:
         missing = []
         if not player1:
@@ -6805,7 +6911,7 @@ def apply_match_result(match):
         delta1, delta2 = _safe_int(delta1), _safe_int(delta2)
 
         # The 0.95 coefficient belongs to the actual room host, not implicitly player1.
-        host_user_id = match.get("host_user_id")
+        host_user_id = host_user_id or match.get("host_user_id")
         if not host_user_id:
             try:
                 room_row = execute_query(
@@ -6855,11 +6961,8 @@ def apply_match_result(match):
             print(f"apply_match_result RESTORE ERROR match={match.get('id')}: {type(restore_exc).__name__}: {restore_exc}")
         raise
 
-    # Badge synchronization is auxiliary and must never invalidate a confirmed match.
-    try:
-        sync_achievements_for_users([player1_id, player2_id])
-    except Exception as exc:
-        print(f"achievement_sync warning match={match.get('id')}: {type(exc).__name__}: {exc}")
+    # Achievement không được phép chặn phản hồi Xác nhận. Chạy hậu kỳ best-effort.
+    schedule_achievement_sync([player1_id, player2_id], match.get("id"))
     return int(delta1), int(delta2)
 
 

@@ -227,7 +227,11 @@ document.addEventListener("submit", async function (event) {
             return;
         }
         if (!response.ok) throw new Error("form_http_" + response.status);
-        if (response.status === 204) return;
+        if (response.status === 204) {
+            // Backend đã hoàn tất thao tác; tách việc dựng fragment ra khỏi POST để phản hồi nút nhanh hơn.
+            await refreshRoomDynamicState({ force: true });
+            return;
+        }
         if (!replaceRoomDynamicState(await response.text())) throw new Error("invalid_form_fragment");
     } catch (error) {
         console.warn("Gửi thao tác nhanh thất bại, chuyển sang submit chuẩn.", error);

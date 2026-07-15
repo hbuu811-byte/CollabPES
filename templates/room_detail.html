@@ -152,8 +152,8 @@ async function checkRoomState() {
 
 function roomPollDelay() {
     if (!pollingEnabled) return 15000;
-    if (!roomSync.realtimeConnected) return roomSync.failures >= 3 ? 5000 : 2000;
-    return document.hidden ? 20000 : 5000; // Endpoint nhẹ; 5 giây là lớp bảo hiểm khi Realtime bỏ lỡ sự kiện.
+    if (!roomSync.realtimeConnected) return roomSync.failures >= 3 ? 4000 : 1500;
+    return document.hidden ? 15000 : 8000; // Realtime xử lý chính; polling chỉ là lớp bảo hiểm.
 }
 function scheduleRoomStatePoll() {
     setTimeout(async function () {
@@ -182,7 +182,7 @@ function subscribeCurrentRoomRealtime() {
                 clearTimeout(window.RZ_ROOM_RUNTIME.stateEventTimer);
                 window.RZ_ROOM_RUNTIME.stateEventTimer = setTimeout(function () {
                     refreshRoomDynamicState({ force: true });
-                }, 100);
+                }, 40);
             })
             .subscribe(function (status) {
                 roomSync.realtimeConnected = status === "SUBSCRIBED";
@@ -212,7 +212,14 @@ document.addEventListener("submit", async function (event) {
     if (!form || form.dataset.submitting === "1") return;
     event.preventDefault();
     form.dataset.submitting = "1";
-    form.querySelectorAll("button, input[type='submit']").forEach(function (el) { el.disabled = true; });
+    const submitControls = form.querySelectorAll("button, input[type='submit']");
+    submitControls.forEach(function (el) {
+        el.disabled = true;
+        if (el.tagName === "BUTTON" && !el.dataset.originalText) {
+            el.dataset.originalText = el.textContent;
+            el.textContent = "Đang xử lý...";
+        }
+    });
     try {
         const response = await fetch(form.action, {
             method: (form.method || "POST").toUpperCase(),
@@ -235,6 +242,10 @@ document.addEventListener("submit", async function (event) {
         form.submit();
     } finally {
         form.dataset.submitting = "0";
+        form.querySelectorAll("button[data-original-text]").forEach(function (el) {
+            el.textContent = el.dataset.originalText;
+            delete el.dataset.originalText;
+        });
     }
 });
 

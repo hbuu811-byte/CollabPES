@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.63"
+APP_VERSION = "V1.10.64"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -2947,6 +2947,42 @@ def expire_room_if_needed(room):
     return room
 
 
+def get_room_participants_map(room):
+    """Load only the two room participants instead of the entire users table.
+
+    This runs on every room fragment refresh, so keeping the payload small is
+    important for both latency and Fast Origin Transfer.
+    """
+    user_ids = [str(value) for value in [room.get("host_user_id"), room.get("guest_user_id")] if value]
+    if not user_ids:
+        return {}
+    try:
+        result = execute_query(
+            db.table("users").select(USER_PUBLIC_COLUMNS).in_("id", user_ids),
+            "get_room_participants",
+            attempts=2,
+        )
+        mapped = {}
+        achievement_map = None
+        for raw in (result.data or []):
+            user = dict(raw)
+            if achievement_map is None:
+                try:
+                    achievement_map = list_user_achievement_map()
+                except Exception:
+                    achievement_map = {}
+            try:
+                decorate_player_achievements(user, None, achievement_map)
+            except Exception:
+                pass
+            mapped[str(user.get("id"))] = user
+        return mapped
+    except Exception as exc:
+        print(f"get_room_participants fallback warning: {exc}")
+        users = users_map()
+        return {str(user_id): users.get(user_id, {}) for user_id in user_ids}
+
+
 def get_room(room_id):
     result = execute_query(
         db.table("match_rooms").select("*").eq("id", room_id).limit(1),
@@ -2960,9 +2996,9 @@ def get_room(room_id):
 
 
 def enrich_room(room):
-    users = users_map()
-    host = users.get(room.get("host_user_id"), {})
-    guest = users.get(room.get("guest_user_id"), {})
+    users = get_room_participants_map(room)
+    host = users.get(str(room.get("host_user_id")), {})
+    guest = users.get(str(room.get("guest_user_id")), {})
 
     raw_room_id = str(room.get("id") or "")
     compact_room_id = "".join(ch for ch in raw_room_id.upper() if ch.isalnum())
@@ -5782,7 +5818,7 @@ def room_view_context(room, room_action_message=None, room_action_category=None)
     return {
         "room": room,
         "friendly_tiers": get_available_team_tiers(),
-        "friendly_matches_enabled": friendly_matches_enabled(force=True),
+        "friendly_matches_enabled": friendly_matches_enabled(),
         "room_chat_enabled": chat_features_enabled().get("room", True),
         "room_action_message": room_action_message,
         "room_action_category": room_action_category,
@@ -5796,8 +5832,15 @@ def is_room_fragment_request():
     )
 
 
-def room_action_response(room_id, message, category="success", fallback="room_detail"):
+def room_action_response(room_id, message, category="success", fallback="room_detail", room_snapshot=None):
     if is_room_fragment_request():
+        if room_snapshot is not None:
+            prepared = dict(room_snapshot)
+            enrich_room(prepared)
+            return render_template(
+                "partials/room_dynamic_state.html",
+                **room_view_context(prepared, message, category),
+            )
         return render_room_dynamic_state(room_id, message, category)
     flash(message, category)
     if fallback == "rooms":
@@ -5959,6 +6002,40 @@ def room_guest_forfeit(room_id):
     return redirect(url_for("dashboard"))
 
 
+def users_have_other_active_session(user_ids, exclude_room_id=None):
+    """Check two players with two small indexed queries instead of loading all rooms/matches."""
+    ids = [str(value) for value in (user_ids or []) if value]
+    if not ids:
+        return False
+    clauses = ",".join([f"host_user_id.eq.{uid},guest_user_id.eq.{uid}" for uid in ids])
+    room_query = (
+        db.table("match_rooms")
+        .select("id,status,host_user_id,guest_user_id")
+        .in_("status", ["waiting_ready", "playing", "friendly_playing", "waiting_result_confirm", "disputed"])
+        .or_(clauses)
+        .limit(10)
+    )
+    room_rows = execute_query(room_query, "check_other_active_rooms", attempts=2).data or []
+    for row in room_rows:
+        if not exclude_room_id or str(row.get("id")) != str(exclude_room_id):
+            return True
+
+    match_clauses = ",".join([f"player1_id.eq.{uid},player2_id.eq.{uid}" for uid in ids])
+    match_rows = execute_query(
+        db.table("matches")
+        .select("id,status,player1_id,player2_id")
+        .in_("status", ["playing", "waiting_confirm", "processing_result"])
+        .or_(match_clauses)
+        .limit(10),
+        "check_other_active_matches",
+        attempts=2,
+    ).data or []
+    current_match_id = None
+    if exclude_room_id:
+        current_match_id = None
+    return bool(match_rows)
+
+
 @app.route("/room/<room_id>/rematch", methods=["POST"])
 @login_required
 def room_rematch(room_id):
@@ -5966,7 +6043,7 @@ def room_rematch(room_id):
     room = get_room(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
-        return room_action_response(room_id, message, category, fallback)
+        return room_action_response(room_id, message, category, fallback, room)
 
     if not room:
         return respond("Không tìm thấy phòng.", "danger", "dashboard")
@@ -5977,11 +6054,10 @@ def room_rematch(room_id):
     if room["status"] != "confirmed":
         return respond("Chỉ có thể đá tiếp sau khi kết quả trận trước đã được xác nhận.", "warning")
 
-    host_active_room = active_room_for_user(room["host_user_id"], exclude_room_id=room_id)
-    guest_active_room = active_room_for_user(room["guest_user_id"], exclude_room_id=room_id)
-    host_active_match = active_match_for_user(room["host_user_id"])
-    guest_active_match = active_match_for_user(room["guest_user_id"])
-    if host_active_room or guest_active_room or host_active_match or guest_active_match:
+    if users_have_other_active_session(
+        [room["host_user_id"], room["guest_user_id"]],
+        exclude_room_id=room_id,
+    ):
         return respond("Một trong hai người đang có phòng hoặc trận khác nên chưa thể đá tiếp từ phòng này.", "warning")
 
     is_host = user["id"] == room["host_user_id"]
@@ -6025,6 +6101,15 @@ def room_rematch(room_id):
             }).eq("id", room_id).eq("status", "confirmed"),
             "room_guest_rematch_ready_for_ranked_random",
         )
+        room.update({
+            "host_team": None, "guest_team": None, "host_team_overall": None, "guest_team_overall": None,
+            "host_team_logo_url": None, "guest_team_logo_url": None, "host_team_league": None, "guest_team_league": None,
+            "guest_ready": True, "status": "waiting_ready", "match_id": None,
+            "host_score": None, "guest_score": None, "submitted_by_id": None, "confirmed_by_id": None,
+            "match_mode": MATCH_MODE_RANKED, "team_tier": SMART_RANDOM_MODE,
+            "note": "Khách đã chọn đá tiếp và sẵn sàng. Chủ phòng có thể quay đội Xếp hạng.",
+            "state_expires_at": None, "updated_at": now_iso(),
+        })
         return respond("Bạn đã chọn Đá tiếp. Chủ phòng có thể quay đội Xếp hạng ngay.", "success")
 
     # Người đầu tiên bấm Đá tiếp: ghi nhận ngay trong phòng, không tạo lời mời mới.
@@ -6037,6 +6122,7 @@ def room_rematch(room_id):
             }).eq("id", room_id).eq("status", "confirmed"),
             "room_rematch_first_ready",
         )
+        room.update({"note": my_ready_note, "state_expires_at": future_iso(REMATCH_TIMEOUT_SECONDS), "updated_at": now_iso()})
         return respond("Bạn đã chọn Đá tiếp. Đang chờ đối thủ bấm Đá tiếp.", "success")
 
     # Người thứ hai đồng ý: dùng lại chính phòng hiện tại và đưa cả hai về bước random đội.
@@ -6071,6 +6157,13 @@ def room_rematch(room_id):
         }).eq("id", room_id).eq("status", "confirmed"),
         "room_rematch_reset_same_room",
     )
+    room.update({
+        "host_team": None, "guest_team": None, "guest_ready": True, "status": "waiting_ready",
+        "match_id": None, "host_score": None, "guest_score": None, "submitted_by_id": None,
+        "confirmed_by_id": None, "team_tier": SMART_RANDOM_MODE,
+        "note": "Hai người đã đồng ý đá tiếp. Đang chờ Chủ Phòng quay đội.",
+        "state_expires_at": None, "updated_at": now_iso(),
+    })
     return respond("Cả hai đã đồng ý đá tiếp. Đang chờ Chủ Phòng quay đội.", "success")
 
 
@@ -6129,7 +6222,7 @@ def room_random_teams(room_id):
     room = get_room(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
-        return room_action_response(room_id, message, category, fallback)
+        return room_action_response(room_id, message, category, fallback, room)
 
     if not room:
         return respond("Không tìm thấy phòng.", "danger", "rooms")
@@ -6180,6 +6273,15 @@ def room_random_teams(room_id):
                 }).eq("id", room_id).eq("status", "waiting_ready"),
                 "room_friendly_random",
             )
+            room.update({
+                "host_team": result["team_a"], "guest_team": result["team_b"],
+                "host_team_overall": result["overall_a"], "guest_team_overall": result["overall_b"],
+                "host_team_logo_url": result.get("logo_a") or None, "guest_team_logo_url": result.get("logo_b") or None,
+                "host_team_league": result.get("league_a") or None, "guest_team_league": result.get("league_b") or None,
+                "team_tier": selected_tier, "friendly_tier": selected_tier,
+                "match_mode": MATCH_MODE_FRIENDLY, "status": "friendly_playing",
+                "match_id": None, "state_expires_at": None, "updated_at": now_iso(),
+            })
             return respond(
                 f'Giao hữu Tier {selected_tier}: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
                 f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). Không lưu lịch sử, không tính điểm.',
@@ -6236,6 +6338,14 @@ def room_random_teams(room_id):
     except ValueError as exc:
         return respond(str(exc), "warning")
 
+    room.update({
+        "host_team": result["team_a"], "guest_team": result["team_b"],
+        "host_team_overall": result["overall_a"], "guest_team_overall": result["overall_b"],
+        "host_team_logo_url": result.get("logo_a") or None, "guest_team_logo_url": result.get("logo_b") or None,
+        "host_team_league": result.get("league_a") or None, "guest_team_league": result.get("league_b") or None,
+        "team_tier": SMART_RANDOM_MODE, "match_mode": MATCH_MODE_RANKED,
+        "status": "playing", "match_id": match["id"], "state_expires_at": None, "updated_at": now_iso(),
+    })
     return respond(
         f'Smart Random: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
         f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). '
@@ -6397,7 +6507,12 @@ def room_submit_result(room_id):
 
     def respond(message, category="success", fallback="room_detail"):
         if is_room_fragment_request() and room:
-            return render_room_dynamic_state(room_id, message, category)
+            prepared = dict(room)
+            enrich_room(prepared)
+            return render_template(
+                "partials/room_dynamic_state.html",
+                **room_view_context(prepared, message, category),
+            )
         flash(message, category)
         if fallback == "rooms":
             return redirect(url_for("rooms"))
@@ -6459,6 +6574,14 @@ def room_submit_result(room_id):
             }).eq("id", room_id).eq("status", "playing"),
             "submit_room_result_state",
         )
+        room.update({
+            "host_score": host_score,
+            "guest_score": guest_score,
+            "submitted_by_id": user["id"],
+            "status": "waiting_result_confirm",
+            "state_expires_at": future_iso(RESULT_CONFIRM_TIMEOUT_SECONDS),
+            "updated_at": now_iso(),
+        })
         ttl_cache_delete("rooms_raw")
     except Exception as exc:
         print(f"room_submit_result ERROR room={room_id} match={match.get('id')}: {type(exc).__name__}: {exc}")
@@ -6475,7 +6598,12 @@ def room_confirm_result(room_id):
 
     def respond(message, category="success", fallback="room_detail"):
         if is_room_fragment_request() and room:
-            return render_room_dynamic_state(room_id, message, category)
+            prepared = dict(room)
+            enrich_room(prepared)
+            return render_template(
+                "partials/room_dynamic_state.html",
+                **room_view_context(prepared, message, category),
+            )
         flash(message, category)
         if fallback == "rooms":
             return redirect(url_for("rooms"))
@@ -6506,6 +6634,15 @@ def room_confirm_result(room_id):
             }).eq("id", room_id).eq("status", "waiting_result_confirm"),
             "confirm_result_room",
         )
+        room.update({
+            "status": "confirmed",
+            "confirmed_by_id": user["id"],
+            "note": "Khách đã xác nhận kết quả.",
+            "state_expires_at": None,
+            "updated_at": now_iso(),
+        })
+        room["host_points"] = max(0, int(room.get("host_points", 0) or 0) + int(delta1))
+        room["guest_points"] = max(0, int(room.get("guest_points", 0) or 0) + int(delta2))
         cache_delete("_rz_rooms_all")
         ttl_cache_delete("rooms_raw", "matches_raw")
     except ValueError as exc:

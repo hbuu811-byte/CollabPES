@@ -1,3 +1,20 @@
+# V1.10.64 – Tối ưu phản hồi phòng đấu
+
+| Hạng mục | Thay đổi |
+|---|---|
+| Quay đội | Không đọc lại toàn bộ phòng sau POST; dùng snapshot vừa cập nhật để trả fragment ngay. |
+| Xác nhận | Không đọc lại phòng sau khi cập nhật RP; giao diện người bấm nhận fragment ngay. |
+| Đá tiếp | Thay 4 lần quét toàn bộ phòng/trận bằng 2 truy vấn nhỏ chỉ lấy ID và trạng thái. |
+| Dữ liệu phòng | Mỗi fragment chỉ tải 2 người trong phòng, không còn tải toàn bộ bảng users. |
+| Realtime | Sự kiện phòng làm mới sau 40 ms; fallback polling 1,5 giây khi Realtime chưa kết nối. |
+| Giao diện | Nút hiện “Đang xử lý...” và khóa chống bấm lặp trong lúc gửi. |
+| Fast Origin Transfer | Giảm payload của fragment và bỏ các lượt tải lại phòng không cần thiết. |
+| Sửa lỗi | Bỏ route decorator quay đội bị khai báo trùng. |
+
+Không cần chạy SQL mới.
+
+---
+
 # V1.10.63 — Tối ưu phòng đấu giai đoạn 1 và backend nhẹ
 
 - Tạo `get_room_state_light()` cho API polling: chỉ đọc các cột trạng thái cần thiết, không gọi `users_map()`, dữ liệu Rank, achievement, logo CLB hoặc dữ liệu tranh chấp.

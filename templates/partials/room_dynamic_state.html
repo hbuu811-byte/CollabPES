@@ -1,15 +1,16 @@
 {% from "_avatar_macros.html" import player_avatar %}
 <div id="roomDynamicState" data-state-key="{{ room.status }}|{{ room.host_team }}|{{ room.guest_team }}|{{ room.guest_ready }}|{{ room.host_score }}|{{ room.guest_score }}|{{ room.rematch_host_ready }}|{{ room.rematch_guest_ready }}|{{ room.rematch_host_declined }}|{{ room.rematch_guest_declined }}|{{ room.rematch_expired }}|{{ room.state_expires_at }}|{{ room.dispute.status if room.dispute else '' }}|{{ room.dispute.updated_at if room.dispute else '' }}">
 <style>
-#roomDynamicState .room-player-heading-plain { transform: translateY(10px); }
-#roomDynamicState .room-card-club-area { transform: translateY(8px); }
+#roomDynamicState .room-player-heading-plain { transform: translateY(18px); }
+#roomDynamicState .room-card-club-area { transform: translateY(16px); }
 #roomDynamicState .room-confirmed-center-actions { width:min(100%,310px);display:flex;flex-wrap:wrap;justify-content:center;align-items:center;gap:10px;margin-top:18px;padding:16px;border:1px solid rgba(105,127,255,.38);border-radius:12px;background:rgba(5,15,30,.76);box-shadow:0 12px 30px rgba(0,0,0,.28); }
-#roomDynamicState .room-confirmed-center-actions form { margin:0; }
-#roomDynamicState .room-confirmed-center-actions .btn { min-width:126px; }
+#roomDynamicState .room-confirmed-center-actions form { margin:0; flex:0 0 auto; }
+#roomDynamicState .room-confirmed-center-actions .btn { min-width:126px; white-space:nowrap; }
 #roomDynamicState .room-confirmed-center-note { flex-basis:100%;margin:0;text-align:center; }
+#roomDynamicState .room-confirmed-button-row { display:flex;flex-wrap:nowrap;justify-content:center;align-items:center;gap:10px;width:100%; }
 @media (max-width:760px) {
-#roomDynamicState .room-player-heading-plain{transform:translateY(6px); }
-#roomDynamicState .room-card-club-area{transform:translateY(5px); }
+#roomDynamicState .room-player-heading-plain{transform:translateY(11px); }
+#roomDynamicState .room-card-club-area{transform:translateY(9px); }
 #roomDynamicState .room-confirmed-center-actions{width:100%;padding:12px; }
 }
 </style>
@@ -109,7 +110,7 @@
                     <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
                     {% if room.status == 'waiting_ready' %}
                         {% if (current_user.id == room.host_user_id or current_user.role == 'admin') and room.guest_ready %}
-                        <form class="room-center-random-form" method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.classList.add('loading');">
+                        <form class="room-center-random-form" method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" data-room-async="1" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.classList.add('loading');">
                             <input type="hidden" name="match_mode" value="ranked">
                             <button class="room-center-random-trigger" type="submit">
                                 <span class="room-center-random-title room-random-button-label">QUAY RANDOM ĐỘI</span>
@@ -208,7 +209,7 @@
             <div class="room-mode-grid">
 
                 {% if friendly_matches_enabled %}
-                <form method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" class="room-mode-card" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.textContent='Đang quay đội...';">
+                <form method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" class="room-mode-card" data-room-async="1" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.textContent='Đang quay đội...';">
                     <input type="hidden" name="match_mode" value="friendly">
                     <h3>🤝 Giao hữu</h3>
                     <label>Chọn Tier CLB</label>

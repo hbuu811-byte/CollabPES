@@ -7,18 +7,22 @@
         {% elif room.rematch_declined %}
             <p class="room-confirmed-center-note"><strong>❌ Một người đã chọn rời phòng.</strong></p>
         {% elif current_has_rematch_ready %}
-            <span class="btn gray">✅ Đã chọn đá tiếp</span>
-            <form method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}" data-room-async="1">
-                <button class="btn red" type="submit">🚪 Rời phòng</button>
-            </form>
+            <div class="room-confirmed-button-row">
+                <span class="btn gray">✅ Đã chọn đá tiếp</span>
+                <form method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}" data-room-async="1">
+                    <button class="btn red" type="submit">🚪 Rời phòng</button>
+                </form>
+            </div>
             <p class="small room-confirmed-center-note">Đang chờ đối thủ lựa chọn.</p>
         {% else %}
-            <form method="post" action="{{ url_for('room_rematch', room_id=room.id) }}" data-room-async="1">
-                <button class="btn gold" type="submit">🔁 Đá tiếp</button>
-            </form>
-            <form method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}" data-room-async="1">
-                <button class="btn red" type="submit">🚪 Rời phòng</button>
-            </form>
+            <div class="room-confirmed-button-row">
+                <form method="post" action="{{ url_for('room_rematch', room_id=room.id) }}" data-room-async="1">
+                    <button class="btn gold" type="submit">🔁 Đá tiếp</button>
+                </form>
+                <form method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}" data-room-async="1">
+                    <button class="btn red" type="submit">🚪 Rời phòng</button>
+                </form>
+            </div>
             <p class="small room-confirmed-center-note">{% if opponent_has_rematch_ready %}Đối thủ đã chọn đá tiếp.{% else %}Cả hai cùng chọn Đá tiếp để bắt đầu trận mới.{% endif %}</p>
         {% endif %}
     </div>

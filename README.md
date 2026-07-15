@@ -1,4 +1,4 @@
-# Rank PES Collaboration V1.10.62
+# Rank PES Collaboration V1.10.63
 
 Tích hợp HTMX cho các thao tác giao diện phù hợp, đồng thời giữ Supabase Realtime cho chat, trạng thái live và presence online.
 

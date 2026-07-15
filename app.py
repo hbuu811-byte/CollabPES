@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.62"
+APP_VERSION = "V1.10.63"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -3765,14 +3765,43 @@ def api_active_room():
     ttl_cache_set(cache_key, payload, 5)
     return jsonify(payload)
 
+ROOM_STATE_LIGHT_FIELDS = ",".join([
+    "id", "host_user_id", "guest_user_id", "status", "host_team", "guest_team",
+    "guest_ready", "host_score", "guest_score", "note", "state_expires_at",
+    "updated_at", "match_id", "match_mode"
+])
+
+
+def get_room_state_light(room_id):
+    """Lấy đúng dữ liệu phục vụ polling; không users_map, CLB, rank, achievement hay tranh chấp."""
+    result = execute_query(
+        db.table("match_rooms").select(ROOM_STATE_LIGHT_FIELDS).eq("id", room_id).limit(1),
+        "get_room_state_light",
+        attempts=2,
+    )
+    room = dict(result.data[0]) if result.data else None
+    if not room:
+        return None
+    # Vẫn giữ cơ chế hết hạn, nhưng chỉ làm giàu các cờ nhỏ cần cho client.
+    expire_room_if_needed(room)
+    note = room.get("note") or ""
+    room["rematch_host_ready"] = note == REMATCH_HOST_READY_NOTE
+    room["rematch_guest_ready"] = note == REMATCH_GUEST_READY_NOTE
+    room["rematch_host_declined"] = note == REMATCH_HOST_DECLINED_NOTE
+    room["rematch_guest_declined"] = note == REMATCH_GUEST_DECLINED_NOTE
+    room["rematch_declined"] = room["rematch_host_declined"] or room["rematch_guest_declined"]
+    room["rematch_expired"] = note == REMATCH_EXPIRED_NOTE
+    room["timeout_seconds"] = seconds_until(room.get("state_expires_at"))
+    return room
+
+
 @app.route("/api/room/<room_id>/state")
 @login_required
-
 def api_room_state(room_id):
     user = current_user()
 
     try:
-        room = get_room(room_id)
+        room = get_room_state_light(room_id)
     except Exception:
         return jsonify({"ok": False, "error": "temporary_db_error"}), 503
 
@@ -3795,8 +3824,7 @@ def api_room_state(room_id):
         str(room.get("rematch_guest_declined")),
         str(room.get("rematch_expired")),
         str(room.get("state_expires_at")),
-        str((room.get("dispute") or {}).get("status")),
-        str((room.get("dispute") or {}).get("updated_at")),
+        str(room.get("updated_at")),
     ])
 
     rematch_declined_by_me = (
@@ -3812,7 +3840,7 @@ def api_room_state(room_id):
         "rematch_declined_by_me": bool(rematch_declined_by_me),
         "rematch_expired": bool(room.get("rematch_expired")),
         "timeout_seconds": int(room.get("timeout_seconds") or 0),
-        "timeout_label": room.get("timeout_label") or "",
+        "timeout_label": "",
     })
     response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
     return response
@@ -5761,6 +5789,24 @@ def room_view_context(room, room_action_message=None, room_action_category=None)
     }
 
 
+def is_room_fragment_request():
+    return (
+        request.headers.get("HX-Request", "").lower() == "true"
+        or request.headers.get("X-RZ-Fragment", "") == "1"
+    )
+
+
+def room_action_response(room_id, message, category="success", fallback="room_detail"):
+    if is_room_fragment_request():
+        return render_room_dynamic_state(room_id, message, category)
+    flash(message, category)
+    if fallback == "rooms":
+        return redirect(url_for("rooms"))
+    if fallback == "dashboard":
+        return redirect(url_for("dashboard"))
+    return redirect(url_for("room_detail", room_id=room_id))
+
+
 def render_room_dynamic_state(room_id, message=None, category="success"):
     room = get_room(room_id)
     if not room:
@@ -5919,25 +5965,24 @@ def room_rematch(room_id):
     user = current_user()
     room = get_room(room_id)
 
+    def respond(message, category="success", fallback="room_detail"):
+        return room_action_response(room_id, message, category, fallback)
+
     if not room:
-        flash("Không tìm thấy phòng.", "danger")
-        return redirect(url_for("dashboard"))
+        return respond("Không tìm thấy phòng.", "danger", "dashboard")
 
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]]:
-        flash("Bạn không thuộc phòng này.", "danger")
-        return redirect(url_for("dashboard"))
+        return respond("Bạn không thuộc phòng này.", "danger", "dashboard")
 
     if room["status"] != "confirmed":
-        flash("Chỉ có thể đá tiếp sau khi kết quả trận trước đã được xác nhận.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Chỉ có thể đá tiếp sau khi kết quả trận trước đã được xác nhận.", "warning")
 
     host_active_room = active_room_for_user(room["host_user_id"], exclude_room_id=room_id)
     guest_active_room = active_room_for_user(room["guest_user_id"], exclude_room_id=room_id)
     host_active_match = active_match_for_user(room["host_user_id"])
     guest_active_match = active_match_for_user(room["guest_user_id"])
     if host_active_room or guest_active_room or host_active_match or guest_active_match:
-        flash("Một trong hai người đang có phòng hoặc trận khác nên chưa thể đá tiếp từ phòng này.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Một trong hai người đang có phòng hoặc trận khác nên chưa thể đá tiếp từ phòng này.", "warning")
 
     is_host = user["id"] == room["host_user_id"]
     my_ready_note = REMATCH_HOST_READY_NOTE if is_host else REMATCH_GUEST_READY_NOTE
@@ -5945,16 +5990,13 @@ def room_rematch(room_id):
     current_note = room.get("note") or ""
 
     if current_note in {REMATCH_HOST_DECLINED_NOTE, REMATCH_GUEST_DECLINED_NOTE}:
-        flash("Đối thủ đã chọn không đá tiếp. Phiên đá tiếp đã kết thúc.", "warning")
-        return redirect(url_for("dashboard"))
+        return respond("Đối thủ đã chọn không đá tiếp. Phiên đá tiếp đã kết thúc.", "warning", "dashboard")
 
     if current_note == REMATCH_EXPIRED_NOTE:
-        flash("Yêu cầu đá tiếp đã hết hạn sau 60 giây.", "warning")
-        return redirect(url_for("dashboard"))
+        return respond("Yêu cầu đá tiếp đã hết hạn sau 60 giây.", "warning", "dashboard")
 
     if current_note == my_ready_note:
-        flash("Bạn đã chọn Đá tiếp. Đang chờ đối thủ xác nhận.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Bạn đã chọn Đá tiếp. Đang chờ đối thủ xác nhận.", "warning")
 
     # Khách bấm Đá tiếp: khách được tính là sẵn sàng ngay và chủ phòng thấy nút quay đội Xếp hạng.
     if not is_host:
@@ -5983,8 +6025,7 @@ def room_rematch(room_id):
             }).eq("id", room_id).eq("status", "confirmed"),
             "room_guest_rematch_ready_for_ranked_random",
         )
-        flash("Bạn đã chọn Đá tiếp. Chủ phòng có thể quay đội Xếp hạng ngay.", "success")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Bạn đã chọn Đá tiếp. Chủ phòng có thể quay đội Xếp hạng ngay.", "success")
 
     # Người đầu tiên bấm Đá tiếp: ghi nhận ngay trong phòng, không tạo lời mời mới.
     if current_note != opponent_ready_note:
@@ -5996,16 +6037,9 @@ def room_rematch(room_id):
             }).eq("id", room_id).eq("status", "confirmed"),
             "room_rematch_first_ready",
         )
-        flash("Bạn đã chọn Đá tiếp. Đang chờ đối thủ bấm Đá tiếp.", "success")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Bạn đã chọn Đá tiếp. Đang chờ đối thủ bấm Đá tiếp.", "success")
 
     # Người thứ hai đồng ý: dùng lại chính phòng hiện tại và đưa cả hai về bước random đội.
-    host_active_room = active_room_for_user(room["host_user_id"], exclude_room_id=room_id)
-    guest_active_room = active_room_for_user(room["guest_user_id"], exclude_room_id=room_id)
-    if host_active_room or guest_active_room:
-        flash("Một trong hai người đang có phòng khác chưa hoàn tất nên chưa thể đá tiếp.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
-
     # Hủy lời mời chờ cũ giữa hai người (nếu còn từ phiên bản trước), tránh hiện thông báo thừa.
     for from_user_id, to_user_id in [
         (room["host_user_id"], room["guest_user_id"]),
@@ -6037,9 +6071,7 @@ def room_rematch(room_id):
         }).eq("id", room_id).eq("status", "confirmed"),
         "room_rematch_reset_same_room",
     )
-
-    flash("Cả hai đã đồng ý đá tiếp. Đang chờ Chủ Phòng quay đội.", "success")
-    return redirect(url_for("room_detail", room_id=room_id))
+    return respond("Cả hai đã đồng ý đá tiếp. Đang chờ Chủ Phòng quay đội.", "success")
 
 
 @app.route("/room/<room_id>/rematch-decline", methods=["POST"])
@@ -6081,6 +6113,11 @@ def room_rematch_decline(room_id):
         "room_rematch_declined",
     )
 
+    if is_room_fragment_request():
+        response = make_response("", 204)
+        response.headers["HX-Redirect"] = url_for("dashboard")
+        response.headers["X-RZ-Redirect"] = url_for("dashboard")
+        return response
     flash("Bạn đã rời phòng và trở về sảnh chính.", "success")
     return redirect(url_for("dashboard"))
 
@@ -6091,24 +6128,21 @@ def room_random_teams(room_id):
     user = current_user()
     room = get_room(room_id)
 
+    def respond(message, category="success", fallback="room_detail"):
+        return room_action_response(room_id, message, category, fallback)
+
     if not room:
-        flash("Không tìm thấy phòng.", "danger")
-        return redirect(url_for("rooms"))
+        return respond("Không tìm thấy phòng.", "danger", "rooms")
     if user["id"] != room["host_user_id"] and not is_admin_user(user):
-        flash("Chỉ chủ phòng mới được quay đội.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Chỉ chủ phòng mới được quay đội.", "danger")
     if room["status"] != "waiting_ready":
-        flash("Phòng không còn ở bước chờ quay đội.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Phòng không còn ở bước chờ quay đội.", "warning")
     if not room.get("guest_user_id"):
-        flash("Phòng chưa có đối thủ. Hãy mời một người chơi vào phòng.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Phòng chưa có đối thủ. Hãy mời một người chơi vào phòng.", "warning")
     if not room.get("guest_ready"):
-        flash("Đội khách chưa sẵn sàng. Hãy chờ khách bấm Sẵn sàng.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Đội khách chưa sẵn sàng. Hãy chờ khách bấm Sẵn sàng.", "warning")
     if room.get("match_id") or room.get("host_team") or room.get("guest_team"):
-        flash("Phòng đã được quay đội hoặc đã tạo trận.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Phòng đã được quay đội hoặc đã tạo trận.", "warning")
 
     match_mode = (request.form.get("match_mode") or MATCH_MODE_RANKED).strip().lower()
     if match_mode not in {MATCH_MODE_RANKED, MATCH_MODE_FRIENDLY}:
@@ -6117,14 +6151,12 @@ def room_random_teams(room_id):
     host = get_user(room["host_user_id"])
     guest = get_user(room["guest_user_id"])
     if not host or not guest:
-        flash("Không tải được thông tin hai người chơi.", "danger")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond("Không tải được thông tin hai người chơi.", "danger")
 
     try:
         if match_mode == MATCH_MODE_FRIENDLY:
             if not friendly_matches_enabled(force=True):
-                flash("Admin đang tắt chế độ trận giao hữu. Vui lòng chọn trận xếp hạng.", "warning")
-                return redirect(url_for("room_detail", room_id=room_id))
+                return respond("Admin đang tắt chế độ trận giao hữu. Vui lòng chọn trận xếp hạng.", "warning")
             selected_tier = (request.form.get("friendly_tier") or room.get("friendly_tier") or "A").strip().upper()
             result = friendly_random_team_pair(selected_tier)
             execute_query(
@@ -6148,12 +6180,11 @@ def room_random_teams(room_id):
                 }).eq("id", room_id).eq("status", "waiting_ready"),
                 "room_friendly_random",
             )
-            flash(
+            return respond(
                 f'Giao hữu Tier {selected_tier}: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
                 f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). Không lưu lịch sử, không tính điểm.',
                 "success",
             )
-            return redirect(url_for("room_detail", room_id=room_id))
 
         result = smart_random_team_pair(host, guest)
         match_result = execute_query(
@@ -6181,8 +6212,7 @@ def room_random_teams(room_id):
         )
         match = match_result.data[0] if match_result.data else None
         if not match:
-            flash("Không thể tạo trận sau khi quay đội. Vui lòng thử lại.", "danger")
-            return redirect(url_for("room_detail", room_id=room_id))
+            return respond("Không thể tạo trận sau khi quay đội. Vui lòng thử lại.", "danger")
 
         execute_query(
             db.table("match_rooms").update({
@@ -6204,16 +6234,14 @@ def room_random_teams(room_id):
             "room_random_start_match",
         )
     except ValueError as exc:
-        flash(str(exc), "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+        return respond(str(exc), "warning")
 
-    flash(
+    return respond(
         f'Smart Random: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
         f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). '
         'Hai CLB đã được quay. Chúc hai người thi đấu vui vẻ!',
         "success",
     )
-    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/room/<room_id>/reroll-friendly", methods=["POST"])
@@ -6368,7 +6396,7 @@ def room_submit_result(room_id):
     room = get_room(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
-        if is_htmx_request() and room:
+        if is_room_fragment_request() and room:
             return render_room_dynamic_state(room_id, message, category)
         flash(message, category)
         if fallback == "rooms":
@@ -6446,7 +6474,7 @@ def room_confirm_result(room_id):
     room = get_room(room_id)
 
     def respond(message, category="success", fallback="room_detail"):
-        if is_htmx_request() and room:
+        if is_room_fragment_request() and room:
             return render_room_dynamic_state(room_id, message, category)
         flash(message, category)
         if fallback == "rooms":

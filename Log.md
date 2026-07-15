@@ -1,3 +1,17 @@
+# V1.10.63 — Tối ưu phòng đấu giai đoạn 1 và backend nhẹ
+
+- Tạo `get_room_state_light()` cho API polling: chỉ đọc các cột trạng thái cần thiết, không gọi `users_map()`, dữ liệu Rank, achievement, logo CLB hoặc dữ liệu tranh chấp.
+- Polling trạng thái chỉ retry tối đa 2 lần để không giữ request quá lâu khi kết nối chập chờn.
+- Giảm polling dự phòng khi Realtime đang kết nối từ 12 giây xuống 5 giây; tab ẩn dùng 20 giây.
+- Chuyển cả nút Quay quân Xếp hạng và Giao hữu sang cơ chế fragment bất đồng bộ, không redirect/tải lại toàn trang.
+- Gom phản hồi thao tác phòng qua `room_action_response()` và nhận diện cả HTMX lẫn fetch fragment để tránh hai nhánh logic chồng chéo.
+- Nút Đá tiếp dùng phản hồi fragment; loại bỏ lượt kiểm tra phòng trùng lặp ở nhánh người thứ hai đồng ý.
+- Nút Rời phòng trả redirect chuyên dụng cho fetch/HTMX, tránh fetch theo redirect rồi submit lặp lần hai.
+- Cập nhật bộ xử lý form để đọc `X-RZ-Redirect`/`HX-Redirect`.
+- Đặt Đá tiếp và Rời phòng nằm ngang cạnh nhau.
+- Hạ thêm tên người chơi, dòng Rank và khu vực logo CLB trong khung Rank; mobile dùng độ dịch nhỏ hơn.
+- Không thay đổi schema Supabase, công thức RP hoặc cấu trúc bảng dữ liệu.
+
 # V1.10.62 — Điều khiển sau trận và căn chỉnh khung Rank
 
 - Khi phòng chuyển sang `confirmed`, đưa hai nút **Đá tiếp** và **Rời phòng** lên khu vực giữa hai thẻ người chơi cho cả chủ phòng và khách.

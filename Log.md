@@ -373,3 +373,15 @@
 - Không cần SQL, không thay đổi database.
 - Không đụng Gift Code backend, ZCOIN, Điểm danh, phòng đấu, BXH, Admin hoặc logic tính điểm.
 - Commit khuyến nghị trên GitHub: `V1.10.25_SHOP_TAB_PAGE_NAVIGATION_NO_SQL`.
+
+## V1.10.46 — Admin Match Control & Chat Feature Toggles
+
+- Cho phép Admin sửa trực tiếp tỷ số và trạng thái trận ngay tại Hồ sơ cá nhân.
+- Admin có thể chuyển trận giữa `confirmed` và `cancelled`; khi hủy một trận đã xác nhận, hệ thống hoàn tác RP và thống kê đã áp dụng.
+- Bổ sung lựa chọn trạng thái ngay trong bảng Quản lý trận đấu gần đây.
+- Hiển thị rõ RP `+/-` của từng người trong từng trận ở trang Admin.
+- Khi Admin tắt Giao hữu, card Giao hữu biến mất hoàn toàn khỏi phòng đấu thay vì chỉ bị làm mờ.
+- Thêm công tắc bật/tắt riêng cho Chat Sảnh và Chat Phòng trong phần Quản lý hệ thống.
+- Khi Chat bị tắt, giao diện, polling/Realtime và API gửi/đọc chat tương ứng đều bị vô hiệu hóa.
+- Cấu hình Chat dùng cache ngắn để tránh tăng truy vấn Supabase nhưng vẫn phản ánh thay đổi nhanh.
+- Không thay đổi schema database và không cần chạy SQL mới.

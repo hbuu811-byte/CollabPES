@@ -173,6 +173,24 @@
                 {% else %}<strong>Không tính điểm</strong>{% endif %}
                 <small>{{ m.status_label }}</small>
             </div>
+            {% if current_user and (current_user.role == 'admin' or current_user.admin_level in ['owner', 'admin']) %}
+            <details class="panel" style="margin-top:10px; padding:10px;">
+                <summary><strong>🛠 Admin sửa trực tiếp trận này</strong></summary>
+                <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}" class="grid-form" style="margin-top:10px;">
+                    <input type="hidden" name="return_url" value="{{ url_for('profile', user_id=player.id) }}#history">
+                    <label>Tỷ số Player 1<input type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}" required></label>
+                    <label>Tỷ số Player 2<input type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}" required></label>
+                    <label>Trạng thái
+                        <select name="target_status">
+                            <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>confirmed</option>
+                            <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>cancelled</option>
+                        </select>
+                    </label>
+                    <label>Ghi chú<input name="note" maxlength="500" value="{{ m.note or '' }}" placeholder="Lý do Admin chỉnh sửa"></label>
+                    <button class="btn green" type="submit" onclick="return confirm('Lưu tỷ số và trạng thái trận này?');">Lưu thay đổi</button>
+                </form>
+            </details>
+            {% endif %}
         </article>
         {% else %}<div class="panel empty-state">Player này chưa có trận nào.</div>{% endfor %}
         </div>

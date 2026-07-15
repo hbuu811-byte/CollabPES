@@ -162,6 +162,7 @@
                     <div><span>Trạng thái phòng</span><strong>{{ room.status|replace('_',' ')|title }}</strong></div>
                 </div>
             </section>
+            {% if room_chat_enabled %}
             <section class="panel room-chat-side">
                 <h2>Chat phòng</h2>
                 <div id="roomChatBox" class="chat-box"></div>
@@ -171,6 +172,7 @@
                 </form>
                 <div class="chat-note">Chat phòng chỉ dành cho 2 người trong phòng. Chống spam: 1 tin nhắn / 5 giây.</div>
             </section>
+            {% endif %}
         </aside>
     </div>
 
@@ -202,12 +204,6 @@
                     <p class="small">Hai CLB khác nhau trong cùng Tier. Không lưu lịch sử, không tính RP.</p>
                     <button class="btn gold" type="submit">🎲 Quay đội Giao hữu</button>
                 </form>
-                {% else %}
-                <div class="room-mode-card disabled friendly-disabled-card">
-                    <h3>🤝 Giao hữu</h3>
-                    <p class="small">Admin đang tắt chế độ trận giao hữu. Người chơi chỉ có thể quay đội Xếp hạng.</p>
-                    <button class="btn gray" type="button" disabled>Đã tắt</button>
-                </div>
                 {% endif %}
             </div>
             {% else %}
@@ -468,6 +464,7 @@ function checkRoomState() {
     .finally(function () { roomStateRequestRunning = false; });
 }
 
+window.RZ_ROOM_CHAT_ENABLED = {{ "true" if room_chat_enabled else "false" }};
 window.RZ_ROOM_RUNTIME = window.RZ_ROOM_RUNTIME || { stateRealtime: false, chatRealtime: false };
 function scheduleRoomStatePoll() {
     const delay = pollingEnabled ? (window.RZ_ROOM_RUNTIME.stateRealtime ? 45000 : 6000) : 30000;
@@ -504,7 +501,7 @@ function subscribeCurrentRoomRealtime() {
             });
 
         // Chat phòng nhận sự kiện trực tiếp; polling chỉ còn là fallback.
-        window.RZ_SUPABASE.channel("rz-room-chat-{{ room.id }}")
+        if (window.RZ_ROOM_CHAT_ENABLED) window.RZ_SUPABASE.channel("rz-room-chat-{{ room.id }}")
             .on("postgres_changes", {
                 event: "INSERT",
                 schema: "public",
@@ -574,7 +571,7 @@ function renderRoomChat(messages) {
 
 let roomChatRequestRunning = false;
 function loadRoomChat() {
-    if (!pollingEnabled || roomChatRequestRunning) return Promise.resolve();
+    if (!window.RZ_ROOM_CHAT_ENABLED || !pollingEnabled || roomChatRequestRunning) return Promise.resolve();
     roomChatRequestRunning = true;
     return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
@@ -591,13 +588,15 @@ function scheduleRoomChatPoll() {
         Promise.resolve(loadRoomChat()).finally(scheduleRoomChatPoll);
     }, delay);
 }
-loadRoomChat();
-scheduleRoomChatPoll();
+if (window.RZ_ROOM_CHAT_ENABLED) {
+    loadRoomChat();
+    scheduleRoomChatPoll();
+}
 
 document.addEventListener("visibilitychange", function () {
     if (!pollingEnabled) return;
     checkRoomState();
-    loadRoomChat();
+    if (window.RZ_ROOM_CHAT_ENABLED) loadRoomChat();
 });
 </script>
 {% endblock %}

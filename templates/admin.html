@@ -481,25 +481,33 @@
         <p class="small">Sửa tỉ số sẽ xác nhận trận và tính lại bảng xếp hạng.</p>
         <div class="table-wrap admin-table-wrap">
             <table>
-                <thead><tr><th>Player 1</th><th>Tỉ số</th><th>Player 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
+                <thead><tr><th>Player 1</th><th>RP</th><th>Tỉ số</th><th>Player 2</th><th>RP</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
                 <tbody>
                 {% for m in all_matches %}
                 <tr>
                     <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}">
                         <td>{{ m.player1_name }}<br><span class="small">{{ m.team1 or '-' }}</span></td>
+                        <td><strong class="{{ 'positive' if (m.delta1 or 0) > 0 else 'negative' if (m.delta1 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta1 or 0) }}</strong></td>
                         <td><input class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}"> - <input class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}"></td>
                         <td>{{ m.player2_name }}<br><span class="small">{{ m.team2 or '-' }}</span></td>
-                        <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
+                        <td><strong class="{{ 'positive' if (m.delta2 or 0) > 0 else 'negative' if (m.delta2 or 0) < 0 else '' }}">{{ "%+d"|format(m.delta2 or 0) }}</strong></td>
+                        <td>
+                            <select name="target_status">
+                                <option value="confirmed" {{ 'selected' if m.status == 'confirmed' else '' }}>confirmed</option>
+                                <option value="cancelled" {{ 'selected' if m.status == 'cancelled' else '' }}>cancelled</option>
+                            </select>
+                            <div><span class="badge {{ m.status }}">Hiện tại: {{ m.status }}</span></div>
+                        </td>
                         <td><input name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td>
-                        <td><button class="btn green" type="submit">Sửa/Xác nhận</button></td>
+                        <td><button class="btn green" type="submit">Lưu thay đổi</button></td>
                     </form>
                 </tr>
-                <tr><td colspan="6">
+                <tr><td colspan="8">
                     {% if m.status == 'disputed' %}<form class="inline-form" method="post" action="{{ url_for('admin_confirm_disputed', match_id=m.id) }}"><button class="btn green" type="submit">Xác nhận tranh chấp</button></form>{% endif %}
                     <form class="inline-form" method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy trận</button></form>
                     <form class="inline-form" method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('XÓA trận này và tính lại BXH?')"><button class="btn red" type="submit">Xóa trận</button></form>
                 </td></tr>
-                {% else %}<tr><td colspan="6">Chưa có trận đấu.</td></tr>{% endfor %}
+                {% else %}<tr><td colspan="8">Chưa có trận đấu.</td></tr>{% endfor %}
                 </tbody>
             </table>
         </div>
@@ -691,6 +699,39 @@
             </div>
             <p class="small">Thay đổi này không lưu lịch sử, không tính RP và không ảnh hưởng các trận xếp hạng. Nếu đang có trận giao hữu cũ, chủ phòng vẫn nên kết thúc trận đó trước.</p>
         </form>
+    </div>
+
+    <div class="panel admin-system-toggle-panel">
+        <div class="admin-section-heading">
+            <div>
+                <h2>💬 Quản lý Chat</h2>
+                <p class="small">Tạm ẩn Chat Sảnh hoặc Chat Phòng. Khi tắt, giao diện bị ẩn hoàn toàn và backend cũng từ chối gửi/đọc tin nhắn mới.</p>
+            </div>
+        </div>
+        <div class="admin-tool-grid">
+            <form method="post" action="{{ url_for('admin_toggle_chat_features') }}" class="admin-friendly-state-form">
+                <input type="hidden" name="feature" value="lobby">
+                <div class="admin-friendly-state-card {{ 'enabled' if lobby_chat_enabled else 'disabled' }}">
+                    <div><strong>Chat Sảnh</strong><small>{{ 'Đang hiển thị cho người dùng.' if lobby_chat_enabled else 'Đã được tạm ẩn hoàn toàn.' }}</small></div>
+                    <span>{{ 'BẬT' if lobby_chat_enabled else 'TẮT' }}</span>
+                </div>
+                <div class="admin-friendly-actions">
+                    <button class="btn gold" type="submit" name="enabled" value="1">✅ Bật Chat Sảnh</button>
+                    <button class="btn red" type="submit" name="enabled" value="0">⛔ Tắt Chat Sảnh</button>
+                </div>
+            </form>
+            <form method="post" action="{{ url_for('admin_toggle_chat_features') }}" class="admin-friendly-state-form">
+                <input type="hidden" name="feature" value="room">
+                <div class="admin-friendly-state-card {{ 'enabled' if room_chat_enabled else 'disabled' }}">
+                    <div><strong>Chat Phòng</strong><small>{{ 'Đang hiển thị trong phòng đấu.' if room_chat_enabled else 'Đã được tạm ẩn hoàn toàn.' }}</small></div>
+                    <span>{{ 'BẬT' if room_chat_enabled else 'TẮT' }}</span>
+                </div>
+                <div class="admin-friendly-actions">
+                    <button class="btn gold" type="submit" name="enabled" value="1">✅ Bật Chat Phòng</button>
+                    <button class="btn red" type="submit" name="enabled" value="0">⛔ Tắt Chat Phòng</button>
+                </div>
+            </form>
+        </div>
     </div>
 
 </section>

@@ -189,7 +189,7 @@ function toggleTheme(){
 </div>
 
 
-{% if request.endpoint != "dashboard" %}
+{% if lobby_chat_enabled and request.endpoint != "dashboard" %}
 <button id="chatToggleButton" class="chat-floating-toggle" type="button" onclick="toggleLobbyChat()">
     💬 <span id="chatToggleText">Chat sảnh</span>
     <span id="chatUnreadBadge" class="chat-unread-badge" hidden>0</span>
@@ -227,6 +227,7 @@ function toggleTheme(){
 
 <script>
 window.IS_LOGGED_IN = {{ "true" if current_user else "false" }};
+window.RZ_LOBBY_CHAT_ENABLED = {{ "true" if lobby_chat_enabled else "false" }};
 window.RZ_REALTIME = {
     enabled: {{ "true" if SUPABASE_REALTIME_ENABLED else "false" }},
     url: {{ SUPABASE_PUBLIC_URL|tojson }},
@@ -824,8 +825,10 @@ if (window.IS_LOGGED_IN) {
             () => window.RZ_RUNTIME.realtime.invites ? 120000 : 15000, 700);
         schedulePoll("activeRoom", checkActiveRoom,
             () => window.RZ_RUNTIME.realtime.rooms ? 120000 : 15000, 1500);
-        schedulePoll("chatUnread", checkLobbyChatUnread, 90000, 2500);
-        if (isLobbyChatOpen) schedulePoll("bottomChat", loadBottomChatSmart, 20000, 4000);
+        if (window.RZ_LOBBY_CHAT_ENABLED) {
+            schedulePoll("chatUnread", checkLobbyChatUnread, 90000, 2500);
+            if (isLobbyChatOpen) schedulePoll("bottomChat", loadBottomChatSmart, 20000, 4000);
+        }
     }
 }
 

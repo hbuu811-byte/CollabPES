@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.45"
+APP_VERSION = "V1.10.46"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -751,7 +751,10 @@ def has_admin_permission(user, permission_code: str) -> bool:
 
 
 FRIENDLY_MATCHES_SETTING_KEY = "friendly_matches_enabled"
+LOBBY_CHAT_SETTING_KEY = "lobby_chat_enabled"
+ROOM_CHAT_SETTING_KEY = "room_chat_enabled"
 _friendly_matches_cache = {"value": None, "expires_at": 0.0}
+_chat_features_cache = {"value": None, "expires_at": 0.0}
 
 
 def _setting_to_bool(value, default=True) -> bool:
@@ -837,6 +840,69 @@ def set_friendly_matches_enabled(enabled: bool):
         attempts=3,
     )
     _friendly_matches_cache.update({"value": bool(enabled), "expires_at": time.time() + 5})
+
+
+def chat_features_enabled(force=False):
+    """Return global chat feature toggles using one short cached settings query."""
+    now = time.time()
+    cached = _chat_features_cache.get("value")
+    if not force and cached is not None and now < _chat_features_cache.get("expires_at", 0):
+        return dict(cached)
+
+    states = {"lobby": True, "room": True}
+    if db is not None:
+        try:
+            result = execute_query(
+                db.table("system_settings")
+                .select("setting_key,setting_value,updated_at")
+                .in_("setting_key", [LOBBY_CHAT_SETTING_KEY, ROOM_CHAT_SETTING_KEY]),
+                "load_chat_feature_settings",
+                attempts=2,
+            )
+            found = set()
+            for row in result.data or []:
+                key = row.get("setting_key")
+                found.add(key)
+                if key == LOBBY_CHAT_SETTING_KEY:
+                    states["lobby"] = _setting_to_bool(row.get("setting_value"), True)
+                elif key == ROOM_CHAT_SETTING_KEY:
+                    states["room"] = _setting_to_bool(row.get("setting_value"), True)
+            missing = []
+            if LOBBY_CHAT_SETTING_KEY not in found:
+                missing.append({"setting_key": LOBBY_CHAT_SETTING_KEY, "setting_value": {"enabled": True}, "updated_at": now_iso()})
+            if ROOM_CHAT_SETTING_KEY not in found:
+                missing.append({"setting_key": ROOM_CHAT_SETTING_KEY, "setting_value": {"enabled": True}, "updated_at": now_iso()})
+            for payload in missing:
+                execute_query(
+                    db.table("system_settings").upsert(payload, on_conflict="setting_key"),
+                    "seed_chat_feature_setting",
+                    attempts=2,
+                )
+        except Exception as exc:
+            print(f"chat_features_enabled fallback warning: {exc}")
+    _chat_features_cache.update({"value": dict(states), "expires_at": now + 10})
+    return states
+
+
+def set_chat_feature_enabled(feature: str, enabled: bool):
+    if db is None:
+        raise RuntimeError("Chưa cấu hình Supabase.")
+    key = LOBBY_CHAT_SETTING_KEY if feature == "lobby" else ROOM_CHAT_SETTING_KEY if feature == "room" else None
+    if not key:
+        raise ValueError("Tính năng chat không hợp lệ.")
+    payload = {
+        "setting_key": key,
+        "setting_value": {"enabled": bool(enabled)},
+        "updated_at": now_iso(),
+    }
+    execute_query(
+        db.table("system_settings").upsert(payload, on_conflict="setting_key"),
+        "set_chat_feature_enabled",
+        attempts=3,
+    )
+    current = chat_features_enabled(force=False)
+    current[feature] = bool(enabled)
+    _chat_features_cache.update({"value": current, "expires_at": time.time() + 10})
 
 
 def normalize_invite_code(value: str) -> str:
@@ -3310,6 +3376,8 @@ def inject_globals():
             "SUPABASE_PUBLIC_URL": supabase_url,
             "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key,
             "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
+            "lobby_chat_enabled": chat_features_enabled().get("lobby", True),
+            "room_chat_enabled": chat_features_enabled().get("room", True),
             "pending_invite_count": 0,
             "incoming_invites": [],
             "active_room": None,
@@ -3343,6 +3411,8 @@ def inject_globals():
         "APP_VERSION": APP_VERSION,
         "RANKS": load_rank_ranges(),
         "format_vn_datetime": format_vn_datetime,
+        "lobby_chat_enabled": chat_features_enabled().get("lobby", True),
+        "room_chat_enabled": chat_features_enabled().get("room", True),
         "pending_invite_count": pending_count,
         "incoming_invites": incoming,
         "active_room": active_room,
@@ -3762,12 +3832,18 @@ def logout():
 @app.route("/chat")
 @login_required
 def lobby_chat():
+    if not chat_features_enabled().get("lobby", True):
+        flash("Chat Sảnh đang được Admin tạm ẩn.", "warning")
+        return redirect(url_for("dashboard"))
     return render_template("chat.html", messages=list_chat_messages("global", limit=20))
 
 
 @app.route("/chat/send", methods=["POST"])
 @login_required
 def send_global_chat():
+    if not chat_features_enabled().get("lobby", True):
+        flash("Chat Sảnh đang được Admin tạm ẩn.", "warning")
+        return redirect(url_for("dashboard"))
     user = current_user()
     message = request.form.get("message", "")
 
@@ -3783,6 +3859,8 @@ def send_global_chat():
 @app.route("/api/chat/global")
 @login_required
 def api_global_chat():
+    if not chat_features_enabled().get("lobby", True):
+        return jsonify({"ok": False, "error": "chat_disabled", "messages": []}), 403
     messages = list_chat_messages("global", limit=20)
     return jsonify({"ok": True, "messages": messages})
 
@@ -3790,6 +3868,8 @@ def api_global_chat():
 @app.route("/api/chat/global/status")
 @login_required
 def api_global_chat_status():
+    if not chat_features_enabled().get("lobby", True):
+        return jsonify({"ok": True, "disabled": True, "unread_count": 0, "latest_created_at": None})
     """Trả payload nhỏ: chỉ số tin chưa đọc và mốc mới nhất, không gửi lại 100 bản ghi."""
     user = current_user()
     since = (request.args.get("since") or "").strip()
@@ -3819,6 +3899,8 @@ def api_global_chat_status():
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
+    if not chat_features_enabled().get("room", True):
+        return jsonify({"ok": False, "error": "chat_disabled", "messages": []}), 403
     user = current_user()
     room = get_room(room_id)
 
@@ -3835,6 +3917,9 @@ def api_room_chat(room_id):
 @app.route("/room/<room_id>/chat/send", methods=["POST"])
 @login_required
 def send_room_chat(room_id):
+    if not chat_features_enabled().get("room", True):
+        flash("Chat Phòng đang được Admin tạm ẩn.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     user = current_user()
     room = get_room(room_id)
 
@@ -3908,6 +3993,28 @@ def admin_toggle_friendly_matches():
     return redirect_admin("system")
 
 
+@app.route("/admin/settings/chat", methods=["POST"])
+@login_required
+@admin_required
+def admin_toggle_chat_features():
+    feature = (request.form.get("feature") or "").strip().lower()
+    raw_value = (request.form.get("enabled") or "0").strip().lower()
+    enabled = raw_value in {"1", "true", "on", "yes", "enable", "enabled"}
+    if feature not in {"lobby", "room"}:
+        flash("Loại Chat không hợp lệ.", "danger")
+        return redirect_admin("system")
+    set_chat_feature_enabled(feature, enabled)
+    label = "Chat Sảnh" if feature == "lobby" else "Chat Phòng"
+    log_admin_action(
+        "Cập nhật tính năng Chat",
+        "system",
+        target_label=f"{feature}_chat_enabled",
+        details=f"{'Bật' if enabled else 'Tắt'} {label}",
+    )
+    flash(f"Đã {'bật' if enabled else 'tạm ẩn'} {label}.", "success")
+    return redirect_admin("system")
+
+
 @app.route("/api/announcement/current")
 @login_required
 def api_current_announcement():
@@ -3937,6 +4044,8 @@ def api_current_announcement():
 @app.route("/api/chat/global/send", methods=["POST"])
 @login_required
 def api_send_global_chat():
+    if not chat_features_enabled().get("lobby", True):
+        return jsonify({"ok": False, "error": "Chat Sảnh đang được Admin tạm ẩn."}), 403
     user = current_user()
     payload = request.get_json(silent=True) or {}
     message = payload.get("message", "")
@@ -5376,7 +5485,13 @@ def room_detail(room_id):
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 
-    return render_template("room_detail.html", room=room, friendly_tiers=get_available_team_tiers(), friendly_matches_enabled=friendly_matches_enabled(force=True))
+    return render_template(
+        "room_detail.html",
+        room=room,
+        friendly_tiers=get_available_team_tiers(),
+        friendly_matches_enabled=friendly_matches_enabled(force=True),
+        room_chat_enabled=chat_features_enabled().get("room", True),
+    )
 
 
 @app.route("/room/<room_id>/leave", methods=["POST"])
@@ -6735,6 +6850,7 @@ def admin():
     gift_redemptions, gift_redemption_setup_required = list_gift_code_redemptions()
     gift_code_setup_required = gift_code_setup_required or gift_redemption_setup_required
     duplicate_ip_groups = build_duplicate_ip_groups(admin_users)
+    chat_states = chat_features_enabled(force=True)
     duplicate_ip_user_count = len({
         str(account.get("id"))
         for group in duplicate_ip_groups
@@ -6763,6 +6879,8 @@ def admin():
         can_create_test_account=has_admin_permission(current_user(), "create_test_account"),
         can_import_accounts_csv=has_admin_permission(current_user(), "import_accounts_csv"),
         friendly_matches_enabled=friendly_matches_enabled(force=True),
+        lobby_chat_enabled=chat_states.get("lobby", True),
+        room_chat_enabled=chat_states.get("room", True),
         gift_codes=gift_codes,
         gift_redemptions=gift_redemptions,
         gift_code_setup_required=gift_code_setup_required,
@@ -7672,6 +7790,13 @@ def admin_delete_player(user_id):
     return redirect_admin("users")
 
 
+def _admin_match_redirect(default_tab="matches"):
+    next_url = (request.form.get("return_url") or "").strip()
+    if next_url.startswith("/") and not next_url.startswith("//"):
+        return redirect(next_url)
+    return redirect_admin(default_tab)
+
+
 @app.route("/admin/match/<match_id>/update-result", methods=["POST"])
 @login_required
 @admin_required
@@ -7679,28 +7804,78 @@ def admin_update_match_result(match_id):
     match = get_match(match_id)
     if not match:
         flash("Không tìm thấy trận.", "danger")
-        return redirect_admin("matches")
+        return _admin_match_redirect("matches")
 
     try:
         score1 = int(request.form.get("score1", "0"))
         score2 = int(request.form.get("score2", "0"))
     except (TypeError, ValueError):
         flash("Tỉ số phải là số nguyên.", "danger")
-        return redirect_admin("matches")
+        return _admin_match_redirect("matches")
     if score1 < 0 or score2 < 0:
         flash("Tỉ số không được âm.", "danger")
-        return redirect_admin("matches")
+        return _admin_match_redirect("matches")
 
     if not match.get("player1_id") or not match.get("player2_id"):
         flash("Trận đấu thiếu dữ liệu người chơi nên chưa thể sửa.", "danger")
-        return redirect_admin("matches")
+        return _admin_match_redirect("matches")
     if not get_user(match.get("player1_id")) or not get_user(match.get("player2_id")):
         flash("Không tìm thấy một trong hai người chơi. Chưa thay đổi BXH.", "danger")
-        return redirect_admin("matches")
+        return _admin_match_redirect("matches")
 
     winner_id = match.get("player1_id") if score1 > score2 else match.get("player2_id") if score2 > score1 else None
     loser_id = match.get("player2_id") if score1 > score2 else match.get("player1_id") if score2 > score1 else None
     note = request.form.get("note", "").strip()[:500] or "Admin đã sửa kết quả."
+    target_status = (request.form.get("target_status") or "confirmed").strip().lower()
+    if target_status not in {"confirmed", "cancelled"}:
+        flash("Admin chỉ được chuyển trạng thái sang confirmed hoặc cancelled.", "danger")
+        return _admin_match_redirect("matches")
+
+    if target_status == "cancelled":
+        old_match = dict(match)
+        try:
+            if old_match.get("status") == "confirmed" and not reverse_confirmed_match_result(old_match):
+                raise ValueError("Không thể hoàn tác RP của trận đã xác nhận.")
+            if old_match.get("status") == "disputed":
+                dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
+                if dispute:
+                    cancel_match_dispute(dispute, current_user().get("id"), note or "Admin chuyển trận sang cancelled.")
+                else:
+                    execute_query(
+                        db.table("matches").update({
+                            "status": "cancelled", "delta1": 0, "delta2": 0,
+                            "winner_id": None, "loser_id": None, "note": note, "updated_at": now_iso(),
+                        }).eq("id", match_id),
+                        "admin_cancel_disputed_without_record",
+                    )
+            else:
+                execute_query(
+                    db.table("matches").update({
+                        "score1": score1, "score2": score2,
+                        "status": "cancelled", "delta1": 0, "delta2": 0,
+                        "winner_id": None, "loser_id": None, "note": note, "updated_at": now_iso(),
+                    }).eq("id", match_id),
+                    "admin_change_match_status_cancelled",
+                )
+            execute_query(
+                db.table("match_rooms").update({
+                    "status": "cancelled", "note": "Admin đã chuyển trận sang cancelled.",
+                    "state_expires_at": None, "updated_at": now_iso(),
+                }).eq("match_id", match_id),
+                "admin_change_room_status_cancelled",
+                attempts=2,
+            )
+            ttl_cache_delete("rooms_raw", "players_raw", "matches_raw", "achievement_map")
+        except Exception as exc:
+            print(f"admin_change_match_status_cancelled ERROR match={match_id}: {type(exc).__name__}: {exc}")
+            flash(f"Không thể chuyển trận sang cancelled: {exc}", "danger")
+            return _admin_match_redirect("matches")
+        log_admin_action(
+            "Đổi trạng thái trận", "match", match_id,
+            details=f"{old_match.get('status')} → cancelled; tỷ số giữ {score1}-{score2}. {note}",
+        )
+        flash("Đã chuyển trận sang cancelled và hoàn tác RP nếu trước đó đã confirmed.", "success")
+        return _admin_match_redirect("matches")
 
     if match.get("status") == "disputed":
         dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
@@ -7712,10 +7887,10 @@ def admin_update_match_result(match_id):
             except Exception as exc:
                 print(f"admin_update_disputed ERROR match={match_id}: {type(exc).__name__}: {exc}")
                 flash(f"Không thể xử lý tranh chấp: {exc}", "danger")
-                return redirect_admin("disputes")
+                return _admin_match_redirect("disputes")
             log_admin_action("Sửa/Xác nhận tranh chấp", "match", match_id, details=f"Tỷ số mới {score1}-{score2}. {note}")
             flash("Đã sửa tỷ số tranh chấp và cập nhật BXH.", "success")
-            return redirect_admin("disputes")
+            return _admin_match_redirect("disputes")
 
     old_match = dict(match)
     old_was_applied = bool(
@@ -7807,14 +7982,14 @@ def admin_update_match_result(match_id):
         except Exception as rollback_exc:
             print(f"admin_update_match_result ROLLBACK ERROR match={match_id}: {type(rollback_exc).__name__}: {rollback_exc}")
         flash(f"Không thể lưu lại trận đấu: {exc}. Hệ thống đã ghi log chi tiết trên Vercel.", "danger")
-        return redirect_admin("matches")
+        return _admin_match_redirect("matches")
 
     log_admin_action(
         "Sửa/Xác nhận kết quả", "match", match_id,
         details=f"{old_match.get('score1')}–{old_match.get('score2')} → {score1}–{score2}; RP {int(delta1):+d}/{int(delta2):+d}. {note}",
     )
     flash(f"Đã sửa kết quả và cập nhật lại RP: {int(delta1):+d}/{int(delta2):+d}.", "success")
-    return redirect_admin("matches")
+    return _admin_match_redirect("matches")
 
 
 @app.route("/admin/match/<match_id>/delete", methods=["POST"])

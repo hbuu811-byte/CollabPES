@@ -412,6 +412,7 @@ function renderRoomStartCountdown(seconds) {
 renderRoomCountdown(roomCountdownSeconds);
 renderRoomStartCountdown(roomStartCountdownSeconds);
 setInterval(function () {
+    if (document.hidden) return;
     if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
     if (roomStartCountdownMode === "up") {
         roomStartCountdownSeconds += 1;
@@ -467,8 +468,9 @@ function checkRoomState() {
     .finally(function () { roomStateRequestRunning = false; });
 }
 
+window.RZ_ROOM_RUNTIME = window.RZ_ROOM_RUNTIME || { stateRealtime: false, chatRealtime: false };
 function scheduleRoomStatePoll() {
-    const delay = pollingEnabled ? (window.RZ_SUPABASE ? 60000 : 8000) : 30000;
+    const delay = pollingEnabled ? (window.RZ_ROOM_RUNTIME.stateRealtime ? 45000 : 6000) : 30000;
     setTimeout(function () {
         Promise.resolve(checkRoomState()).finally(scheduleRoomStatePoll);
     }, delay);
@@ -478,9 +480,11 @@ scheduleRoomStatePoll();
 
 function subscribeCurrentRoomRealtime() {
     if (!window.RZ_REALTIME?.enabled) return;
+    let attempts = 0;
     const attach = function () {
+        attempts += 1;
         if (!window.RZ_SUPABASE) {
-            setTimeout(attach, 500);
+            if (attempts < 40) setTimeout(attach, 250);
             return;
         }
         window.RZ_SUPABASE.channel("rz-room-{{ room.id }}")
@@ -490,13 +494,39 @@ function subscribeCurrentRoomRealtime() {
                 table: "match_rooms",
                 filter: "id=eq.{{ room.id }}"
             }, function () {
-                if (pollingEnabled) checkRoomState();
+                if (pollingEnabled) {
+                    clearTimeout(window.RZ_ROOM_RUNTIME.stateEventTimer);
+                    window.RZ_ROOM_RUNTIME.stateEventTimer = setTimeout(checkRoomState, 80);
+                }
             })
-            .subscribe();
+            .subscribe(function (status) {
+                window.RZ_ROOM_RUNTIME.stateRealtime = status === "SUBSCRIBED";
+            });
+
+        // Chat phòng nhận sự kiện trực tiếp; polling chỉ còn là fallback.
+        window.RZ_SUPABASE.channel("rz-room-chat-{{ room.id }}")
+            .on("postgres_changes", {
+                event: "INSERT",
+                schema: "public",
+                table: "chat_messages",
+                filter: "room_id=eq.{{ room.id }}"
+            }, function () {
+                if (pollingEnabled) {
+                    clearTimeout(window.RZ_ROOM_RUNTIME.chatEventTimer);
+                    window.RZ_ROOM_RUNTIME.chatEventTimer = setTimeout(loadRoomChat, 80);
+                }
+            })
+            .subscribe(function (status) {
+                window.RZ_ROOM_RUNTIME.chatRealtime = status === "SUBSCRIBED";
+            });
     };
     attach();
 }
-window.addEventListener("load", subscribeCurrentRoomRealtime);
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", subscribeCurrentRoomRealtime, { once: true });
+} else {
+    subscribeCurrentRoomRealtime();
+}
 </script>
 
 <script>
@@ -516,9 +546,15 @@ function renderRoomAvatar(url, name, achievement) {
     return `<span class="player-avatar avatar-xs"><span>${initial}</span>${badge}</span>`;
 }
 
+let roomChatRenderKey = "";
 function renderRoomChat(messages) {
     const box = document.getElementById("roomChatBox");
     if (!box) return;
+    const renderKey = (messages || []).map(function (msg) {
+        return [msg.id, msg.created_at, msg.message].join(":");
+    }).join("|");
+    if (renderKey === roomChatRenderKey) return;
+    roomChatRenderKey = renderKey;
 
     box.innerHTML = messages.map(function (msg) {
         const adminBadge = msg.user_role === "admin" ? '<span class="badge gold">ADMIN</span>' : '';
@@ -550,12 +586,18 @@ function loadRoomChat() {
 }
 
 function scheduleRoomChatPoll() {
-    const delay = pollingEnabled ? 15000 : 30000;
+    const delay = pollingEnabled ? (window.RZ_ROOM_RUNTIME.chatRealtime ? 45000 : 8000) : 30000;
     setTimeout(function () {
         Promise.resolve(loadRoomChat()).finally(scheduleRoomChatPoll);
     }, delay);
 }
 loadRoomChat();
 scheduleRoomChatPoll();
+
+document.addEventListener("visibilitychange", function () {
+    if (!pollingEnabled) return;
+    checkRoomState();
+    loadRoomChat();
+});
 </script>
 {% endblock %}

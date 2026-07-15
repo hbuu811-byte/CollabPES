@@ -1,3 +1,7 @@
+# Rank PES Collaboration V1.10.45
+
+Bản tối ưu độ trễ Realtime, fallback polling và render giao diện. Xem `Log.md` để biết chi tiết.
+
 ## V1.10.41_PROFILE_BANNER_VISIBILITY_HOTFIX_NO_SQL
 
 **Mục tiêu:** làm banner hồ sơ đã trang bị hiển thị rõ hơn, không còn bị lớp phủ tối che gần hết ảnh.

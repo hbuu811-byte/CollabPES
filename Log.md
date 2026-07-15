@@ -1,3 +1,16 @@
+# V1.10.45 — Giảm delay Realtime, loại bỏ xử lý chồng và chống render thừa
+
+- Sửa lỗi quan trọng: trước đây chỉ cần cấu hình Realtime được bật là polling bị giãn tới 60–120 giây, kể cả WebSocket chưa đăng ký thành công. Bản mới chỉ coi Realtime hoạt động khi channel báo `SUBSCRIBED`.
+- Polling fallback chạy nhanh 15 giây cho invite/active-room và 30 giây cho announcement khi Realtime chưa sẵn sàng; tự giãn mạnh sau khi Realtime khỏe.
+- Khởi tạo Supabase Realtime sớm từ `DOMContentLoaded`, retry thư viện trong tối đa khoảng 6 giây, không chờ toàn bộ ảnh/trang tải xong.
+- Debounce sự kiện Realtime để nhiều thay đổi liên tiếp chỉ gọi API một lần, tránh request chồng.
+- Phòng đấu: trạng thái fallback 6 giây khi Realtime lỗi, 45 giây khi Realtime hoạt động; sự kiện Realtime kiểm tra gần như ngay lập tức.
+- Chat phòng chuyển sang Realtime theo bảng `chat_messages`; polling 8 giây khi mất Realtime và 45 giây khi Realtime khỏe.
+- Không render lại toàn bộ danh sách chat nếu dữ liệu không đổi, giảm giật/flicker và giảm thao tác DOM.
+- Bộ đếm thời gian trong phòng dừng khi tab ẩn; khi quay lại tab sẽ đồng bộ trạng thái và chat ngay.
+- Xóa một dòng `return redirect(...)` không bao giờ chạy trong route `/`.
+- Không thay đổi database, Rank Point hoặc cấu trúc bảng.
+
 # V1.10.44 — Realtime, cache BXH và giảm Fast Origin Transfer
 
 - Cache BXH khách 45 giây tại RAM + Vercel CDN.

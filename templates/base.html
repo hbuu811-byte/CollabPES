@@ -234,6 +234,11 @@ window.RZ_REALTIME = {
     userId: {{ (current_user.id if current_user else None)|tojson }}
 };
 let pollingEnabled = !document.hidden;
+window.RZ_RUNTIME = window.RZ_RUNTIME || {
+    realtime: { invites: false, rooms: false, announcements: false },
+    realtimeInitStarted: false,
+    realtimeInitDone: false
+};
 document.addEventListener("visibilitychange", () => {
     pollingEnabled = !document.hidden;
 });
@@ -385,9 +390,15 @@ function renderAvatarHtml(url, name, size, achievement) {
     return `<span class="player-avatar avatar-${sizeClass}" title="${safeName}"><span>${initial}</span>${badge}</span>`;
 }
 
+let bottomChatRenderKey = "";
 function renderBottomChat(messages) {
     const box = document.getElementById("bottomGlobalChatBox");
     if (!box) return;
+    const renderKey = (messages || []).map(function (msg) {
+        return [msg.id, msg.created_at, msg.message].join(":");
+    }).join("|");
+    if (renderKey === bottomChatRenderKey) return;
+    bottomChatRenderKey = renderKey;
 
     box.innerHTML = messages.map(function (msg) {
         const adminBadge = ["owner", "admin"].includes(msg.user_role) ? '<span class="badge gold">ADMIN</span>' : '';
@@ -753,10 +764,22 @@ function sendAdminAnnouncement() {
 
 // Bộ lập lịch tự thích nghi: không tạo request chồng nhau, dừng khi tab ẩn.
 const RZ_POLL = { timers: {}, running: {} };
-function schedulePoll(name, task, intervalMs, initialDelayMs) {
+function resolvePollInterval(intervalOrResolver) {
+    try {
+        const value = typeof intervalOrResolver === "function" ? intervalOrResolver() : intervalOrResolver;
+        return Math.max(1000, Number(value) || 30000);
+    } catch (error) {
+        return 30000;
+    }
+}
+function schedulePoll(name, task, intervalOrResolver, initialDelayMs) {
+    function queueNext() {
+        clearTimeout(RZ_POLL.timers[name]);
+        RZ_POLL.timers[name] = setTimeout(run, resolvePollInterval(intervalOrResolver));
+    }
     function run() {
         if (!pollingEnabled || !window.IS_LOGGED_IN || RZ_POLL.running[name]) {
-            RZ_POLL.timers[name] = setTimeout(run, intervalMs);
+            queueNext();
             return;
         }
         RZ_POLL.running[name] = true;
@@ -764,29 +787,52 @@ function schedulePoll(name, task, intervalMs, initialDelayMs) {
             .catch(function () {})
             .finally(function () {
                 RZ_POLL.running[name] = false;
-                RZ_POLL.timers[name] = setTimeout(run, intervalMs);
+                queueNext();
             });
     }
     RZ_POLL.timers[name] = setTimeout(run, initialDelayMs || 0);
 }
 
+function rzDebounce(name, task, waitMs) {
+    window.RZ_RUNTIME.debounceTimers = window.RZ_RUNTIME.debounceTimers || {};
+    clearTimeout(window.RZ_RUNTIME.debounceTimers[name]);
+    window.RZ_RUNTIME.debounceTimers[name] = setTimeout(function () {
+        if (pollingEnabled) Promise.resolve(task()).catch(function () {});
+    }, waitMs || 120);
+}
+
+function setRealtimeHealth(kind, healthy) {
+    if (!window.RZ_RUNTIME?.realtime) return;
+    window.RZ_RUNTIME.realtime[kind] = Boolean(healthy);
+}
+
+function subscribeWithHealth(channel, kind) {
+    return channel.subscribe(function (status) {
+        if (status === "SUBSCRIBED") setRealtimeHealth(kind, true);
+        if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) setRealtimeHealth(kind, false);
+    });
+}
+
 const rzIsRoomPage = window.location.pathname.startsWith("/room/");
-const rzRealtimeAvailable = Boolean(window.RZ_REALTIME && window.RZ_REALTIME.enabled);
 if (window.IS_LOGGED_IN) {
-    schedulePoll("heartbeat", postHeartbeat, 90000, 1000);
-    // Realtime là luồng chính; polling chỉ là dự phòng thưa để tự phục hồi khi websocket rớt.
-    schedulePoll("announcement", checkAnnouncementSmart, rzRealtimeAvailable ? 300000 : 180000, 1500);
+    schedulePoll("heartbeat", postHeartbeat, 90000, 800);
+    // Trước khi Realtime đăng ký thành công, fallback chạy nhanh để không tạo delay.
+    schedulePoll("announcement", checkAnnouncementSmart,
+        () => window.RZ_RUNTIME.realtime.announcements ? 300000 : 30000, 1200);
     if (!rzIsRoomPage) {
-        schedulePoll("invites", checkPendingInvites, rzRealtimeAvailable ? 120000 : 30000, 900);
-        schedulePoll("activeRoom", checkActiveRoom, rzRealtimeAvailable ? 120000 : 60000, 2200);
-        schedulePoll("chatUnread", checkLobbyChatUnread, 90000, 3000);
-        // Không tải nội dung chat khi hộp chat chưa mở.
-        if (isLobbyChatOpen) schedulePoll("bottomChat", loadBottomChatSmart, 20000, 5000);
+        schedulePoll("invites", checkPendingInvites,
+            () => window.RZ_RUNTIME.realtime.invites ? 120000 : 15000, 700);
+        schedulePoll("activeRoom", checkActiveRoom,
+            () => window.RZ_RUNTIME.realtime.rooms ? 120000 : 15000, 1500);
+        schedulePoll("chatUnread", checkLobbyChatUnread, 90000, 2500);
+        if (isLobbyChatOpen) schedulePoll("bottomChat", loadBottomChatSmart, 20000, 4000);
     }
 }
 
 function initRankzoneRealtime() {
+    if (window.RZ_RUNTIME.realtimeInitStarted) return window.RZ_RUNTIME.realtimeInitDone;
     if (!window.IS_LOGGED_IN || !window.RZ_REALTIME?.enabled || !window.supabase?.createClient) return false;
+    window.RZ_RUNTIME.realtimeInitStarted = true;
     try {
         const client = window.supabase.createClient(window.RZ_REALTIME.url, window.RZ_REALTIME.anonKey, {
             auth: { persistSession: false, autoRefreshToken: false },
@@ -795,30 +841,54 @@ function initRankzoneRealtime() {
         window.RZ_SUPABASE = client;
         const uid = window.RZ_REALTIME.userId;
         if (uid && !rzIsRoomPage) {
-            client.channel(`rz-invites-${uid}`)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_invites', filter: `to_user_id=eq.${uid}` }, () => checkPendingInvites())
-                .subscribe();
+            subscribeWithHealth(
+                client.channel(`rz-invites-${uid}`)
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'match_invites', filter: `to_user_id=eq.${uid}` },
+                        () => rzDebounce('invite-event', checkPendingInvites, 100)),
+                'invites'
+            );
+            let roomSubscriptionsReady = 0;
+            function roomStatus(status) {
+                if (status === 'SUBSCRIBED') roomSubscriptionsReady += 1;
+                if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) roomSubscriptionsReady = Math.max(0, roomSubscriptionsReady - 1);
+                setRealtimeHealth('rooms', roomSubscriptionsReady >= 2);
+            }
             client.channel(`rz-room-host-${uid}`)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `host_user_id=eq.${uid}` }, () => checkActiveRoom())
-                .subscribe();
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `host_user_id=eq.${uid}` },
+                    () => rzDebounce('active-room-event', checkActiveRoom, 100))
+                .subscribe(roomStatus);
             client.channel(`rz-room-guest-${uid}`)
-                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `guest_user_id=eq.${uid}` }, () => checkActiveRoom())
-                .subscribe();
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `guest_user_id=eq.${uid}` },
+                    () => rzDebounce('active-room-event', checkActiveRoom, 100))
+                .subscribe(roomStatus);
         }
-        client.channel('rz-announcements')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_announcements' }, () => checkAnnouncementSmart())
-            .subscribe();
+        subscribeWithHealth(
+            client.channel('rz-announcements')
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_announcements' },
+                    () => rzDebounce('announcement-event', checkAnnouncementSmart, 100)),
+            'announcements'
+        );
+        window.RZ_RUNTIME.realtimeInitDone = true;
         return true;
     } catch (error) {
+        window.RZ_RUNTIME.realtimeInitStarted = false;
         console.warn('Realtime init failed; fallback polling remains active.', error);
         return false;
     }
 }
 
-window.addEventListener('load', function () {
-    if (!initRankzoneRealtime()) return;
-});
+function tryInitRankzoneRealtime(attempt) {
+    if (initRankzoneRealtime()) return;
+    if ((attempt || 0) >= 24 || !window.RZ_REALTIME?.enabled) return;
+    setTimeout(function () { tryInitRankzoneRealtime((attempt || 0) + 1); }, 250);
+}
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { tryInitRankzoneRealtime(0); }, { once: true });
+} else {
+    tryInitRankzoneRealtime(0);
+}
 
+// Khi quay lại tab, đồng bộ ngay thay vì chờ chu kỳ tiếp theo.
 document.addEventListener("visibilitychange", function () {
     if (!pollingEnabled || !window.IS_LOGGED_IN) return;
     postHeartbeat();

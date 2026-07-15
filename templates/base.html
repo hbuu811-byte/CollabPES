@@ -226,8 +226,39 @@ function toggleTheme(){
 {% endif %}
 
 <script>
+window.IS_LOGGED_IN = {{ "true" if current_user else "false" }};
+window.RZ_REALTIME = {
+    enabled: {{ "true" if SUPABASE_REALTIME_ENABLED else "false" }},
+    url: {{ SUPABASE_PUBLIC_URL|tojson }},
+    anonKey: {{ SUPABASE_PUBLIC_ANON_KEY|tojson }},
+    userId: {{ (current_user.id if current_user else None)|tojson }}
+};
+let pollingEnabled = !document.hidden;
+document.addEventListener("visibilitychange", () => {
+    pollingEnabled = !document.hidden;
+});
+
+async function safePoll(url, options) {
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return null;
+    try {
+        const response = await fetch(url, Object.assign({
+            credentials: "same-origin",
+            cache: "no-store"
+        }, options || {}));
+        return response;
+    } catch (error) {
+        console.warn("Polling failed:", error);
+        return null;
+    }
+}
+</script>
+{% if current_user and SUPABASE_REALTIME_ENABLED %}
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+{% endif %}
+
+<script>
 function postHeartbeat() {
-    if (document.hidden) return Promise.resolve();
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return Promise.resolve();
     return fetch("{{ url_for('heartbeat') }}", {
         method: "POST",
         credentials: "same-origin"
@@ -284,7 +315,7 @@ function renderInvitePopup(invite) {
 let lastKnownActiveRoomId = null;
 
 function checkActiveRoom() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    if (!pollingEnabled || !window.IS_LOGGED_IN || window.location.pathname.startsWith("/room/")) return Promise.resolve();
 
     return fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
@@ -312,7 +343,7 @@ function checkActiveRoom() {
 
 
 function checkPendingInvites() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    if (!pollingEnabled || !window.IS_LOGGED_IN || window.location.pathname.startsWith("/room/")) return Promise.resolve();
     return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
         credentials: "same-origin"
@@ -494,22 +525,22 @@ function toggleLobbyChat() {
 }
 
 function loadBottomChatSmart() {
-    if (document.hidden || !isLobbyChatOpen) return;
+    if (!pollingEnabled || !window.IS_LOGGED_IN || !isLobbyChatOpen) return;
     loadBottomChat();
 }
 
 function checkAnnouncementSmart() {
-    if (document.hidden) return;
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return;
     checkAnnouncement();
 }
 
 function updateOnlineFloatingCountSmart() {
-    if (document.hidden) return;
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return;
     updateOnlineFloatingCount();
 }
 
 function loadBottomChat() {
-    if (document.hidden) return Promise.resolve();
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return Promise.resolve();
     return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
@@ -521,7 +552,7 @@ function loadBottomChat() {
 }
 
 function checkLobbyChatUnread() {
-    if (document.hidden || isLobbyChatOpen) return;
+    if (!pollingEnabled || !window.IS_LOGGED_IN || isLobbyChatOpen) return;
 
     const lastRead = getChatLastRead();
     const url = new URL("{{ url_for('api_global_chat_status') }}", window.location.origin);
@@ -675,7 +706,7 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkAnnouncement() {
-    if (document.hidden) return Promise.resolve();
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return Promise.resolve();
     return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
@@ -724,7 +755,7 @@ function sendAdminAnnouncement() {
 const RZ_POLL = { timers: {}, running: {} };
 function schedulePoll(name, task, intervalMs, initialDelayMs) {
     function run() {
-        if (document.hidden || RZ_POLL.running[name]) {
+        if (!pollingEnabled || !window.IS_LOGGED_IN || RZ_POLL.running[name]) {
             RZ_POLL.timers[name] = setTimeout(run, intervalMs);
             return;
         }
@@ -740,17 +771,56 @@ function schedulePoll(name, task, intervalMs, initialDelayMs) {
 }
 
 const rzIsRoomPage = window.location.pathname.startsWith("/room/");
-schedulePoll("heartbeat", postHeartbeat, 75000, 1000);
-schedulePoll("announcement", checkAnnouncementSmart, 120000, 1200);
-if (!rzIsRoomPage) {
-    schedulePoll("invites", checkPendingInvites, 10000, 700);
-    schedulePoll("activeRoom", checkActiveRoom, 30000, 1800);
-    schedulePoll("chatUnread", checkLobbyChatUnread, 60000, 2200);
-    schedulePoll("bottomChat", loadBottomChatSmart, 12000, 5000);
+const rzRealtimeAvailable = Boolean(window.RZ_REALTIME && window.RZ_REALTIME.enabled);
+if (window.IS_LOGGED_IN) {
+    schedulePoll("heartbeat", postHeartbeat, 90000, 1000);
+    // Realtime là luồng chính; polling chỉ là dự phòng thưa để tự phục hồi khi websocket rớt.
+    schedulePoll("announcement", checkAnnouncementSmart, rzRealtimeAvailable ? 300000 : 180000, 1500);
+    if (!rzIsRoomPage) {
+        schedulePoll("invites", checkPendingInvites, rzRealtimeAvailable ? 120000 : 30000, 900);
+        schedulePoll("activeRoom", checkActiveRoom, rzRealtimeAvailable ? 120000 : 60000, 2200);
+        schedulePoll("chatUnread", checkLobbyChatUnread, 90000, 3000);
+        // Không tải nội dung chat khi hộp chat chưa mở.
+        if (isLobbyChatOpen) schedulePoll("bottomChat", loadBottomChatSmart, 20000, 5000);
+    }
 }
 
+function initRankzoneRealtime() {
+    if (!window.IS_LOGGED_IN || !window.RZ_REALTIME?.enabled || !window.supabase?.createClient) return false;
+    try {
+        const client = window.supabase.createClient(window.RZ_REALTIME.url, window.RZ_REALTIME.anonKey, {
+            auth: { persistSession: false, autoRefreshToken: false },
+            realtime: { params: { eventsPerSecond: 5 } }
+        });
+        window.RZ_SUPABASE = client;
+        const uid = window.RZ_REALTIME.userId;
+        if (uid && !rzIsRoomPage) {
+            client.channel(`rz-invites-${uid}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_invites', filter: `to_user_id=eq.${uid}` }, () => checkPendingInvites())
+                .subscribe();
+            client.channel(`rz-room-host-${uid}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `host_user_id=eq.${uid}` }, () => checkActiveRoom())
+                .subscribe();
+            client.channel(`rz-room-guest-${uid}`)
+                .on('postgres_changes', { event: '*', schema: 'public', table: 'match_rooms', filter: `guest_user_id=eq.${uid}` }, () => checkActiveRoom())
+                .subscribe();
+        }
+        client.channel('rz-announcements')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'admin_announcements' }, () => checkAnnouncementSmart())
+            .subscribe();
+        return true;
+    } catch (error) {
+        console.warn('Realtime init failed; fallback polling remains active.', error);
+        return false;
+    }
+}
+
+window.addEventListener('load', function () {
+    if (!initRankzoneRealtime()) return;
+});
+
 document.addEventListener("visibilitychange", function () {
-    if (document.hidden) return;
+    if (!pollingEnabled || !window.IS_LOGGED_IN) return;
     postHeartbeat();
     checkAnnouncementSmart();
     if (!rzIsRoomPage) {
@@ -767,7 +837,7 @@ document.addEventListener("visibilitychange", function () {
 {% if current_user and not (auth_only|default(false)) %}
 <script>
 function updateOnlineFloatingCount() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    if (!pollingEnabled || !window.IS_LOGGED_IN || window.location.pathname.startsWith("/room/")) return Promise.resolve();
     return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
@@ -779,7 +849,7 @@ function updateOnlineFloatingCount() {
 }
 
 if (!window.location.pathname.startsWith("/room/")) {
-    schedulePoll("onlineCount", updateOnlineFloatingCountSmart, 120000, 2600);
+    schedulePoll("onlineCount", updateOnlineFloatingCountSmart, 180000, 3200);
 }
 </script>
 {% endif %}

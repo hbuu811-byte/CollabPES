@@ -1,3 +1,12 @@
+# V1.10.44 — Realtime, cache BXH và giảm Fast Origin Transfer
+
+- Cache BXH khách 45 giây tại RAM + Vercel CDN.
+- Tắt toàn bộ polling khi tab ẩn và khi chưa đăng nhập.
+- Chuyển invite, room, announcement sang Supabase Realtime có fallback polling thưa.
+- Không tải chat sảnh nếu người dùng chưa mở chat.
+- Giảm heartbeat/online/chat polling và ngăn request chồng.
+- Không cần chạy SQL.
+
 # V1.10.43 — Tối ưu Fast Origin Transfer và chống đơ lag
 
 ## Thay đổi chính

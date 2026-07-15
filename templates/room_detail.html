@@ -430,7 +430,7 @@ function roomHasActiveInput() {
 
 let roomStateRequestRunning = false;
 function checkRoomState() {
-    if (document.hidden || roomStateRequestRunning) return Promise.resolve();
+    if (!pollingEnabled || roomStateRequestRunning) return Promise.resolve();
     roomStateRequestRunning = true;
     return fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
         method: "GET",
@@ -468,13 +468,35 @@ function checkRoomState() {
 }
 
 function scheduleRoomStatePoll() {
-    const delay = document.hidden ? 15000 : 6000;
+    const delay = pollingEnabled ? (window.RZ_SUPABASE ? 60000 : 8000) : 30000;
     setTimeout(function () {
         Promise.resolve(checkRoomState()).finally(scheduleRoomStatePoll);
     }, delay);
 }
 checkRoomState();
 scheduleRoomStatePoll();
+
+function subscribeCurrentRoomRealtime() {
+    if (!window.RZ_REALTIME?.enabled) return;
+    const attach = function () {
+        if (!window.RZ_SUPABASE) {
+            setTimeout(attach, 500);
+            return;
+        }
+        window.RZ_SUPABASE.channel("rz-room-{{ room.id }}")
+            .on("postgres_changes", {
+                event: "*",
+                schema: "public",
+                table: "match_rooms",
+                filter: "id=eq.{{ room.id }}"
+            }, function () {
+                if (pollingEnabled) checkRoomState();
+            })
+            .subscribe();
+    };
+    attach();
+}
+window.addEventListener("load", subscribeCurrentRoomRealtime);
 </script>
 
 <script>
@@ -516,7 +538,7 @@ function renderRoomChat(messages) {
 
 let roomChatRequestRunning = false;
 function loadRoomChat() {
-    if (document.hidden || roomChatRequestRunning) return Promise.resolve();
+    if (!pollingEnabled || roomChatRequestRunning) return Promise.resolve();
     roomChatRequestRunning = true;
     return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
@@ -528,7 +550,7 @@ function loadRoomChat() {
 }
 
 function scheduleRoomChatPoll() {
-    const delay = document.hidden ? 20000 : 10000;
+    const delay = pollingEnabled ? 15000 : 30000;
     setTimeout(function () {
         Promise.resolve(loadRoomChat()).finally(scheduleRoomChatPoll);
     }, delay);

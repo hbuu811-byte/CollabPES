@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.43"
+APP_VERSION = "V1.10.44"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -235,6 +235,8 @@ app.secret_key = (
 
 APP_ENV = (os.getenv("APP_ENV") or os.getenv("VERCEL_ENV") or "production").strip().lower()
 supabase_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
+supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
+SUPABASE_REALTIME_ENABLED = (os.getenv("SUPABASE_REALTIME_ENABLED") or "1").strip().lower() not in {"0", "false", "off", "no"}
 supabase_key = (
     os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     or os.getenv("SUPABASE_KEY")
@@ -3302,6 +3304,12 @@ def inject_globals():
             "APP_VERSION": APP_VERSION,
             "RANKS": load_rank_ranges(),
             "format_vn_datetime": format_vn_datetime,
+        "SUPABASE_PUBLIC_URL": supabase_url,
+        "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key,
+        "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
+            "SUPABASE_PUBLIC_URL": supabase_url,
+            "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key,
+            "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
             "pending_invite_count": 0,
             "incoming_invites": [],
             "active_room": None,
@@ -4151,19 +4159,31 @@ def _build_recent_form_map(matches, player_ids=None, limit=5):
 @app.route("/ranking")
 @app.route("/bxh")
 def ranking():
-    # BXH là trang công khai: khách chưa đăng nhập vẫn xem được.
-    # Khi đã đăng nhập, hệ thống vẫn hiển thị thêm vị trí cá nhân như trước.
+    """BXH công khai với cache CDN 45 giây cho khách và cache RAM ngắn cho dữ liệu."""
+    user = current_user()
+    query_raw = (request.args.get("q") or "").strip()
+    rank_filter = (request.args.get("rank") or "all").strip()
+
+    # Chỉ cache HTML cho khách chưa đăng nhập để tuyệt đối không lẫn dữ liệu cá nhân.
+    guest_cache_key = f"public_ranking_html:{query_raw.casefold()}:{rank_filter}"
+    if not user:
+        cached_html = ttl_cache_get(guest_cache_key)
+        if cached_html is not None:
+            response = make_response(cached_html)
+            response.headers["Cache-Control"] = "public, s-maxage=45, stale-while-revalidate=120"
+            response.headers["X-Rankzone-Cache"] = "HIT"
+            return response
+
     try:
-        player_rows = list_players()
+        player_rows = ttl_cache_get("ranking_players_v11044")
+        if player_rows is None:
+            player_rows = list_players()
+            ttl_cache_set("ranking_players_v11044", player_rows, 45)
     except Exception as exc:
-        # BXH là trang công khai; nếu Supabase chập chờn thì vẫn trả trang thay vì HTTP 500.
         print(f"ranking list_players warning: {exc}")
         player_rows = []
 
-    user = current_user()
-    query = (request.args.get("q") or "").strip().casefold()
-    rank_filter = (request.args.get("rank") or "all").strip()
-
+    query = query_raw.casefold()
     current_player = None
     current_position = None
     if user:
@@ -4182,7 +4202,10 @@ def ranking():
 
     top_players = filtered[:100]
     try:
-        confirmed_matches = list_matches(status="confirmed")
+        confirmed_matches = ttl_cache_get("ranking_confirmed_matches_v11044")
+        if confirmed_matches is None:
+            confirmed_matches = list_matches(status="confirmed")
+            ttl_cache_set("ranking_confirmed_matches_v11044", confirmed_matches, 45)
     except Exception as exc:
         print(f"ranking list_matches warning: {exc}")
         confirmed_matches = []
@@ -4203,15 +4226,22 @@ def ranking():
         player["recent_form"] = recent_form_map.get(player.get("id"), [])
 
     template_name = "ranking.html" if user else "public_ranking.html"
-    return render_template(
+    html = render_template(
         template_name,
         players=filtered,
         current_player=current_player,
         current_position=current_position,
-        q=request.args.get("q", ""),
+        q=query_raw,
         rank_filter=rank_filter,
     )
-
+    response = make_response(html)
+    if not user:
+        ttl_cache_set(guest_cache_key, html, 45)
+        response.headers["Cache-Control"] = "public, s-maxage=45, stale-while-revalidate=120"
+        response.headers["X-Rankzone-Cache"] = "MISS"
+    else:
+        response.headers["Cache-Control"] = "private, no-store"
+    return response
 
 @app.route("/profile")
 @login_required

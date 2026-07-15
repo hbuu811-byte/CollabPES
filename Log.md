@@ -403,3 +403,11 @@
 - Loại cột tùy chọn không được sử dụng khỏi `USER_PUBLIC_COLUMNS`; vẫn giữ tối ưu chọn đúng cột thay vì quay lại `select("*")`.
 - Không thay đổi database, không cần chạy SQL và không ảnh hưởng Rank Point, phòng đấu, Shop hoặc dữ liệu người dùng.
 - `/api/active-room` hết lỗi 503 vì luồng `list_rooms -> enrich_room -> users_map -> list_players` không còn truy vấn cột sai.
+## V1.10.49 — Matches Schema Compatibility Hotfix
+
+- Sửa lỗi PostgreSQL/PostgREST `42703: column matches.room_id does not exist`.
+- Loại `room_id` khỏi danh sách cột đọc của bảng `matches` trong `list_matches()` và `list_user_matches()`.
+- Giữ liên kết phòng–trận theo cấu trúc database hiện tại: `match_rooms.match_id` trỏ tới `matches.id`; không yêu cầu cột ngược `matches.room_id`.
+- Khôi phục các trang `/profile/<user_id>`, `/players`, `/admin`, `/dashboard` và `/api/active-room` có phụ thuộc vào danh sách trận.
+- Không chạy SQL, không đổi dữ liệu, không đổi công thức RP.
+

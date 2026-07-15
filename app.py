@@ -35,7 +35,7 @@ from supabase import create_client
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.48"
+APP_VERSION = "V1.10.49"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -258,7 +258,7 @@ USER_PUBLIC_COLUMNS = ",".join([
 MATCH_LIST_COLUMNS = ",".join([
     "id", "player1_id", "player2_id", "score1", "score2", "team1", "team2",
     "status", "winner_id", "loser_id", "delta1", "delta2", "submitted_by_id",
-    "room_id", "mode", "note", "created_at", "updated_at"
+    "mode", "note", "created_at", "updated_at"
 ])
 
 

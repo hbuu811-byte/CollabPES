@@ -1,3 +1,77 @@
+# PES Arena V1.13.9 – Tinh gọn quản lý trận & RP
+
+## Thay đổi
+
+- Xóa hoàn toàn route, hàm và giao diện Admin sửa tỷ số trận đấu.
+- Xóa biểu mẫu sửa tỷ số khỏi Profile người chơi.
+- Xóa hoàn toàn hàm và route tính lại/Reset RP toàn hệ thống.
+- Xóa quyền thừa `matches_edit`, `rp_edit_match`, `rp_recalculate_all`.
+- Xóa thân code chết của Tạo trận thủ công và Sửa tỷ số tranh chấp đã bị chặn `404` từ các bản trước.
+- Bộ Công Cụ RP chỉ còn Backup RP và Restore RP.
+- Quản lý trận chỉ còn xem, Hủy và Xóa; Hủy/Xóa vẫn hoàn tác đúng delta của chính trận đó.
+
+## File và vị trí
+
+- `app.py:59` – nâng phiên bản lên `V1.13.9`.
+- `app.py:557-574` – thu gọn ma trận quyền, bỏ quyền sửa tỷ số và tính lại RP.
+- `app.py` – xóa `recalculate_rank_history`, `admin_recalculate_rp`, `admin_update_match_result`, `admin_create_manual_match`, `admin_dispute_edit`.
+- `templates/admin.html:356-388` – bảng trận chuyển sang chỉ đọc tỷ số và ghi chú.
+- `templates/admin.html:463-507` – Bộ Công Cụ RP chỉ còn Backup/Restore.
+- `templates/profile.html` – bỏ toàn bộ biểu mẫu “Admin sửa trận”.
+- `docs/HUONG_DAN_V1.13.9_TINH_GON_QUAN_LY_TRAN_RP.md` – hướng dẫn cài đặt và kiểm tra.
+
+## Kiểm tra
+
+- `python -m py_compile app.py modules/*.py`: đạt.
+- Parse toàn bộ Jinja template: đạt.
+- Kiểm tra route URL/phương thức trùng: không phát hiện.
+- Test RP Engine `RP_V1.12.0`: đạt.
+
+---
+
+# PES Arena V1.13.8 – Hoàn Tất Trận & Tự Hủy Phòng Quá Hạn
+
+## Nội dung nâng cấp
+
+### 1. Bỏ thông báo kỹ thuật khi quay đội
+- `app.py`, route quay đội xếp hạng: bỏ nội dung `Tạo tự động bằng Smart Tier Random. Power score ... Host XP ...` khỏi trường `matches.note`.
+- Trận mới không còn hiển thị dòng kỹ thuật này trong lịch sử/Profile.
+- Các trận cũ đã lưu nội dung trong Supabase không tự động bị sửa.
+
+### 2. Buộc quay lại phòng khi trận chưa hoàn tất
+- `app.py`, API `/api/active-room`: chỉ bật `auto_redirect` khi phòng ở trạng thái `playing`, `friendly_playing` hoặc `waiting_result_confirm` và đã có đủ hai người.
+- `templates/base.html`: kiểm tra phòng mỗi 5 giây trên mọi trang; khi chuyển lại tab trình duyệt sẽ kiểm tra ngay và đưa người chơi về phòng.
+- Phòng trống hoặc mới chờ sẵn sàng không ép chuyển trang.
+
+### 3. Tự đóng phòng theo thời gian không hoạt động
+- Phòng `waiting_ready`: tự hủy sau 30 phút không có thao tác có ý nghĩa; không trừ RP.
+- Phòng đã quay đội (`playing`/`friendly_playing`): giới hạn 60 phút không hoạt động.
+- Phòng `waiting_result_confirm`: giới hạn 60 phút chờ xác nhận.
+
+### 4. Phạt bỏ dở theo vai trò
+- `playing` xếp hạng quá 60 phút: chủ phòng bị tính một trận thua và trừ ngẫu nhiên 22–25 RP.
+- `waiting_result_confirm` quá 60 phút: khách bị tính một trận thua và trừ ngẫu nhiên 22–25 RP.
+- Đối thủ không được cộng RP.
+- Cơ chế cập nhật có điều kiện theo trạng thái phòng để tránh hai request cùng trừ điểm hai lần.
+- Mức RP thực tế được lưu vào `matches.delta1/delta2` và thông báo cho người bị phạt.
+
+## File đã sửa
+- `app.py`: phiên bản, timeout 30/60 phút, phạt 22–25 RP, API ép quay về phòng, bỏ ghi chú Smart Tier.
+- `templates/base.html`: tự quay về phòng trên toàn hệ thống và kiểm tra lại khi người dùng trở về tab.
+- `Log.md`: ghi thay đổi V1.13.8.
+
+## Cài đặt
+1. Giải nén ZIP và chép đè toàn bộ file vào repository.
+2. Commit, Push và Redeploy Vercel.
+3. Không cần chạy SQL Supabase.
+4. Test trên database Test trước khi đưa lên Production.
+
+## Kịch bản test
+1. Tạo phòng nhưng không có hoạt động: chỉnh tạm timeout nhỏ trên Test hoặc chờ đủ 30 phút; phòng phải chuyển `cancelled`, RP không đổi.
+2. Đủ hai người, quay đội, không nhập tỷ số: sau 60 phút chủ phòng mất 22–25 RP.
+3. Chủ nhập tỷ số, khách không xác nhận: sau 60 phút khách mất 22–25 RP.
+4. Đang `playing` hoặc `waiting_result_confirm`, mở Dashboard/BXH/tab khác: trong tối đa 5 giây bị đưa lại phòng.
+5. Phòng chỉ `waiting_ready`: vẫn có thể xem trang khác, không bị ép quay lại.
 # PES Arena V1.13.7 – Tách Công Thức RP & Loại Bỏ Fallback -20
 
 ## Thay đổi chính

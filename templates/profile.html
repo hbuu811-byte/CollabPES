@@ -215,15 +215,6 @@
             <small>{{ m.opponent_team or '-' }}</small>
         </div>
     </div>
-    {% if current_user and (current_user.role == 'admin' or current_user.admin_level in ['owner','admin']) and can_admin('matches_edit') %}
-    <details class="profile-admin-match-edit"><summary>✏️ Admin sửa trận</summary>
-        <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}" class="inline-form">
-            <input class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}" required>
-            <span>–</span><input class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}" required>
-            <input name="note" maxlength="500" value="{{ m.note or '' }}" placeholder="Ghi chú Admin">
-            <button class="btn green" type="submit">Lưu và tính lại RP</button>
-        </form>
-    </details>{% endif %}
     <div class="history-points">
         {% if m.status == 'confirmed' %}
         <strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>

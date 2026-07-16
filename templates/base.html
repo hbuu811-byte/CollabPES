@@ -275,10 +275,18 @@ function checkActiveRoom() {
         lastKnownActiveRoomId = data.room_id;
         roomLink.href = data.room_url;
         roomLink.classList.remove("is-hidden");
+
+        if (data.auto_redirect === true) {
+            window.location.replace(data.room_url);
+        }
     })
     .catch(function () {});
 }
 
+
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) checkActiveRoom();
+});
 
 function checkPendingInvites() {
     if (document.hidden) return;
@@ -680,7 +688,7 @@ checkAnnouncement();
 setInterval(postHeartbeat, 60000);
 checkPendingInvites();
 setInterval(checkPendingInvites, 3000);
-setInterval(checkActiveRoom, 18000);
+setInterval(checkActiveRoom, 5000);
 setInterval(loadBottomChatSmart, 45000);
 setInterval(checkLobbyChatUnread, 45000);
 setInterval(checkAnnouncementSmart, 90000);

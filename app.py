@@ -12,7 +12,6 @@ import zipfile
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from collections import Counter
-from threading import Lock
 
 from dotenv import load_dotenv
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -57,7 +56,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.7"
+APP_VERSION = "V1.13.9"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -102,11 +101,13 @@ DISPUTE_REASON_OPTIONS = {
 DISPUTE_PENDING_STATUSES = {"pending", "processing"}
 
 INVITE_TIMEOUT_SECONDS = 60
-ROOM_READY_TIMEOUT_SECONDS = 60 * 60
+ROOM_READY_TIMEOUT_SECONDS = 30 * 60
 RESULT_CONFIRM_TIMEOUT_SECONDS = 60 * 60
 REMATCH_TIMEOUT_SECONDS = 60
-ROOM_INACTIVITY_TIMEOUT_SECONDS = 60 * 60
+ROOM_EMPTY_INACTIVITY_TIMEOUT_SECONDS = 30 * 60
+ROOM_MATCH_INACTIVITY_TIMEOUT_SECONDS = 60 * 60
 ROOM_ABANDON_PENALTY = 20
+ROOM_TIMEOUT_PENALTY_RANGE = (22, 25)
 
 RANK_K_FACTOR = 32
 RANK_SCALE = 400
@@ -554,22 +555,22 @@ def is_owner_user(user) -> bool:
 
 ADMIN_PERMISSION_GROUPS = {
     "users": ["users_view", "users_approve", "users_edit", "users_delete", "password_reset", "accounts_import"],
-    "matches": ["matches_view", "matches_edit", "matches_confirm", "matches_cancel", "matches_delete"],
+    "matches": ["matches_view", "matches_confirm", "matches_cancel", "matches_delete"],
     "operations": ["rooms_manage", "invites_manage", "announcements_manage"],
     "system": ["system_features_manage", "chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
-    "rp": ["rp_view", "rp_simulate", "rp_edit_match", "rp_recalculate_all", "rp_backup_restore"],
+    "rp": ["rp_view", "rp_simulate", "rp_backup_restore"],
     "permissions": ["permissions_manage"],
 }
 ADMIN_PERMISSION_LABELS = {
     "users_view":"Xem người dùng", "users_approve":"Duyệt tài khoản", "users_edit":"Sửa tài khoản",
     "users_delete":"Xóa tài khoản", "password_reset":"Xử lý quên mật khẩu", "accounts_import":"Import CSV",
-    "matches_view":"Xem trận", "matches_edit":"Sửa tỷ số",
+    "matches_view":"Xem trận",
     "matches_confirm":"Xác nhận trận", "matches_cancel":"Hủy trận", "matches_delete":"Xóa trận",
     "rooms_manage":"Quản lý phòng", "invites_manage":"Quản lý lời mời",
     "announcements_manage":"Quản lý thông báo", "system_features_manage":"Bật/tắt tính năng hệ thống", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
     "registration_codes_manage":"Quản lý mã đăng ký", "admin_logs_view":"Xem nhật ký Admin",
-    "rp_view":"Xem công thức RP", "rp_simulate":"Tính thử RP", "rp_edit_match":"Sửa RP trận",
-    "rp_recalculate_all":"Tính lại toàn hệ thống", "rp_backup_restore":"Backup/Khôi phục RP", "permissions_manage":"Cấp/thu hồi quyền Admin",
+    "rp_view":"Xem công thức RP", "rp_simulate":"Tính thử RP",
+    "rp_backup_restore":"Backup/Khôi phục RP", "permissions_manage":"Cấp/thu hồi quyền Admin",
 }
 LEGACY_ADMIN_PERMISSION_FIELDS = {
     "create_test_account": "admin_can_create_test_account",
@@ -2190,8 +2191,7 @@ def room_state_expiry_dt(room):
     status = room.get("status")
     note = room.get("note") or ""
     if status == "waiting_ready":
-        # Kể cả đã có người trong phòng, mọi phòng chờ đều dùng chung mốc
-        # 60 phút không hoạt động thay vì tự hủy sớm sau vài phút.
+        # Phòng chưa bắt đầu được xử lý bằng bộ đếm không hoạt động 30 phút.
         return None
     if status == "waiting_result_confirm":
         return updated + timedelta(seconds=RESULT_CONFIRM_TIMEOUT_SECONDS)
@@ -2201,7 +2201,7 @@ def room_state_expiry_dt(room):
 
 
 def room_inactivity_expiry_dt(room):
-    """Close active rooms after 60 minutes without a meaningful update."""
+    """Đóng phòng chờ sau 30 phút, phòng đã bắt đầu sau 60 phút không hoạt động."""
     active_statuses = {"waiting_ready", "playing", "friendly_playing", "waiting_result_confirm"}
     status = room.get("status")
     note = room.get("note") or ""
@@ -2215,7 +2215,12 @@ def room_inactivity_expiry_dt(room):
     last_activity = aware_utc(parse_dt(room.get("updated_at"))) or aware_utc(parse_dt(room.get("created_at")))
     if not last_activity:
         return None
-    return last_activity + timedelta(seconds=ROOM_INACTIVITY_TIMEOUT_SECONDS)
+    timeout_seconds = (
+        ROOM_EMPTY_INACTIVITY_TIMEOUT_SECONDS
+        if status == "waiting_ready"
+        else ROOM_MATCH_INACTIVITY_TIMEOUT_SECONDS
+    )
+    return last_activity + timedelta(seconds=timeout_seconds)
 
 
 def room_expiry_dt(room):
@@ -2248,7 +2253,7 @@ def apply_room_abandon_penalty(user_id, amount=ROOM_ABANDON_PENALTY):
 
 
 def close_room_with_timeout_penalty(room, offender_role, reason):
-    """Đóng phòng và áp dụng phạt đúng một lần cho trận Xếp hạng bỏ dở."""
+    """Đóng phòng và phạt ngẫu nhiên 22–25 RP đúng một lần."""
     room_id = room.get("id")
     original_status = room.get("status")
     offender_id = room.get("host_user_id") if offender_role == "host" else room.get("guest_user_id")
@@ -2267,7 +2272,8 @@ def close_room_with_timeout_penalty(room, offender_role, reason):
         return False
 
     room.update(update_data)
-    penalty_delta = apply_room_abandon_penalty(offender_id)
+    penalty_amount = random.SystemRandom().randint(*ROOM_TIMEOUT_PENALTY_RANGE)
+    penalty_delta = apply_room_abandon_penalty(offender_id, penalty_amount)
     match_id = room.get("match_id")
     if match_id:
         match_update = {
@@ -2276,9 +2282,9 @@ def close_room_with_timeout_penalty(room, offender_role, reason):
             "updated_at": now_iso(),
         }
         if offender_role == "host":
-            match_update.update({"delta1": penalty_delta or -ROOM_ABANDON_PENALTY, "delta2": 0})
+            match_update.update({"delta1": penalty_delta if penalty_delta is not None else -penalty_amount, "delta2": 0})
         else:
-            match_update.update({"delta1": 0, "delta2": penalty_delta or -ROOM_ABANDON_PENALTY})
+            match_update.update({"delta1": 0, "delta2": penalty_delta if penalty_delta is not None else -penalty_amount})
         execute_query(
             db.table("matches").update(match_update).eq("id", match_id),
             "mark_timeout_match_cancelled",
@@ -2289,7 +2295,7 @@ def close_room_with_timeout_penalty(room, offender_role, reason):
     create_user_notification(
         offender_id,
         "⏱️ Trận bị tính là bỏ trận",
-        f"Bạn bị trừ {ROOM_ABANDON_PENALTY} RP vì {reason.lower()}",
+        f"Bạn bị trừ {abs(int(penalty_delta or -penalty_amount))} RP vì {reason.lower()}",
         "/matches",
         "room_timeout_penalty",
     )
@@ -2349,7 +2355,11 @@ def expire_room_if_needed(room):
         if inactivity_expired or status == "waiting_ready":
             update_data = {
                 "status": "cancelled",
-                "note": "Phòng tự đóng sau 60 phút không hoạt động.",
+                "note": (
+                    "Phòng tự đóng sau 30 phút không hoạt động."
+                    if status == "waiting_ready"
+                    else "Phòng tự đóng sau 60 phút không hoạt động."
+                ),
                 "state_expires_at": None,
                 "updated_at": now_iso(),
             }
@@ -2363,7 +2373,11 @@ def expire_room_if_needed(room):
                     execute_query(
                         db.table("matches").update({
                             "status": "cancelled",
-                            "note": "Phòng tự đóng sau 60 phút không hoạt động; không áp dụng phạt RP.",
+                            "note": (
+                                "Phòng tự đóng sau 30 phút không hoạt động; không áp dụng phạt RP."
+                                if status == "waiting_ready"
+                                else "Phòng tự đóng sau 60 phút không hoạt động; không áp dụng phạt RP."
+                            ),
                             "updated_at": now_iso(),
                         }).eq("id", room.get("match_id")),
                         "cancel_inactive_room_match",
@@ -3161,9 +3175,10 @@ def api_active_room():
     is_guest = room.get("guest_user_id") == user["id"]
     has_opponent = bool(room.get("guest_user_id"))
 
-    # Phòng trống do chủ phòng tạo để mời người khác không được ép chuyển trang.
-    # Chỉ tự động vào phòng khi đối thủ đã tham gia hoặc người dùng là khách.
-    auto_redirect = bool(has_opponent or is_guest)
+    # Chỉ ép quay lại khi trận đã bắt đầu hoặc đang chờ xác nhận.
+    # Phòng trống/chờ sẵn sàng vẫn cho phép người dùng xem các trang khác.
+    must_finish_statuses = {"playing", "friendly_playing", "waiting_result_confirm"}
+    auto_redirect = bool(room.get("status") in must_finish_statuses and has_opponent)
 
     return jsonify({
         "ok": True,
@@ -4798,11 +4813,7 @@ def room_random_teams(room_id):
                 "team2_league": result.get("league_b") or None,
                 "host_xp_factor": HOST_XP_FACTOR,
                 "status": "playing",
-                "note": (
-                    f"Tạo tự động bằng {SMART_RANDOM_MODE}. "
-                    f"Power score {result.get('power_score_a', 0):.2f} vs "
-                    f"{result.get('power_score_b', 0):.2f}. Host XP x{HOST_XP_FACTOR:.2f}."
-                ),
+                "note": "",
                 "updated_at": now_iso(),
             }),
             "room_random_create_match",
@@ -5770,105 +5781,8 @@ def admin_update_system_features():
 
 _rp_recalculation_lock = Lock()
 
-def recalculate_rank_history(from_created_at=None):
-    """Rebuild RP from match history with in-process locking and rollback snapshots.
 
-    Supabase REST does not provide a multi-table transaction here, so this function
-    snapshots all affected rows and restores them on any failure. Production should
-    still run this during maintenance with no live matches being confirmed.
-    """
-    if not _rp_recalculation_lock.acquire(blocking=False):
-        raise RuntimeError("Một tiến trình tính lại RP khác đang chạy.")
-    users_snapshot = []
-    matches_snapshot = []
-    try:
-        users_snapshot = [dict(u) for u in list_all_users() if u.get("role") == "player"]
-        # Hiện tại luôn tính lại toàn bộ. Không reset toàn bộ user rồi chỉ áp dụng
-        # một phần lịch sử vì cách đó sẽ làm sai RP trước mốc from_created_at.
-        query = db.table("matches").select("*").eq("status", "confirmed").order("created_at")
-        matches_snapshot = [dict(m) for m in (execute_query(query, "load_matches_for_recalc").data or [])]
 
-        for user in users_snapshot:
-            execute_query(db.table("users").update({
-                "rank_points": DEFAULT_POINTS, "wins": 0, "draws": 0, "losses": 0,
-                "total_matches": 0, "goals_for": 0, "goals_against": 0,
-                "streak": 0, "loss_streak": 0,
-            }).eq("id", user["id"]), "reset_user_for_recalc")
-
-        # Đưa toàn bộ lịch sử hợp lệ về trạng thái chờ trước khi xử lý trận đầu tiên.
-        # Nhờ đó truy vấn chuỗi thắng/thua chỉ nhìn thấy các trận đã được tính lại
-        # trước thời điểm hiện tại, không vô tình đọc các trận tương lai còn confirmed.
-        for match in matches_snapshot:
-            execute_query(db.table("matches").update({
-                "status": "waiting_confirm", "delta1": 0, "delta2": 0,
-                "updated_at": now_iso(),
-            }).eq("id", match["id"]), "prepare_match_recalc")
-
-        for match in matches_snapshot:
-            fresh = get_match(match["id"])
-            apply_match_result(fresh)
-
-        ttl_cache_delete("players_raw", "rooms_raw", "achievement_map")
-        return len(matches_snapshot)
-    except Exception:
-        app.logger.exception("RP recalculation failed; restoring snapshots")
-        for user in users_snapshot:
-            restore = {k: user.get(k) for k in (
-                "rank_points", "wins", "draws", "losses", "total_matches",
-                "goals_for", "goals_against", "streak", "loss_streak"
-            )}
-            execute_query(db.table("users").update(restore).eq("id", user["id"]), "restore_user_after_recalc_failure", attempts=2)
-        for match in matches_snapshot:
-            restore = {k: match.get(k) for k in ("status", "delta1", "delta2", "updated_at")}
-            execute_query(db.table("matches").update(restore).eq("id", match["id"]), "restore_match_after_recalc_failure", attempts=2)
-        ttl_cache_delete("players_raw", "rooms_raw", "achievement_map")
-        raise
-    finally:
-        _rp_recalculation_lock.release()
-
-@app.route("/admin/rp/recalculate", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("rp_recalculate_all")
-def admin_recalculate_rp():
-    if APP_ENV == "production" and request.form.get("confirm_text", "").strip() != "TINH LAI RP":
-        flash("Để bảo vệ dữ liệu Production, hãy nhập đúng: TINH LAI RP", "danger")
-        return redirect_admin("rp-tools")
-    try:
-        count=recalculate_rank_history()
-        log_admin_action("Tính lại RP toàn hệ thống", "rp", details=f"{count} trận hợp lệ")
-        flash(f"Đã tính lại RP và thống kê từ {count} trận hợp lệ.", "success")
-    except Exception as exc:
-        app.logger.exception("RP recalculation failed")
-        flash(f"Không thể tính lại RP: {exc}", "danger")
-    return redirect_admin("rp-tools")
-
-@app.route("/admin/match/create", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("matches_create")
-def admin_create_manual_match():
-    abort(404)
-    p1=request.form.get("player1_id"); p2=request.form.get("player2_id")
-    if not p1 or not p2 or p1==p2:
-        flash("Hãy chọn hai người chơi khác nhau.","danger"); return redirect_admin("create-match")
-    try:
-        score1=max(0,int(request.form.get("score1",0))); score2=max(0,int(request.form.get("score2",0)))
-    except ValueError:
-        flash("Tỷ số không hợp lệ.","danger"); return redirect_admin("create-match")
-    host=request.form.get("host_user_id") or p1
-    created_at=request.form.get("match_time") or now_iso()
-    note=(request.form.get("note") or "Admin tạo trận thủ công.")[:500]
-    match_id=str(uuid.uuid4())
-    winner=p1 if score1>score2 else p2 if score2>score1 else None
-    loser=p2 if score1>score2 else p1 if score2>score1 else None
-    payload={"id":match_id,"player1_id":p1,"player2_id":p2,"score1":score1,"score2":score2,"winner_id":winner,"loser_id":loser,"host_user_id":host,"status":"waiting_confirm","note":note,"created_at":created_at,"updated_at":now_iso(),"created_by":current_user().get("id"),"rp_formula_version":RP_FORMULA_VERSION}
-    execute_query(db.table("matches").insert(payload),"create_manual_match")
-    delta1,delta2=apply_match_result(get_match(match_id))
-    execute_query(db.table("matches").update({"note":note,"rp_formula_version":RP_FORMULA_VERSION,"rp_details":{"source":"admin_manual","delta1":delta1,"delta2":delta2}}).eq("id",match_id),"finish_manual_match")
-    log_admin_action("Tạo trận thủ công","match",match_id,details=f"{score1}-{score2}; RP {delta1:+d}/{delta2:+d}")
-    flash(f"Đã tạo trận và tính RP {delta1:+d}/{delta2:+d}.","success")
-    return redirect_admin("matches")
 
 
 RP_USER_FIELDS = (
@@ -6756,34 +6670,6 @@ def admin_dispute_accept(dispute_id):
     return redirect_admin("disputes")
 
 
-@app.route("/admin/dispute/<dispute_id>/edit", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("disputes_manage")
-def admin_dispute_edit(dispute_id):
-    abort(404)
-    dispute = get_match_dispute(dispute_id)
-    if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
-        flash("Tranh chấp không còn hiệu lực.", "warning")
-        return redirect_admin("disputes")
-    try:
-        score1 = int(request.form.get("score1", ""))
-        score2 = int(request.form.get("score2", ""))
-    except ValueError:
-        flash("Tỉ số phải là số nguyên.", "danger")
-        return redirect_admin("disputes")
-    actor = current_user()
-    note = request.form.get("resolution_note", "").strip() or "Admin đã sửa tỷ số và xác nhận kết quả tranh chấp."
-    try:
-        delta1, delta2 = resolve_match_dispute_with_result(
-            dispute, score1, score2, actor.get("id"), "edited_result", note
-        )
-    except Exception as exc:
-        flash(f"Không thể xử lý tranh chấp: {exc}", "danger")
-        return redirect_admin("disputes")
-    log_admin_action("Sửa tỷ số tranh chấp", "match", dispute.get("match_id"), details=f"Tỷ số mới {score1}-{score2}; điểm {delta1:+d}/{delta2:+d}")
-    flash("Đã sửa tỷ số, xác nhận trận và cập nhật điểm.", "success")
-    return redirect_admin("disputes")
 
 
 @app.route("/admin/dispute/<dispute_id>/cancel", methods=["POST"])
@@ -7017,150 +6903,6 @@ def admin_delete_player(user_id):
     return redirect_admin("users")
 
 
-@app.route("/admin/match/<match_id>/update-result", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("matches_edit")
-def admin_update_match_result(match_id):
-    match = get_match(match_id)
-    if not match:
-        flash("Không tìm thấy trận.", "danger")
-        return redirect_admin("matches")
-
-    try:
-        score1 = int(request.form.get("score1", "0"))
-        score2 = int(request.form.get("score2", "0"))
-    except (TypeError, ValueError):
-        flash("Tỉ số phải là số nguyên.", "danger")
-        return redirect_admin("matches")
-    if score1 < 0 or score2 < 0:
-        flash("Tỉ số không được âm.", "danger")
-        return redirect_admin("matches")
-
-    if not match.get("player1_id") or not match.get("player2_id"):
-        flash("Trận đấu thiếu dữ liệu người chơi nên chưa thể sửa.", "danger")
-        return redirect_admin("matches")
-    if not get_user(match.get("player1_id")) or not get_user(match.get("player2_id")):
-        flash("Không tìm thấy một trong hai người chơi. Chưa thay đổi BXH.", "danger")
-        return redirect_admin("matches")
-
-    winner_id = match.get("player1_id") if score1 > score2 else match.get("player2_id") if score2 > score1 else None
-    loser_id = match.get("player2_id") if score1 > score2 else match.get("player1_id") if score2 > score1 else None
-    note = request.form.get("note", "").strip()[:500] or "Admin đã sửa kết quả."
-
-    if match.get("status") == "disputed":
-        dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
-        if dispute:
-            try:
-                resolve_match_dispute_with_result(
-                    dispute, score1, score2, current_user().get("id"), "edited_result", note,
-                )
-            except Exception as exc:
-                print(f"admin_update_disputed ERROR match={match_id}: {type(exc).__name__}: {exc}")
-                flash(f"Không thể xử lý tranh chấp: {exc}", "danger")
-                return redirect_admin("disputes")
-            log_admin_action("Sửa/Xác nhận tranh chấp", "match", match_id, details=f"Tỷ số mới {score1}-{score2}. {note}")
-            flash("Đã sửa tỷ số tranh chấp và cập nhật BXH.", "success")
-            return redirect_admin("disputes")
-
-    old_match = dict(match)
-    old_was_applied = bool(
-        old_match.get("status") == "confirmed"
-        and old_match.get("delta1") is not None
-        and old_match.get("delta2") is not None
-    )
-    try:
-        if old_was_applied and not reverse_confirmed_match_result(old_match):
-            raise ValueError("Không thể hoàn tác kết quả cũ; chưa lưu tỷ số mới.")
-
-        execute_query(
-            db.table("matches").update({
-                "score1": score1,
-                "score2": score2,
-                "winner_id": winner_id,
-                "loser_id": loser_id,
-                "status": "waiting_confirm",
-                "delta1": 0,
-                "delta2": 0,
-                "note": note,
-                "updated_at": now_iso(),
-            }).eq("id", match_id),
-            "admin_prepare_updated_match",
-        )
-        execute_query(
-            db.table("match_rooms").update({
-                "host_score": score1,
-                "guest_score": score2,
-                "status": "waiting_result_confirm",
-                "note": "Admin đang lưu lại kết quả.",
-                "state_expires_at": None,
-                "updated_at": now_iso(),
-            }).eq("match_id", match_id),
-            "admin_prepare_updated_room",
-            attempts=3,
-        )
-
-        updated_match = get_match(match_id)
-        if not updated_match:
-            raise RuntimeError("Không đọc lại được trận sau khi lưu tỷ số.")
-        delta1, delta2 = apply_match_result(updated_match)
-        execute_query(
-            db.table("matches").update({"note": note, "updated_at": now_iso()}).eq("id", match_id),
-            "admin_finish_updated_match_note",
-        )
-        execute_query(
-            db.table("match_rooms").update({
-                "status": "confirmed",
-                "note": "Admin đã sửa/xác nhận kết quả.",
-                "state_expires_at": None,
-                "updated_at": now_iso(),
-            }).eq("match_id", match_id),
-            "admin_finish_updated_room",
-            attempts=3,
-        )
-        # Một trận cũ có thể làm thay đổi Rank/chuỗi của tất cả trận sau đó.
-        # Vì vậy phải rebuild lịch sử, không chỉ áp dụng lại riêng trận vừa sửa.
-        recalculate_rank_history()
-        refreshed_match = get_match(match_id) or {}
-        delta1 = _safe_int(refreshed_match.get("delta1"), delta1)
-        delta2 = _safe_int(refreshed_match.get("delta2"), delta2)
-        ttl_cache_delete("rooms_raw", "players_raw", "achievement_map")
-    except Exception as exc:
-        print(f"admin_update_match_result ERROR match={match_id}: {type(exc).__name__}: {exc}")
-        # Best-effort restoration of the original match row. The detailed log above
-        # makes any rare partial failure visible in Vercel instead of a silent 500.
-        try:
-            execute_query(
-                db.table("matches").update({
-                    "score1": old_match.get("score1"),
-                    "score2": old_match.get("score2"),
-                    "winner_id": old_match.get("winner_id"),
-                    "loser_id": old_match.get("loser_id"),
-                    "delta1": old_match.get("delta1"),
-                    "delta2": old_match.get("delta2"),
-                    "status": old_match.get("status"),
-                    "note": old_match.get("note"),
-                    "updated_at": now_iso(),
-                }).eq("id", match_id),
-                "admin_restore_old_match",
-                attempts=2,
-            )
-            if old_was_applied:
-                app.logger.error(
-                    "Old match row restored after a failed edit. Player snapshots may require a controlled full RP recalculation; "
-                    "automatic reapply is intentionally disabled to prevent double-credit."
-                )
-        except Exception as rollback_exc:
-            print(f"admin_update_match_result ROLLBACK ERROR match={match_id}: {type(rollback_exc).__name__}: {rollback_exc}")
-        flash(f"Không thể lưu lại trận đấu: {exc}. Hệ thống đã ghi log chi tiết trên Vercel.", "danger")
-        return redirect_admin("matches")
-
-    log_admin_action(
-        "Sửa/Xác nhận kết quả", "match", match_id,
-        details=f"{old_match.get('score1')}–{old_match.get('score2')} → {score1}–{score2}; RP {int(delta1):+d}/{int(delta2):+d}. {note}",
-    )
-    flash(f"Đã sửa kết quả và cập nhật lại RP: {int(delta1):+d}/{int(delta2):+d}.", "success")
-    return redirect_admin("matches")
 
 
 @app.route("/admin/match/<match_id>/delete", methods=["POST"])

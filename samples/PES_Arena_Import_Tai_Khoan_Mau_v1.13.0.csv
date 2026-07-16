@@ -1,0 +1,3 @@
+username,display_name,password,zalo_name,rank_points,wins,draws,losses,total_matches,goals_for,goals_against,register_ip,last_ip
+player001,Người chơi 001,123456,Tên Zalo,1000,0,0,0,0,0,0,,
+player002,Người chơi 002,123456,Tên Zalo,-1000,0,0,0,0,0,0,,

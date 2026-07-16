@@ -5,7 +5,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Bảng xếp hạng công khai PES 2026">
+    <meta name="description" content="Bảng xếp hạng công khai PES Arena">
     <title>Bảng xếp hạng • {{ APP_NAME }}</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <script>
@@ -22,8 +22,8 @@
 </head>
 <body class="public-ranking-page public-ranking-home public-ranking-synced">
 <header class="public-ranking-header">
-    <a class="public-ranking-brand" href="{{ url_for('index') }}" aria-label="Trang chủ PES 2026">
-        <strong>PES 2026</strong>
+    <a class="public-ranking-brand" href="{{ url_for('index') }}" aria-label="Trang chủ PES Arena">
+        <strong>PES Arena</strong>
         <small>CHAMPIONSHIP</small>
     </a>
 
@@ -41,7 +41,7 @@
     <div class="ranking-title-wrap">
         <span class="ranking-star">★</span>
         <div>
-            <span class="ranking-kicker">PES 2026 CHAMPIONSHIP</span>
+            <span class="ranking-kicker">PES Arena CHAMPIONSHIP</span>
             <h1>TOP 100 BẢNG XẾP HẠNG</h1>
             <p>Vinh danh những huấn luyện viên có thành tích tốt nhất hệ thống.</p>
         </div>
@@ -145,6 +145,6 @@
     {% endif %}
 </section>
 </main>
-<footer class="public-ranking-footer">PES 2026 • Bảng xếp hạng công khai</footer>
+<footer class="public-ranking-footer">PES Arena • Bảng xếp hạng công khai</footer>
 </body>
 </html>

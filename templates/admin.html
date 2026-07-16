@@ -33,10 +33,12 @@
     <button class="admin-tab-button" type="button" data-admin-tab="passwords">🔑 Quên mật khẩu{% if password_reset_requests %} ({{ password_reset_requests|length }}){% endif %}</button>
     <button class="admin-tab-button" type="button" data-admin-tab="disputes">⚠️ Tranh chấp{% if pending_disputes %} ({{ pending_disputes|length }}){% endif %}</button>
     <button class="admin-tab-button" type="button" data-admin-tab="rooms">🚪 Phòng & lời mời</button>
-    <button class="admin-tab-button" type="button" data-admin-tab="matches">🎮 Trận đấu</button>
-    {% if can_create_test_account or can_import_accounts_csv %}<button class="admin-tab-button" type="button" data-admin-tab="test-data">🧪 Tài khoản test & Import</button>{% endif %}
+    {% if can_admin('matches_view') %}<button class="admin-tab-button" type="button" data-admin-tab="matches">🎮 Trận đấu</button>{% endif %}
+    {% if can_admin('matches_create') %}<button class="admin-tab-button" type="button" data-admin-tab="create-match">➕ Tạo trận</button>{% endif %}
+{% if can_create_test_account or can_import_accounts_csv %}<button class="admin-tab-button" type="button" data-admin-tab="test-data">🧪 Tài khoản test & Import</button>{% endif %}
     <button class="admin-tab-button" type="button" data-admin-tab="system">⚙️ Hệ thống</button>
-    {% if current_user.admin_level == 'owner' %}<button class="admin-tab-button" type="button" data-admin-tab="logs">🧾 Nhật ký Admin</button>{% endif %}
+    {% if can_admin('rp_view') %}<button class="admin-tab-button" type="button" data-admin-tab="rp-tools">📈 Công cụ RP</button>{% endif %}
+    {% if can_admin('admin_logs_view') %}<button class="admin-tab-button" type="button" data-admin-tab="logs">🧾 Nhật ký</button>{% endif %}
 </div>
 
 <section class="admin-tab-panel" data-admin-panel="overview">
@@ -91,68 +93,27 @@
         </div>
     </div>
 
-    <div class="panel">
-        <div class="admin-section-heading">
-            <div>
-                <h2>🛡️ Đội ngũ quản trị</h2>
-                <p class="small">Chủ hệ thống quản lý quyền của Admin phụ.</p>
-            </div>
-            <span class="admin-count">{{ admins|length }}</span>
-        </div>
-        <div class="table-wrap admin-table-wrap">
-            <table>
-                <thead><tr><th>Tài khoản</th><th>Tên Zalo</th><th>Quyền</th><th>Hành động</th></tr></thead>
-                <tbody>
-                {% for a in admins %}
-                <tr>
-                    <td>{{ a.username }}</td>
-                    <td>{{ a.zalo_name or '-' }}</td>
-                    <td>{{ 'Chủ hệ thống' if a.admin_level == 'owner' else 'Admin phụ' }}</td>
-                    <td>
-                        {% if current_user.admin_level == 'owner' and a.admin_level == 'admin' %}
-                        <div class="admin-permission-card">
-                            <form method="post" action="{{ url_for('admin_update_permissions', user_id=a.id) }}" class="admin-permission-form">
-                                <div class="admin-permission-list">
-                                    <label class="admin-permission-option">
-                                        <span class="admin-permission-copy">
-                                            <strong>Tạo tài khoản test</strong>
-                                            <small>Cho phép tạo nhanh tài khoản thử nghiệm</small>
-                                        </span>
-                                        <span class="admin-switch">
-                                            <input type="checkbox" name="can_create_test_account" value="1" {% if a.admin_can_create_test_account %}checked{% endif %}>
-                                            <span class="admin-switch-track" aria-hidden="true"></span>
-                                        </span>
-                                    </label>
-                                    <label class="admin-permission-option">
-                                        <span class="admin-permission-copy">
-                                            <strong>Import tài khoản CSV</strong>
-                                            <small>Cho phép nhập nhiều tài khoản từ file CSV</small>
-                                        </span>
-                                        <span class="admin-switch">
-                                            <input type="checkbox" name="can_import_accounts_csv" value="1" {% if a.admin_can_import_accounts_csv %}checked{% endif %}>
-                                            <span class="admin-switch-track" aria-hidden="true"></span>
-                                        </span>
-                                    </label>
-                                </div>
-                                <div class="admin-permission-actions">
-                                    <button class="btn green admin-save-permissions" type="submit" aria-label="Lưu quyền Admin phụ">
-                                        <span class="admin-save-icon" aria-hidden="true">✓</span>
-                                        <span class="admin-save-label">Lưu quyền</span>
-                                    </button>
-                                </div>
-                            </form>
-                            <form method="post" action="{{ url_for('admin_demote_user', user_id=a.id) }}" class="admin-demote-form" onsubmit="return confirm('Gỡ quyền Admin phụ?')">
-                                <button class="btn red admin-demote-btn" type="submit">Gỡ quyền Admin</button>
-                            </form>
-                        </div>
-                        {% else %}
-                        <span class="small">Toàn quyền</span>
-                        {% endif %}
-                    </td>
-                </tr>
-                {% endfor %}
-                </tbody>
-            </table>
+    <div class="panel admin-team-panel">
+        <div class="admin-section-heading"><div><h2>🛡️ Đội ngũ quản trị</h2><p class="small">Trên giao diện, mọi tài khoản quản trị đều hiển thị chung là <strong>Admin</strong>.</p></div><span class="admin-count">{{ admins|length }}</span></div>
+        <div class="admin-team-grid">
+        {% for a in admins %}
+            <article class="admin-team-card">
+                <div class="admin-team-card-head"><div><strong>{{ a.username }}</strong><small>{{ a.zalo_name or '-' }}</small></div><span class="badge confirmed">Admin</span></div>
+                {% if current_user.admin_level == 'owner' and a.admin_level == 'admin' %}
+                <details><summary>Xem / chỉnh quyền</summary>
+                    <form method="post" action="{{ url_for('admin_update_permissions', user_id=a.id) }}" class="admin-permission-form">
+                    <div class="admin-permission-grid">
+                    {% for group, codes in admin_permission_groups.items() %}
+                        <fieldset><legend>{{ {'users':'Người dùng','matches':'Trận đấu','operations':'Vận hành','system':'Hệ thống','rp':'RP','permissions':'Phân quyền'}[group] }}</legend>
+                        {% for code in codes %}<label class="admin-permission-option"><span>{{ admin_permission_labels[code] }}</span><span class="admin-switch"><input type="checkbox" name="{{ code }}" value="1" {% if a.admin_permissions and a.admin_permissions.get(code) %}checked{% endif %}><span class="admin-switch-track"></span></span></label>{% endfor %}
+                        </fieldset>
+                    {% endfor %}
+                    </div><button class="btn green" type="submit">Lưu quyền</button></form>
+                    <form method="post" action="{{ url_for('admin_demote_user', user_id=a.id) }}" onsubmit="return confirm('Gỡ quyền Admin?')"><button class="btn red" type="submit">Gỡ quyền Admin</button></form>
+                </details>
+                {% else %}<span class="small">Toàn quyền quản trị</span>{% endif %}
+            </article>
+        {% endfor %}
         </div>
     </div>
 </section>
@@ -260,7 +221,7 @@
                         </td>
                         <td>
                             <span class="badge {{ 'gold' if p.role == 'admin' or p.admin_level in ['owner', 'admin'] else (p.account_status or 'approved') }}">
-                                {% if p.admin_level == 'owner' %}Chủ hệ thống{% elif p.admin_level == 'admin' %}Admin phụ{% else %}{{ p.account_status or 'approved' }}{% endif %}
+                                {% if p.admin_level == 'owner' %}Admin{% elif p.admin_level == 'admin' %}Admin{% else %}{{ p.account_status or 'approved' }}{% endif %}
                             </span>
                         </td>
                         <td><code class="admin-ip-code">{{ p.register_ip or '-' }}</code></td>
@@ -316,7 +277,7 @@
                                     {% if can_edit %}
                                     <button class="btn green" type="submit">💾 Lưu thay đổi</button>
                                     {% else %}
-                                    <span class="small">Chỉ Chủ hệ thống được sửa tài khoản Admin.</span>
+                                    <span class="small">Chỉ Admin được sửa tài khoản Admin.</span>
                                     {% endif %}
                                 </div>
                             </form>
@@ -329,7 +290,7 @@
                                 <form class="inline-form" method="post" action="{{ url_for('admin_ban_account', user_id=p.id) }}" onsubmit="return confirm('Khóa tài khoản này?')"><button class="btn red" type="submit">Khóa</button></form>
                                 {% endif %}
                                 {% if current_user.admin_level == 'owner' and p.account_status == 'approved' and p.admin_level == 'none' %}
-                                <form class="inline-form" method="post" action="{{ url_for('admin_promote_user', user_id=p.id) }}" onsubmit="return confirm('Thêm người này làm Admin phụ?')"><button class="btn gold" type="submit">Thêm làm Admin</button></form>
+                                <form class="inline-form" method="post" action="{{ url_for('admin_promote_user', user_id=p.id) }}" onsubmit="return confirm('Thêm người này làm Admin?')"><button class="btn gold" type="submit">Thêm làm Admin</button></form>
                                 {% endif %}
                                 {% if p.admin_level == 'none' %}
                                 <form class="inline-form" method="post" action="{{ url_for('admin_reset_player_stats', user_id=p.id) }}" onsubmit="return confirm('Reset toàn bộ chỉ số thi đấu?')"><button class="btn gold" type="submit">Reset chỉ số</button></form>
@@ -478,33 +439,42 @@
     <div class="panel">
         <h2>🎮 Quản lý trận đấu gần đây</h2>
         <p class="small">Sửa tỉ số sẽ xác nhận trận và tính lại bảng xếp hạng.</p>
-        <div class="table-wrap admin-table-wrap">
-            <table>
-                <thead><tr><th>Player 1</th><th>Tỉ số</th><th>Player 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
+        <div class="table-wrap admin-table-wrap admin-match-scroll">
+            <table class="admin-match-table">
+                <thead><tr><th>Thời gian</th><th>Người chơi 1</th><th>RP 1</th><th>Tỷ số</th><th>Người chơi 2</th><th>RP 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
                 <tbody>
                 {% for m in all_matches %}
                 <tr>
                     <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}">
-                        <td>{{ m.player1_name }}<br><span class="small">{{ m.team1 or '-' }}</span></td>
-                        <td><input class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}"> - <input class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}"></td>
-                        <td>{{ m.player2_name }}<br><span class="small">{{ m.team2 or '-' }}</span></td>
-                        <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
-                        <td><input name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td>
-                        <td><button class="btn green" type="submit">Sửa/Xác nhận</button></td>
+                        <td>{{ m.created_at_display or m.created_at }}</td><td>{{ m.player1_name }}</td><td class="rp-cell">{{ '%+d'|format(m.delta1 or 0) }}</td>
+                        <td><div class="score-pair"><input class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}"><span>–</span><input class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}"></div></td>
+                        <td>{{ m.player2_name }}</td><td class="rp-cell">{{ '%+d'|format(m.delta2 or 0) }}</td><td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
+                        <td><input class="match-note-input" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td><td><div class="match-actions"><button class="btn green" type="submit">Lưu</button></div></td>
                     </form>
                 </tr>
-                <tr><td colspan="6">
+                <tr><td colspan="9">
                     {% if m.status == 'disputed' %}<form class="inline-form" method="post" action="{{ url_for('admin_confirm_disputed', match_id=m.id) }}"><button class="btn green" type="submit">Xác nhận tranh chấp</button></form>{% endif %}
                     <form class="inline-form" method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy trận</button></form>
                     <form class="inline-form" method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('XÓA trận này và tính lại BXH?')"><button class="btn red" type="submit">Xóa trận</button></form>
                 </td></tr>
-                {% else %}<tr><td colspan="6">Chưa có trận đấu.</td></tr>{% endfor %}
+                {% else %}<tr><td colspan="9">Chưa có trận đấu.</td></tr>{% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
 </section>
 
+
+{% if can_admin('matches_create') %}
+<section class="admin-tab-panel" data-admin-panel="create-match"><div class="panel"><h2>➕ Tạo trận thủ công</h2>
+<form method="post" action="{{ url_for('admin_create_manual_match') }}" class="grid-form admin-manual-match-form">
+<label>Người chơi 1<select name="player1_id" required><option value="">Chọn người chơi</option>{% for p in players %}<option value="{{ p.id }}">{{ p.display_name or p.username }}</option>{% endfor %}</select></label>
+<label>Người chơi 2<select name="player2_id" required><option value="">Chọn người chơi</option>{% for p in players %}<option value="{{ p.id }}">{{ p.display_name or p.username }}</option>{% endfor %}</select></label>
+<label>Tỷ số người chơi 1<input type="number" name="score1" min="0" value="0" required></label><label>Tỷ số người chơi 2<input type="number" name="score2" min="0" value="0" required></label>
+<label>Chủ phòng<select name="host_user_id"><option value="">Mặc định người chơi 1</option>{% for p in players %}<option value="{{ p.id }}">{{ p.display_name or p.username }}</option>{% endfor %}</select></label>
+<label>Thời gian trận<input type="datetime-local" name="match_time"></label><label class="span-2">Ghi chú<input name="note" maxlength="500" placeholder="Không bắt buộc"></label>
+<button class="btn green" type="submit">Tạo trận và tính RP</button></form></div></section>
+{% endif %}
 
 {% if can_create_test_account or can_import_accounts_csv %}
 <section class="admin-tab-panel" data-admin-panel="test-data">
@@ -560,6 +530,7 @@
 {% endif %}
 
 <section class="admin-tab-panel" data-admin-panel="system">
+    <div class="panel"><h2>🎛️ Bật/tắt tính năng hệ thống</h2><form method="post" action="{{ url_for('admin_update_system_features') }}" class="system-toggle-grid">{% for key,label in {'friendly_enabled':'Giao hữu','lobby_chat_enabled':'Chat Sảnh','room_chat_enabled':'Chat Phòng','registration_codes_enabled':'Mã đăng ký','announcements_enabled':'Thông báo'}.items() %}<label class="admin-permission-option"><span>{{ label }}</span><span class="admin-switch"><input type="checkbox" name="{{ key }}" value="1" {% if system_features.get(key) %}checked{% endif %}><span class="admin-switch-track"></span></span></label>{% endfor %}<button class="btn green" type="submit">Lưu cài đặt</button></form></div>
     <div class="panel">
         <h2>📢 Thông báo Admin chạy ngang</h2>
         {% if active_announcement %}
@@ -577,12 +548,14 @@
 
 
 {% if current_user.admin_level == 'owner' %}
+<section class="admin-tab-panel" data-admin-panel="rp-tools"><div class="panel"><h2>📈 Công cụ RP</h2><p>Lịch sử trận là nguồn dữ liệu chuẩn cho RP, thống kê, chuỗi và huy hiệu.</p>{% if can_admin('rp_recalculate_all') %}<form method="post" action="{{ url_for('admin_recalculate_rp') }}" onsubmit="return confirm('Tính lại RP của toàn bộ hệ thống từ lịch sử trận?')"><button class="btn gold" type="submit">Tính lại toàn hệ thống</button></form>{% endif %}</div></section>
+
 <section class="admin-tab-panel" data-admin-panel="logs">
     <div class="panel">
         <div class="admin-section-heading">
             <div>
                 <h2>🧾 Nhật ký hoạt động Admin</h2>
-                <p class="small">Chỉ Chủ hệ thống được xem. Nhật ký ghi hành động, đối tượng, thời gian và IP thao tác.</p>
+                <p class="small">Chỉ Admin được xem. Nhật ký ghi hành động, đối tượng, thời gian và IP thao tác.</p>
             </div>
             <span class="admin-count">{{ audit_logs|length }}</span>
         </div>
@@ -599,7 +572,7 @@
                     <td class="admin-log-details">{{ log.details or '-' }}</td>
                     <td><code>{{ log.ip_address or '-' }}</code></td>
                 </tr>
-                {% else %}<tr><td colspan="6">Chưa có nhật ký hoạt động.</td></tr>{% endfor %}
+                {% else %}<tr><td colspan="9">Chưa có nhật ký hoạt động.</td></tr>{% endfor %}
                 </tbody>
             </table>
         </div>

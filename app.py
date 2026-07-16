@@ -51,8 +51,8 @@ from modules.win_streaks import (
 
 load_dotenv()
 
-APP_NAME = "PES 2026"
-APP_VERSION = "V1.12.1"
+APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
+APP_VERSION = "V1.13.0"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -525,20 +525,67 @@ def is_owner_user(user) -> bool:
     )
 
 
-ADMIN_PERMISSION_FIELDS = {
+ADMIN_PERMISSION_GROUPS = {
+    "users": ["users_view", "users_approve", "users_edit", "users_delete", "password_reset", "accounts_import"],
+    "matches": ["matches_view", "matches_create", "matches_edit", "matches_confirm", "matches_cancel", "matches_delete"],
+    "operations": ["rooms_manage", "invites_manage", "disputes_manage", "announcements_manage"],
+    "system": ["chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
+    "rp": ["rp_view", "rp_simulate", "rp_edit_match", "rp_recalculate_all"],
+    "permissions": ["permissions_manage"],
+}
+ADMIN_PERMISSION_LABELS = {
+    "users_view":"Xem người dùng", "users_approve":"Duyệt tài khoản", "users_edit":"Sửa tài khoản",
+    "users_delete":"Xóa tài khoản", "password_reset":"Xử lý quên mật khẩu", "accounts_import":"Import CSV",
+    "matches_view":"Xem trận", "matches_create":"Tạo trận", "matches_edit":"Sửa tỷ số",
+    "matches_confirm":"Xác nhận trận", "matches_cancel":"Hủy trận", "matches_delete":"Xóa trận",
+    "rooms_manage":"Quản lý phòng", "invites_manage":"Quản lý lời mời", "disputes_manage":"Xử lý tranh chấp",
+    "announcements_manage":"Quản lý thông báo", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
+    "registration_codes_manage":"Quản lý mã đăng ký", "admin_logs_view":"Xem nhật ký Admin",
+    "rp_view":"Xem công thức RP", "rp_simulate":"Tính thử RP", "rp_edit_match":"Sửa RP trận",
+    "rp_recalculate_all":"Tính lại toàn hệ thống", "permissions_manage":"Cấp/thu hồi quyền Admin",
+}
+LEGACY_ADMIN_PERMISSION_FIELDS = {
     "create_test_account": "admin_can_create_test_account",
     "import_accounts_csv": "admin_can_import_accounts_csv",
+    "accounts_import": "admin_can_import_accounts_csv",
 }
+SYSTEM_FEATURE_DEFAULTS = {
+    "friendly_enabled": True, "lobby_chat_enabled": True, "room_chat_enabled": True,
+    "registration_codes_enabled": True, "announcements_enabled": True,
+}
+
+def _admin_permissions(user):
+    raw = (user or {}).get("admin_permissions") or {}
+    if isinstance(raw, str):
+        try: raw = json.loads(raw)
+        except Exception: raw = {}
+    return raw if isinstance(raw, dict) else {}
 
 
 def has_admin_permission(user, permission_code: str) -> bool:
-    """Owner always has access; sub-admins only have explicitly checked permissions."""
-    if is_owner_user(user):
-        return True
-    if not is_admin_user(user):
-        return False
-    field = ADMIN_PERMISSION_FIELDS.get(permission_code)
-    return bool(field and user.get(field) is True)
+    if is_owner_user(user): return True
+    if not is_admin_user(user): return False
+    permissions = _admin_permissions(user)
+    if permission_code in permissions: return permissions.get(permission_code) is True
+    legacy = LEGACY_ADMIN_PERMISSION_FIELDS.get(permission_code)
+    return bool(legacy and user.get(legacy) is True)
+
+
+def get_system_features():
+    features = dict(SYSTEM_FEATURE_DEFAULTS)
+    try:
+        result = execute_query(db.table("system_settings").select("setting_value").eq("setting_key", "admin_system_features").limit(1), "get_system_features", attempts=2)
+        row = (result.data or [{}])[0]
+        raw = row.get("setting_value")
+        if isinstance(raw, str): raw = json.loads(raw)
+        if isinstance(raw, dict): features.update({k: bool(v) for k,v in raw.items() if k in features})
+    except Exception as exc:
+        print(f"get_system_features warning: {exc}")
+    return features
+
+
+def system_feature_enabled(key: str) -> bool:
+    return bool(get_system_features().get(key, SYSTEM_FEATURE_DEFAULTS.get(key, False)))
 
 
 def normalize_invite_code(value: str) -> str:
@@ -1587,6 +1634,8 @@ def list_user_devices():
 def decorate_admin_users(users):
     """Bổ sung IP gần nhất và cảnh báo IP dùng chung cho danh sách Admin."""
     rows = [dict(user) for user in users]
+    for row in rows:
+        row["admin_permissions"] = _admin_permissions(row)
     devices = list_user_devices()
 
     known_ips_by_user = {str(user.get("id")): set() for user in rows}
@@ -3314,6 +3363,9 @@ def change_password():
 
 @app.route("/register", methods=["GET", "POST"])
 def register():
+    if not system_feature_enabled("registration_codes_enabled"):
+        flash("Tính năng đăng ký tài khoản đang tạm tắt.", "warning")
+        return redirect(url_for("login"))
     get_device_id()
 
     if request.method == "POST":
@@ -3396,6 +3448,8 @@ def logout():
 @app.route("/chat")
 @login_required
 def lobby_chat():
+    if not system_feature_enabled("lobby_chat_enabled"):
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     return render_template("chat.html", messages=list_chat_messages("global", limit=20))
 
 
@@ -3417,6 +3471,8 @@ def send_global_chat():
 @app.route("/api/chat/global")
 @login_required
 def api_global_chat():
+    if not system_feature_enabled("lobby_chat_enabled"):
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     messages = list_chat_messages("global", limit=20)
     return jsonify({"ok": True, "messages": messages})
 
@@ -3424,6 +3480,8 @@ def api_global_chat():
 @app.route("/api/chat/global/status")
 @login_required
 def api_global_chat_status():
+    if not system_feature_enabled("lobby_chat_enabled"):
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
     user = current_user()
     limit = 100
@@ -3458,6 +3516,8 @@ def api_global_chat_status():
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
+    if not system_feature_enabled("room_chat_enabled"):
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     user = current_user()
     room = get_room(room_id)
 
@@ -3497,6 +3557,7 @@ def send_room_chat(room_id):
 @app.route("/admin/announcement", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("announcements_manage")
 def admin_create_announcement():
     user = current_user()
     title = request.form.get("title", "THÔNG BÁO").strip() or "THÔNG BÁO"
@@ -3521,6 +3582,7 @@ def admin_create_announcement():
 @app.route("/admin/announcement/clear", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("announcements_manage")
 def admin_clear_announcement():
     db.table("admin_announcements").update({"is_active": False}).eq("is_active", True).execute()
     log_admin_action("Tắt thông báo", "announcement", details="Đã tắt toàn bộ thông báo đang hoạt động.")
@@ -4655,6 +4717,9 @@ def room_random_teams(room_id):
         return redirect(url_for("room_detail", room_id=room_id))
 
     match_mode = (request.form.get("match_mode") or MATCH_MODE_RANKED).strip().lower()
+    if match_mode == MATCH_MODE_FRIENDLY and not system_feature_enabled("friendly_enabled"):
+        flash("Tính năng Giao hữu đang tạm tắt.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     if match_mode not in {MATCH_MODE_RANKED, MATCH_MODE_FRIENDLY}:
         match_mode = MATCH_MODE_RANKED
 
@@ -4754,6 +4819,9 @@ def room_random_teams(room_id):
 @app.route("/room/<room_id>/reroll-friendly", methods=["POST"])
 @login_required
 def room_reroll_friendly(room_id):
+    if not system_feature_enabled("friendly_enabled"):
+        flash("Tính năng Giao hữu đang tạm tắt.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     user = current_user()
     room = get_room(room_id)
     if not room:
@@ -4798,6 +4866,9 @@ def room_reroll_friendly(room_id):
 @app.route("/room/<room_id>/finish-friendly", methods=["POST"])
 @login_required
 def room_finish_friendly(room_id):
+    if not system_feature_enabled("friendly_enabled"):
+        flash("Tính năng Giao hữu đang tạm tắt.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     user = current_user()
     room = get_room(room_id)
     if not room:
@@ -5648,6 +5719,84 @@ def delete_player_safe(user_id):
     return True, ""
 
 
+
+@app.context_processor
+def inject_admin_feature_context():
+    user = current_user()
+    return {
+        "app_name": APP_NAME, "app_version": APP_VERSION,
+        "system_features": get_system_features(),
+        "can_admin": lambda code: has_admin_permission(user, code),
+        "admin_display_role": "Admin" if is_admin_user(user) else "",
+    }
+
+@app.route("/admin/system/features", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("chat_manage")
+def admin_update_system_features():
+    features = {key: request.form.get(key) == "1" for key in SYSTEM_FEATURE_DEFAULTS}
+    execute_query(db.table("system_settings").upsert({"setting_key":"admin_system_features", "setting_value":features, "updated_at":now_iso()}, on_conflict="setting_key"), "update_system_features")
+    log_admin_action("Cập nhật công tắc hệ thống", "system", details=features)
+    flash("Đã cập nhật các tính năng hệ thống.", "success")
+    return redirect_admin("system")
+
+
+def recalculate_rank_history(from_created_at=None):
+    users = list_all_users()
+    for user in users:
+        if user.get("role") == "player":
+            execute_query(db.table("users").update({"rank_points":DEFAULT_POINTS,"wins":0,"draws":0,"losses":0,"total_matches":0,"goals_for":0,"goals_against":0,"streak":0,"loss_streak":0}).eq("id",user["id"]), "reset_user_for_recalc")
+    query=db.table("matches").select("*").eq("status","confirmed").order("created_at")
+    result=execute_query(query,"load_matches_for_recalc")
+    matches=result.data or []
+    for match in matches:
+        execute_query(db.table("matches").update({"status":"waiting_confirm","delta1":None,"delta2":None}).eq("id",match["id"]), "prepare_match_recalc")
+        fresh=get_match(match["id"])
+        apply_match_result(fresh)
+    ttl_cache_delete("players_raw","rooms_raw","achievement_map")
+    return len(matches)
+
+@app.route("/admin/rp/recalculate", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("rp_recalculate_all")
+def admin_recalculate_rp():
+    try:
+        count=recalculate_rank_history()
+        log_admin_action("Tính lại RP toàn hệ thống", "rp", details=f"{count} trận hợp lệ")
+        flash(f"Đã tính lại RP và thống kê từ {count} trận hợp lệ.", "success")
+    except Exception as exc:
+        app.logger.exception("RP recalculation failed")
+        flash(f"Không thể tính lại RP: {exc}", "danger")
+    return redirect_admin("rp-tools")
+
+@app.route("/admin/match/create", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("matches_create")
+def admin_create_manual_match():
+    p1=request.form.get("player1_id"); p2=request.form.get("player2_id")
+    if not p1 or not p2 or p1==p2:
+        flash("Hãy chọn hai người chơi khác nhau.","danger"); return redirect_admin("create-match")
+    try:
+        score1=max(0,int(request.form.get("score1",0))); score2=max(0,int(request.form.get("score2",0)))
+    except ValueError:
+        flash("Tỷ số không hợp lệ.","danger"); return redirect_admin("create-match")
+    host=request.form.get("host_user_id") or p1
+    created_at=request.form.get("match_time") or now_iso()
+    note=(request.form.get("note") or "Admin tạo trận thủ công.")[:500]
+    match_id=str(uuid.uuid4())
+    winner=p1 if score1>score2 else p2 if score2>score1 else None
+    loser=p2 if score1>score2 else p1 if score2>score1 else None
+    payload={"id":match_id,"player1_id":p1,"player2_id":p2,"score1":score1,"score2":score2,"winner_id":winner,"loser_id":loser,"host_user_id":host,"status":"waiting_confirm","note":note,"created_at":created_at,"updated_at":now_iso(),"created_by":current_user().get("id"),"rp_formula_version":APP_VERSION}
+    execute_query(db.table("matches").insert(payload),"create_manual_match")
+    delta1,delta2=apply_match_result(get_match(match_id))
+    execute_query(db.table("matches").update({"note":note,"rp_formula_version":APP_VERSION,"rp_details":{"source":"admin_manual","delta1":delta1,"delta2":delta2}}).eq("id",match_id),"finish_manual_match")
+    log_admin_action("Tạo trận thủ công","match",match_id,details=f"{score1}-{score2}; RP {delta1:+d}/{delta2:+d}")
+    flash(f"Đã tạo trận và tính RP {delta1:+d}/{delta2:+d}.","success")
+    return redirect_admin("matches")
+
 # =========================
 # Admin
 # =========================
@@ -5700,8 +5849,12 @@ def admin():
         duplicate_ip_groups=duplicate_ip_groups,
         duplicate_ip_user_count=duplicate_ip_user_count,
         pending_disputes=pending_disputes,
-        can_create_test_account=has_admin_permission(current_user(), "create_test_account"),
-        can_import_accounts_csv=has_admin_permission(current_user(), "import_accounts_csv"),
+        can_create_test_account=has_admin_permission(current_user(), "users_edit"),
+        can_import_accounts_csv=has_admin_permission(current_user(), "accounts_import"),
+        admin_permission_groups=ADMIN_PERMISSION_GROUPS,
+        admin_permission_labels=ADMIN_PERMISSION_LABELS,
+        current_admin_permissions=_admin_permissions(current_user()),
+        system_features=get_system_features(),
     )
 
 
@@ -5747,7 +5900,7 @@ def _build_test_user_payload(row, default_password="Test@12345"):
         "role": "player",
         "account_status": "approved",
         "invite_code_used": None,
-        "rank_points": _safe_int(row.get("rank_points"), DEFAULT_POINTS, 0, 999999),
+        "rank_points": _safe_int(row.get("rank_points"), DEFAULT_POINTS, -999999, 999999),
         "wins": wins,
         "draws": draws,
         "losses": losses,
@@ -5764,7 +5917,7 @@ def _build_test_user_payload(row, default_password="Test@12345"):
 @app.route("/admin/test-account/create", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("create_test_account")
+@admin_permission_required("users_edit")
 def admin_create_test_account():
     row = {
         "username": request.form.get("username", ""),
@@ -5792,27 +5945,26 @@ def admin_create_test_account():
 @app.route("/admin/test-account/sample.csv")
 @login_required
 @admin_required
-@admin_permission_required("import_accounts_csv")
+@admin_permission_required("accounts_import")
 def admin_download_test_account_sample():
     sample_rows = [
-        ["username", "display_name", "password", "zalo_name", "rank_points", "wins", "draws", "losses", "total_matches", "goals_for", "goals_against"],
-        ["test01", "Test Player 01", "Test@12345", "Test 01", "1200", "5", "2", "3", "10", "12", "9"],
-        ["test02", "Test Player 02", "Test@12345", "Test 02", "1350", "8", "1", "2", "11", "18", "7"],
-        ["test03", "Test Player 03", "Test@12345", "Test 03", "1000", "0", "0", "0", "0", "0", "0"],
+        ["username", "display_name", "password", "zalo_name", "rank_points", "wins", "draws", "losses", "total_matches", "goals_for", "goals_against", "register_ip", "last_ip"],
+        ["test01", "Test Player 01", "123456", "Test 01", "1200", "5", "2", "3", "10", "12", "9", "", ""],
+        ["test02", "Test Player 02", "123456", "Test 02", "-1000", "0", "0", "0", "0", "0", "0", "", ""],
     ]
     output = io.StringIO()
     writer = csv.writer(output, lineterminator="\n")
     writer.writerows(sample_rows)
     response = make_response("\ufeff" + output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
-    response.headers["Content-Disposition"] = 'attachment; filename="pes_2026_test_accounts_sample.csv"'
+    response.headers["Content-Disposition"] = 'attachment; filename="PES_Arena_Import_Tai_Khoan_Mau_v1.13.0.csv"'
     response.headers["Cache-Control"] = "no-store"
     return response
 
 @app.route("/admin/test-account/import", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("import_accounts_csv")
+@admin_permission_required("accounts_import")
 def admin_import_test_accounts():
     upload = request.files.get("csv_file")
     pasted_csv = request.form.get("csv_text", "").strip()
@@ -6044,6 +6196,7 @@ def admin_reject_password_reset(request_id):
 @app.route("/admin/account/<user_id>/approve", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_approve")
 def admin_approve_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -6068,6 +6221,7 @@ def admin_approve_account(user_id):
 @app.route("/admin/account/<user_id>/reject", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_approve")
 def admin_reject_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -6091,6 +6245,7 @@ def admin_reject_account(user_id):
 @app.route("/admin/account/<user_id>/ban", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_edit")
 def admin_ban_account(user_id):
     user = get_user(user_id)
     actor = current_user()
@@ -6115,6 +6270,7 @@ def admin_ban_account(user_id):
 @app.route("/admin/account/<user_id>/unban", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_edit")
 def admin_unban_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -6133,6 +6289,7 @@ def admin_unban_account(user_id):
 @app.route("/admin/invite-code/create", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("registration_codes_manage")
 def admin_create_invite_code():
     actor = current_user()
     label = request.form.get("label", "").strip()[:80]
@@ -6160,6 +6317,7 @@ def admin_create_invite_code():
 @app.route("/admin/invite-code/<code_id>/disable", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("registration_codes_manage")
 def admin_disable_invite_code(code_id):
     execute_query(
         db.table("registration_invite_codes").update({"is_active": False}).eq("id", code_id),
@@ -6185,7 +6343,7 @@ def admin_promote_user(user_id):
         return redirect_admin("users")
 
     execute_query(
-        db.table("users").update({"admin_level": "admin", "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
+        db.table("users").update({"admin_level": "admin", "admin_permissions": {}, "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
         "promote_admin",
     )
     log_admin_action("Thêm Admin phụ", "user", user_id, user.get("username"), "admin_level: none → admin")
@@ -6202,13 +6360,15 @@ def admin_update_permissions(user_id):
         flash("Không tìm thấy Admin phụ.", "danger")
         return redirect_admin("overview")
 
-    payload = {
-        "admin_can_create_test_account": request.form.get("can_create_test_account") == "1",
-        "admin_can_import_accounts_csv": request.form.get("can_import_accounts_csv") == "1",
+    payload = {code: request.form.get(code) == "1" for codes in ADMIN_PERMISSION_GROUPS.values() for code in codes}
+    db_payload = {
+        "admin_permissions": payload,
+        "admin_can_create_test_account": payload.get("users_edit", False),
+        "admin_can_import_accounts_csv": payload.get("accounts_import", False),
     }
     try:
         execute_query(
-            db.table("users").update(payload).eq("id", user_id),
+            db.table("users").update(db_payload).eq("id", user_id),
             "update_admin_permissions",
         )
     except Exception as exc:
@@ -6250,7 +6410,7 @@ def admin_demote_user(user_id):
         return redirect_admin("users")
 
     execute_query(
-        db.table("users").update({"admin_level": "none", "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
+        db.table("users").update({"admin_level": "none", "admin_permissions": {}, "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
         "demote_admin",
     )
     log_admin_action("Gỡ Admin phụ", "user", user_id, user.get("username"), "admin_level: admin → none")
@@ -6260,6 +6420,7 @@ def admin_demote_user(user_id):
 @app.route("/admin/dispute/<dispute_id>/accept", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("disputes_manage")
 def admin_dispute_accept(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -6286,6 +6447,7 @@ def admin_dispute_accept(dispute_id):
 @app.route("/admin/dispute/<dispute_id>/edit", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("disputes_manage")
 def admin_dispute_edit(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -6314,6 +6476,7 @@ def admin_dispute_edit(dispute_id):
 @app.route("/admin/dispute/<dispute_id>/cancel", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("disputes_manage")
 def admin_dispute_cancel(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -6334,6 +6497,7 @@ def admin_dispute_cancel(dispute_id):
 @app.route("/admin/cancel/<match_id>", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("matches_cancel")
 def admin_cancel(match_id):
     match = get_match(match_id)
     if not match:
@@ -6370,6 +6534,7 @@ def admin_cancel(match_id):
 @app.route("/admin/confirm-disputed/<match_id>", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("matches_confirm")
 def admin_confirm_disputed(match_id):
     match = get_match(match_id)
     if not match:
@@ -6420,6 +6585,7 @@ def admin_toggle_online(user_id):
 @app.route("/admin/player/<user_id>/update", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_edit")
 def admin_update_player(user_id):
     player = get_user(user_id)
     actor = current_user()
@@ -6497,6 +6663,7 @@ def admin_update_player(user_id):
 @app.route("/admin/player/<user_id>/reset-stats", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_edit")
 def admin_reset_player_stats(user_id):
     player = get_user(user_id)
     if not player or is_admin_user(player):
@@ -6522,6 +6689,7 @@ def admin_reset_player_stats(user_id):
 @app.route("/admin/player/<user_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("users_delete")
 def admin_delete_player(user_id):
     player = get_user(user_id)
     player_label = player.get("username") if player else "Không xác định"
@@ -6538,6 +6706,7 @@ def admin_delete_player(user_id):
 @app.route("/admin/match/<match_id>/update-result", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("matches_edit")
 def admin_update_match_result(match_id):
     match = get_match(match_id)
     if not match:
@@ -6681,6 +6850,7 @@ def admin_update_match_result(match_id):
 @app.route("/admin/match/<match_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("matches_delete")
 def admin_delete_match(match_id):
     match = get_match(match_id)
     if not match:

@@ -233,7 +233,7 @@
                     <div><span>Trạng thái phòng</span><strong>{{ room.status|replace('_',' ')|title }}</strong></div>
                 </div>
             </section>
-            <section class="panel room-chat-side">
+            {% if system_features.room_chat_enabled %}<section class="panel room-chat-side">
                 <h2>Chat phòng</h2>
                 <div id="roomChatBox" class="chat-box"></div>
                 <form method="post" action="{{ url_for('send_room_chat', room_id=room.id) }}" class="chat-form">
@@ -241,7 +241,7 @@
                     <button class="btn green" type="submit">Gửi</button>
                 </form>
                 <div class="chat-note">Chat phòng chỉ dành cho 2 người trong phòng. Chống spam: 1 tin nhắn / 5 giây.</div>
-            </section>
+            </section>{% endif %}
         </aside>
     </div>
 
@@ -275,7 +275,7 @@
 
     {% endif %}
 
-    {% if room.status == "friendly_playing" %}
+    {% if system_features.friendly_enabled and room.status == "friendly_playing" %}
     <div class="friendly-match-banner">
         <h3>🤝 Trận giao hữu Tier {{ room.friendly_tier }}</h3>
         <p>Không lưu lịch sử • Không cộng/trừ RP • Hai đội không trùng nhau.</p>

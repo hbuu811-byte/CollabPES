@@ -3779,3 +3779,30 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
   .room-center-primary-actions .room-center-action-btn{min-width:0;padding-left:12px;padding-right:12px;font-size:12px;}
   .room-center-score-panel{width:min(100%,300px);padding:12px;}
 }
+
+/* PES Arena v1.13.0 - Admin governance */
+.brand-wordmark small{display:block;font-size:.55em;letter-spacing:.04em;opacity:.82}
+.admin-team-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+.admin-team-card{border:1px solid rgba(255,255,255,.1);border-radius:14px;padding:14px;background:rgba(255,255,255,.025)}
+.admin-team-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}
+.admin-team-card-head small{display:block;margin-top:3px;opacity:.72}
+.admin-team-card details summary{cursor:pointer;font-weight:700;padding:8px 0}
+.admin-permission-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:12px 0}
+.admin-permission-grid fieldset{border:1px solid rgba(255,255,255,.1);border-radius:12px;padding:10px;min-width:0}
+.admin-permission-grid legend{font-weight:800;padding:0 6px}
+.system-toggle-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;max-width:760px}
+.admin-match-scroll{width:100%;max-height:610px;overflow:auto}
+.admin-match-table{min-width:1320px;width:100%}
+.admin-match-table thead th{position:sticky;top:0;z-index:3;background:var(--panel,#111923)}
+.score-pair{display:flex;align-items:center;justify-content:center;gap:6px;white-space:nowrap}
+.score-pair .score-input{width:54px;min-width:54px;text-align:center}
+.match-note-input{min-width:210px}
+.match-actions{display:flex;gap:6px;align-items:center;white-space:nowrap}
+.rp-cell{font-weight:800;white-space:nowrap}
+.admin-manual-match-form{grid-template-columns:repeat(2,minmax(0,1fr));max-width:900px}
+.admin-manual-match-form .span-2{grid-column:1/-1}
+@media(max-width:760px){.admin-permission-grid,.system-toggle-grid,.admin-manual-match-form{grid-template-columns:1fr}.admin-manual-match-form .span-2{grid-column:auto}}
+.profile-admin-match-edit{margin-top:10px;padding-top:8px;border-top:1px dashed rgba(255,255,255,.12)}
+.profile-admin-match-edit summary{cursor:pointer;font-weight:700}
+.profile-admin-match-edit form{margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.profile-admin-match-edit input[name="note"]{min-width:220px;flex:1}

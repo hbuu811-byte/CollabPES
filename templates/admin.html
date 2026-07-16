@@ -358,7 +358,7 @@
         <div class="admin-section-heading">
             <div>
                 <h2>🎮 Quản lý trận đấu gần đây</h2>
-                <p class="small">Sửa tỷ số, ghi chú hoặc trạng thái. Các nút Lưu – Hủy – Xóa luôn nằm cùng một hàng.</p>
+                <p class="small">Theo dõi RP, trạng thái và ghi chú trận đấu. Tỷ số đã xác nhận chỉ được xem, không chỉnh sửa từ Admin.</p>
             </div>
             <span class="admin-count">{{ all_matches|length }}</span>
         </div>
@@ -367,21 +367,19 @@
                 <thead><tr><th>Thời gian</th><th>Người chơi 1</th><th>RP 1</th><th>Tỷ số</th><th>Người chơi 2</th><th>RP 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
                 <tbody>
                 {% for m in all_matches %}
-                {% set form_id = 'match-edit-' ~ m.id %}
                 <tr>
                     <td class="match-time-cell">{{ format_vn_datetime(m.created_at) }}</td>
                     <td class="match-player-cell"><strong>{{ m.player1_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta1 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta1 or 0) }}</td>
-                    <td><div class="score-pair"><input form="{{ form_id }}" class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}"><span>–</span><input form="{{ form_id }}" class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}"></div></td>
+                    <td><strong>{{ m.score1 if m.score1 is not none else 0 }} – {{ m.score2 if m.score2 is not none else 0 }}</strong></td>
                     <td class="match-player-cell"><strong>{{ m.player2_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta2 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta2 or 0) }}</td>
                     <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
-                    <td><input form="{{ form_id }}" class="match-note-input" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td>
+                    <td class="match-note-cell">{{ m.note or '—' }}</td>
                     <td>
                         <div class="match-actions">
-                            <form id="{{ form_id }}" method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}"><button class="btn green" type="submit">Lưu</button></form>
                             <form method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy</button></form>
-                            <form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('XÓA trận này và tính lại BXH?')"><button class="btn red" type="submit">Xóa</button></form>
+                            <form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('Xóa trận này và hoàn tác đúng RP của trận?')"><button class="btn red" type="submit">Xóa</button></form>
                         </div>
                     </td>
                 </tr>
@@ -466,11 +464,11 @@
 <section class="admin-tab-panel" data-admin-panel="rp-tools">
     <div class="panel">
         <h2>📈 Bộ Công Cụ Tính RP</h2>
-        <p>Lịch sử các trận có trạng thái <strong>confirmed</strong> là nguồn chuẩn để tính RP, thống kê và chuỗi.</p>
+        <p>Công cụ này chỉ dùng để sao lưu và khôi phục RP, thống kê và delta RP đã lưu.</p>
         {% if is_test_mode %}
         <p class="notice success">🧪 TEST MODE đang bật — hãy bảo đảm dự án đang dùng Supabase Test.</p>
         {% else %}
-        <p class="notice warning">⚠ Production: hãy dừng xác nhận trận và sao lưu RP trước khi tính lại.</p>
+        <p class="notice warning">⚠ Production: hãy tải Backup RP trước khi thực hiện Restore.</p>
         {% endif %}
 
         <div class="admin-rp-tool-grid">
@@ -503,24 +501,7 @@
                 </form>
             </div>
 
-            {% if can_admin('rp_recalculate_all') %}
-            <div class="admin-rp-tool-card admin-rp-recalculate-card">
-                <h3>🧮 Tính lại RP từ lịch sử trận</h3>
-                <p>Đặt người chơi về 1.000 RP và thống kê về 0, sau đó xử lý lại từng trận confirmed theo thứ tự thời gian từ cũ đến mới.</p>
-                <form method="post" action="{{ url_for('admin_recalculate_rp') }}" onsubmit="return confirm('Tính lại RP của toàn bộ hệ thống từ lịch sử trận?');">
-                    {% if not is_test_mode %}
-                    <label>Nhập <strong>TINH LAI RP</strong></label>
-                    <input name="confirm_text" autocomplete="off" placeholder="TINH LAI RP" required>
-                    {% endif %}
-                    <button class="btn green" type="submit">🧮 Tính lại toàn hệ thống</button>
-                </form>
-            </div>
             {% endif %}
-            {% endif %}
-        </div>
-
-        <div class="notice">
-            <strong>Cơ chế tính lại:</strong> chỉ lấy trận <code>confirmed</code>, sắp xếp theo <code>created_at</code> tăng dần; trận hủy hoặc chưa xác nhận không được tính. Mỗi trận dùng ID trận làm hạt ngẫu nhiên cố định, nên chạy lại nhiều lần cho cùng một lịch sử sẽ cho cùng kết quả.
         </div>
     </div>
 </section>

@@ -1,3 +1,25 @@
+# PES Arena V1.13.6 – Sửa lỗi NOT NULL delta khi sửa và tính lại trận
+
+## Lỗi đã sửa
+
+- Sửa lỗi Supabase `23502`: cột `matches.delta1`/`delta2` là `NOT NULL` nhưng code ghi `null` khi chuẩn bị sửa trận.
+- Khi tạm đưa trận về `waiting_confirm`, hệ thống dùng `delta1 = 0`, `delta2 = 0` làm giá trị trung gian hợp lệ.
+- Áp dụng cùng nguyên tắc cho công cụ tính lại RP và thao tác hủy phòng/trận.
+- Sau khi tính xong, `apply_match_result()` vẫn ghi đè bằng RP thật; số 0 chỉ tồn tại trong giai đoạn chuẩn bị.
+
+## File và vị trí sửa
+
+- `app.py` dòng gần 57: nâng phiên bản lên `V1.13.6`.
+- `app.py` hàm `recalculate_rank_history`: thay delta trung gian `None` bằng `0`.
+- `app.py` route `admin_update_match_result`: thay delta trung gian `None` bằng `0`.
+- `app.py` route `admin_cancel_room`: trận bị hủy lưu delta bằng `0` thay vì `null`.
+
+## Cài đặt
+
+Không cần chạy SQL. Chép đè code, commit/push và redeploy.
+
+---
+
 # PES Arena V1.13.5 – Bộ Công Cụ Tính RP
 
 ## Thay đổi lớn

@@ -54,7 +54,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.5"
+APP_VERSION = "V1.13.6"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -5797,7 +5797,7 @@ def recalculate_rank_history(from_created_at=None):
         # trước thời điểm hiện tại, không vô tình đọc các trận tương lai còn confirmed.
         for match in matches_snapshot:
             execute_query(db.table("matches").update({
-                "status": "waiting_confirm", "delta1": None, "delta2": None,
+                "status": "waiting_confirm", "delta1": 0, "delta2": 0,
                 "updated_at": now_iso(),
             }).eq("id", match["id"]), "prepare_match_recalc")
 
@@ -7077,8 +7077,8 @@ def admin_update_match_result(match_id):
                 "winner_id": winner_id,
                 "loser_id": loser_id,
                 "status": "waiting_confirm",
-                "delta1": None,
-                "delta2": None,
+                "delta1": 0,
+                "delta2": 0,
                 "note": note,
                 "updated_at": now_iso(),
             }).eq("id", match_id),
@@ -7201,8 +7201,8 @@ def admin_cancel_room(room_id):
                 return redirect_admin("rooms")
         db.table("matches").update({
             "status": "cancelled",
-            "delta1": None,
-            "delta2": None,
+            "delta1": 0,
+            "delta2": 0,
             "note": "Admin đã hủy phòng/trận và hoàn tác RP.",
             "updated_at": now_iso(),
         }).eq("id", room["match_id"]).execute()

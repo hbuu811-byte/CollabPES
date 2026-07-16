@@ -113,7 +113,24 @@
                     </div>
                 {% else %}
                     <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
-                    {% if room.status == 'waiting_ready' %}
+                    {% if room.status == 'playing' and room.match_mode != 'friendly' and (current_user.id == room.host_user_id or current_user.role == 'admin') %}
+                        <div class="room-center-score-panel">
+                            <h3 class="room-score-title">Kết quả trận đấu</h3>
+                            <form method="post" action="{{ url_for('room_submit_result', room_id=room.id) }}" class="room-score-form room-center-score-form">
+                                <div class="room-score-fields">
+                                    <label>
+                                        <span>Sân Nhà</span>
+                                        <input type="number" min="0" name="host_score" value="0">
+                                    </label>
+                                    <label>
+                                        <span>Sân Khách</span>
+                                        <input type="number" min="0" name="guest_score" value="0">
+                                    </label>
+                                </div>
+                                <button class="btn green room-submit-result-btn" type="submit">Gửi Kết Quả</button>
+                            </form>
+                        </div>
+                    {% elif room.status == 'waiting_ready' %}
                         {% if (current_user.id == room.host_user_id or current_user.role == 'admin') and room.guest_ready %}
                         <form class="room-center-random-form" method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.classList.add('loading');">
                             <input type="hidden" name="match_mode" value="ranked">
@@ -292,23 +309,6 @@
         </form>
         <p class="small danger-text">Thoát phòng sau khi đã quay đội được tính là bỏ cuộc và bị trừ 20 RP.</p>
     </div>
-    {% endif %}
-
-    {% if room.status == "playing" and room.match_mode != "friendly" and (current_user.id == room.host_user_id or current_user.role == "admin") %}
-    <h3 class="room-score-title">Kết quả trận đấu</h3>
-    <form method="post" action="{{ url_for('room_submit_result', room_id=room.id) }}" class="grid-form room-score-form">
-        <div class="two-col">
-            <div>
-                <label>Sân Nhà</label>
-                <input type="number" min="0" name="host_score" value="0">
-            </div>
-            <div>
-                <label>Sân Khách</label>
-                <input type="number" min="0" name="guest_score" value="0">
-            </div>
-        </div>
-        <button class="btn green" type="submit">Gửi Kết Quả</button>
-    </form>
     {% endif %}
 
     {% if room.status == "confirmed" %}

@@ -52,7 +52,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.12.0"
+APP_VERSION = "V1.12.1"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -4748,12 +4748,6 @@ def room_random_teams(room_id):
         flash(str(exc), "warning")
         return redirect(url_for("room_detail", room_id=room_id))
 
-    flash(
-        f'Smart Random: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
-        f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). '
-        'Hai CLB đã được quay. Chúc hai người thi đấu vui vẻ!',
-        "success",
-    )
     return redirect(url_for("room_detail", room_id=room_id))
 
 
@@ -5017,7 +5011,6 @@ def room_confirm_result(room_id):
         flash("Không thể xác nhận kết quả do lỗi kết nối dữ liệu. Điểm chưa được xử lý thêm; vui lòng thử lại sau vài giây.", "danger")
         return redirect(url_for("room_detail", room_id=room_id))
 
-    flash(f"Đã xác nhận. Chủ phòng: {int(delta1):+d}, Khách: {int(delta2):+d}. Hai người có thể bấm Đá tiếp.", "success")
     return redirect(url_for("room_detail", room_id=room_id))
 
 

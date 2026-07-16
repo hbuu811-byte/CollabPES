@@ -3706,3 +3706,76 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
     .room-center-primary-actions { gap: 8px; }
     .room-center-action-btn { min-width: 118px; }
 }
+
+
+/* V1.12.1 - Điều khiển phòng đấu gọn trên một hàng */
+.room-center-primary-actions{
+  display:flex !important;
+  flex-direction:row !important;
+  flex-wrap:nowrap !important;
+  align-items:center;
+  justify-content:center;
+  gap:10px;
+  width:100%;
+}
+.room-center-primary-actions form{
+  display:inline-flex;
+  margin:0;
+  flex:0 1 auto;
+}
+.room-center-primary-actions .room-center-action-btn{
+  white-space:nowrap;
+  width:auto !important;
+  min-width:128px;
+}
+.room-center-score-panel{
+  width:min(100%, 340px);
+  margin:16px auto 0;
+  padding:14px 16px;
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;
+  background:rgba(5,14,25,.82);
+}
+.room-center-score-panel .room-score-title{
+  margin:0 0 12px;
+  text-align:center;
+  font-size:17px;
+  font-weight:900;
+}
+.room-center-score-form{
+  display:grid;
+  gap:12px;
+}
+.room-score-fields{
+  display:grid;
+  grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:12px;
+}
+.room-score-fields label{
+  display:grid;
+  gap:6px;
+  margin:0;
+  text-align:center;
+}
+.room-score-fields label span{
+  font-size:14px;
+  font-weight:900;
+}
+.room-score-fields input{
+  width:100%;
+  min-width:0;
+  height:44px;
+  text-align:center;
+  font-size:20px;
+  font-weight:900;
+}
+.room-submit-result-btn{
+  width:100%;
+  min-height:42px;
+  font-weight:900;
+}
+@media (max-width:560px){
+  .room-center-primary-actions{gap:7px;}
+  .room-center-primary-actions .room-center-action-btn{min-width:0;padding-left:12px;padding-right:12px;font-size:12px;}
+  .room-center-score-panel{width:min(100%,300px);padding:12px;}
+}

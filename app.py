@@ -8,6 +8,7 @@ import secrets
 import string
 import time
 import uuid
+import zipfile
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from collections import Counter
@@ -22,6 +23,7 @@ from flask import (
     g,
     has_request_context,
     make_response,
+    send_file,
     redirect,
     render_template,
     request,
@@ -52,7 +54,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.0"
+APP_VERSION = "V1.13.2"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -161,6 +163,29 @@ app.secret_key = (
 ).strip()
 
 APP_ENV = (os.getenv("APP_ENV") or os.getenv("VERCEL_ENV") or "production").strip().lower()
+PES_ARENA_TEST_MODE = (os.getenv("PES_ARENA_TEST_MODE") or "false").strip().lower() in {"1", "true", "yes", "on"}
+ALLOW_SIMPLE_TEST_PASSWORDS = (os.getenv("ALLOW_SIMPLE_TEST_PASSWORDS") or "false").strip().lower() in {"1", "true", "yes", "on"}
+DATABASE_SAFETY_TOKEN = (os.getenv("DATABASE_SAFETY_TOKEN") or "").strip()
+
+def is_test_mode():
+    return APP_ENV in {"test", "testing", "development", "preview"} and PES_ARENA_TEST_MODE and DATABASE_SAFETY_TOKEN == "PES_ARENA_TEST_DATABASE"
+
+
+def simple_test_passwords_enabled():
+    """Only allow one-character passwords in an explicitly isolated test environment."""
+    return is_test_mode() and ALLOW_SIMPLE_TEST_PASSWORDS
+
+
+def minimum_password_length():
+    return 1 if simple_test_passwords_enabled() else 6
+
+
+def validate_new_password(password: str):
+    minimum = minimum_password_length()
+    if len(password or "") < minimum:
+        return False, f"Mật khẩu mới phải có ít nhất {minimum} ký tự."
+    return True, ""
+
 supabase_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
 supabase_key = (
     os.getenv("SUPABASE_SERVICE_ROLE_KEY")
@@ -520,7 +545,6 @@ def is_owner_user(user) -> bool:
     return bool(
         user and (
             user.get("admin_level") == "owner"
-            or (user.get("role") == "admin" and user.get("username") == "admin")
         )
     )
 
@@ -529,7 +553,7 @@ ADMIN_PERMISSION_GROUPS = {
     "users": ["users_view", "users_approve", "users_edit", "users_delete", "password_reset", "accounts_import"],
     "matches": ["matches_view", "matches_create", "matches_edit", "matches_confirm", "matches_cancel", "matches_delete"],
     "operations": ["rooms_manage", "invites_manage", "disputes_manage", "announcements_manage"],
-    "system": ["chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
+    "system": ["system_features_manage", "backup_manage", "chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
     "rp": ["rp_view", "rp_simulate", "rp_edit_match", "rp_recalculate_all"],
     "permissions": ["permissions_manage"],
 }
@@ -539,7 +563,7 @@ ADMIN_PERMISSION_LABELS = {
     "matches_view":"Xem trận", "matches_create":"Tạo trận", "matches_edit":"Sửa tỷ số",
     "matches_confirm":"Xác nhận trận", "matches_cancel":"Hủy trận", "matches_delete":"Xóa trận",
     "rooms_manage":"Quản lý phòng", "invites_manage":"Quản lý lời mời", "disputes_manage":"Xử lý tranh chấp",
-    "announcements_manage":"Quản lý thông báo", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
+    "announcements_manage":"Quản lý thông báo", "system_features_manage":"Bật/tắt tính năng hệ thống", "backup_manage":"Sao lưu dữ liệu", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
     "registration_codes_manage":"Quản lý mã đăng ký", "admin_logs_view":"Xem nhật ký Admin",
     "rp_view":"Xem công thức RP", "rp_simulate":"Tính thử RP", "rp_edit_match":"Sửa RP trận",
     "rp_recalculate_all":"Tính lại toàn hệ thống", "permissions_manage":"Cấp/thu hồi quyền Admin",
@@ -2844,31 +2868,21 @@ def ensure_admin():
     if _admin_checked or db is None:
         return
 
-    admin_password_hash = hash_password("Do12345")
     admin = get_user_by_username("admin")
     if not admin:
+        # Không tự tạo/reset mật khẩu owner trong runtime. Tài khoản sở hữu phải
+        # được tạo bằng migration hoặc thao tác thủ công an toàn trong Supabase.
+        app.logger.warning("Owner account 'admin' is missing; ensure_admin skipped creation for safety.")
+    else:
+        # Chỉ chuẩn hóa vai trò; tuyệt đối không ghi đè password_hash.
         execute_query(
-            db.table("users").insert({
-                "username": "admin",
-                "password_hash": admin_password_hash,
+            db.table("users").update({
                 "display_name": "Admin",
                 "role": "admin",
                 "admin_level": "owner",
                 "account_status": "approved",
-                "zalo_name": "Chủ hệ thống",
-                "rank_points": DEFAULT_POINTS,
-            }),
-            "ensure_admin_create",
-        )
-    else:
-        execute_query(
-            db.table("users").update({
-                "password_hash": admin_password_hash,
-                "role": "admin",
-                "admin_level": "owner",
-                "account_status": "approved",
             }).eq("username", "admin"),
-            "ensure_admin_update",
+            "ensure_admin_update_role_only",
         )
 
     _admin_checked = True
@@ -3320,16 +3334,12 @@ def change_password():
     if request.method == "POST":
         current_password = request.form.get("current_password", "").strip()
         new_password = request.form.get("new_password", "").strip()
-        confirm_password = request.form.get("confirm_password", "").strip()
-
         if user.get("password_hash") != hash_password(current_password):
             flash("Mật khẩu tạm hoặc mật khẩu hiện tại không đúng.", "danger")
             return redirect(url_for("change_password"))
-        if len(new_password) < 6:
-            flash("Mật khẩu mới phải có ít nhất 6 ký tự.", "danger")
-            return redirect(url_for("change_password"))
-        if new_password != confirm_password:
-            flash("Hai lần nhập mật khẩu mới không khớp.", "danger")
+        valid_password, password_error = validate_new_password(new_password)
+        if not valid_password:
+            flash(password_error, "danger")
             return redirect(url_for("change_password"))
         if hash_password(new_password) == user.get("password_hash"):
             flash("Mật khẩu mới phải khác mật khẩu tạm hoặc mật khẩu hiện tại.", "warning")
@@ -3356,9 +3366,11 @@ def change_password():
         except Exception as exc:
             print(f"close password reset warning: {exc}")
         flash("Đã đổi mật khẩu thành công.", "success")
-        return redirect(url_for("dashboard"))
+        return redirect(url_for("profile", user_id=user["id"]) + "#account-controls")
 
-    return render_template("change_password.html", force_change=bool(user.get("must_change_password")), auth_only=True)
+    if not user.get("must_change_password"):
+        return redirect(url_for("profile", user_id=user["id"]) + "#account-controls")
+    return render_template("change_password.html", force_change=True, auth_only=True, minimum_password_length=minimum_password_length())
 
 
 @app.route("/register", methods=["GET", "POST"])
@@ -3386,8 +3398,8 @@ def register():
             flash("Tên tài khoản phải từ 3 đến 30 ký tự.", "danger")
             return redirect(url_for("register"))
 
-        if len(password) < 6:
-            flash("Mật khẩu phải có ít nhất 6 ký tự.", "danger")
+        if len(password) < minimum_password_length():
+            flash(f"Mật khẩu phải có ít nhất {minimum_password_length()} ký tự.", "danger")
             return redirect(url_for("register"))
 
         if len(zalo_name) < 2 or len(zalo_name) > 80:
@@ -3611,6 +3623,8 @@ def api_current_announcement():
 @app.route("/api/chat/global/send", methods=["POST"])
 @login_required
 def api_send_global_chat():
+    if not system_feature_enabled("lobby_chat_enabled"):
+        return jsonify({"ok": False, "error": "Chat Sảnh đang bị tắt."}), 403
     user = current_user()
     payload = request.get_json(silent=True) or {}
     message = payload.get("message", "")
@@ -3625,7 +3639,10 @@ def api_send_global_chat():
 @app.route("/api/admin/announcement/send", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("announcements_manage")
 def api_admin_send_announcement():
+    if not system_feature_enabled("announcements_enabled"):
+        return jsonify({"ok": False, "error": "Thông báo hệ thống đang bị tắt."}), 403
     user = current_user()
     payload = request.get_json(silent=True) or {}
     title = (payload.get("title") or "THÔNG BÁO").strip()[:40] or "THÔNG BÁO"
@@ -5728,12 +5745,15 @@ def inject_admin_feature_context():
         "system_features": get_system_features(),
         "can_admin": lambda code: has_admin_permission(user, code),
         "admin_display_role": "Admin" if is_admin_user(user) else "",
+        "is_test_mode": is_test_mode(),
+        "simple_test_passwords_enabled": simple_test_passwords_enabled(),
+        "minimum_password_length": minimum_password_length(),
     }
 
 @app.route("/admin/system/features", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("chat_manage")
+@admin_permission_required("system_features_manage")
 def admin_update_system_features():
     features = {key: request.form.get(key) == "1" for key in SYSTEM_FEATURE_DEFAULTS}
     execute_query(db.table("system_settings").upsert({"setting_key":"admin_system_features", "setting_value":features, "updated_at":now_iso()}, on_conflict="setting_key"), "update_system_features")
@@ -5742,26 +5762,67 @@ def admin_update_system_features():
     return redirect_admin("system")
 
 
+_rp_recalculation_lock = Lock()
+
 def recalculate_rank_history(from_created_at=None):
-    users = list_all_users()
-    for user in users:
-        if user.get("role") == "player":
-            execute_query(db.table("users").update({"rank_points":DEFAULT_POINTS,"wins":0,"draws":0,"losses":0,"total_matches":0,"goals_for":0,"goals_against":0,"streak":0,"loss_streak":0}).eq("id",user["id"]), "reset_user_for_recalc")
-    query=db.table("matches").select("*").eq("status","confirmed").order("created_at")
-    result=execute_query(query,"load_matches_for_recalc")
-    matches=result.data or []
-    for match in matches:
-        execute_query(db.table("matches").update({"status":"waiting_confirm","delta1":None,"delta2":None}).eq("id",match["id"]), "prepare_match_recalc")
-        fresh=get_match(match["id"])
-        apply_match_result(fresh)
-    ttl_cache_delete("players_raw","rooms_raw","achievement_map")
-    return len(matches)
+    """Rebuild RP from match history with in-process locking and rollback snapshots.
+
+    Supabase REST does not provide a multi-table transaction here, so this function
+    snapshots all affected rows and restores them on any failure. Production should
+    still run this during maintenance with no live matches being confirmed.
+    """
+    if not _rp_recalculation_lock.acquire(blocking=False):
+        raise RuntimeError("Một tiến trình tính lại RP khác đang chạy.")
+    users_snapshot = []
+    matches_snapshot = []
+    try:
+        users_snapshot = [dict(u) for u in list_all_users() if u.get("role") == "player"]
+        # Hiện tại luôn tính lại toàn bộ. Không reset toàn bộ user rồi chỉ áp dụng
+        # một phần lịch sử vì cách đó sẽ làm sai RP trước mốc from_created_at.
+        query = db.table("matches").select("*").eq("status", "confirmed").order("created_at")
+        matches_snapshot = [dict(m) for m in (execute_query(query, "load_matches_for_recalc").data or [])]
+
+        for user in users_snapshot:
+            execute_query(db.table("users").update({
+                "rank_points": DEFAULT_POINTS, "wins": 0, "draws": 0, "losses": 0,
+                "total_matches": 0, "goals_for": 0, "goals_against": 0,
+                "streak": 0, "loss_streak": 0,
+            }).eq("id", user["id"]), "reset_user_for_recalc")
+
+        for match in matches_snapshot:
+            execute_query(db.table("matches").update({
+                "status": "waiting_confirm", "delta1": None, "delta2": None,
+                "updated_at": now_iso(),
+            }).eq("id", match["id"]), "prepare_match_recalc")
+            fresh = get_match(match["id"])
+            apply_match_result(fresh)
+
+        ttl_cache_delete("players_raw", "rooms_raw", "achievement_map")
+        return len(matches_snapshot)
+    except Exception:
+        app.logger.exception("RP recalculation failed; restoring snapshots")
+        for user in users_snapshot:
+            restore = {k: user.get(k) for k in (
+                "rank_points", "wins", "draws", "losses", "total_matches",
+                "goals_for", "goals_against", "streak", "loss_streak"
+            )}
+            execute_query(db.table("users").update(restore).eq("id", user["id"]), "restore_user_after_recalc_failure", attempts=2)
+        for match in matches_snapshot:
+            restore = {k: match.get(k) for k in ("status", "delta1", "delta2", "updated_at")}
+            execute_query(db.table("matches").update(restore).eq("id", match["id"]), "restore_match_after_recalc_failure", attempts=2)
+        ttl_cache_delete("players_raw", "rooms_raw", "achievement_map")
+        raise
+    finally:
+        _rp_recalculation_lock.release()
 
 @app.route("/admin/rp/recalculate", methods=["POST"])
 @login_required
 @admin_required
 @admin_permission_required("rp_recalculate_all")
 def admin_recalculate_rp():
+    if APP_ENV == "production" and request.form.get("confirm_text", "").strip() != "TINH LAI RP":
+        flash("Để bảo vệ dữ liệu Production, hãy nhập đúng: TINH LAI RP", "danger")
+        return redirect_admin("rp-tools")
     try:
         count=recalculate_rank_history()
         log_admin_action("Tính lại RP toàn hệ thống", "rp", details=f"{count} trận hợp lệ")
@@ -5796,6 +5857,114 @@ def admin_create_manual_match():
     log_admin_action("Tạo trận thủ công","match",match_id,details=f"{score1}-{score2}; RP {delta1:+d}/{delta2:+d}")
     flash(f"Đã tạo trận và tính RP {delta1:+d}/{delta2:+d}.","success")
     return redirect_admin("matches")
+
+
+BACKUP_TABLES = [
+    "users", "matches", "match_rooms", "match_invites", "match_disputes",
+    "password_reset_requests", "registration_invite_codes", "system_settings",
+    "admin_activity_logs", "chat_messages", "user_notifications",
+    "user_achievements", "teams",
+]
+
+
+def _backup_table_rows(table_name, page_size=1000):
+    rows = []
+    start = 0
+    while True:
+        result = execute_query(
+            db.table(table_name).select("*").range(start, start + page_size - 1),
+            f"backup_{table_name}_{start}",
+            attempts=2,
+        )
+        batch = result.data or []
+        rows.extend(batch)
+        if len(batch) < page_size:
+            break
+        start += page_size
+    return rows
+
+
+@app.route("/admin/backup/download", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("backup_manage")
+def admin_download_backup():
+    actor = current_user()
+    if not is_test_mode() and request.form.get("confirm_text", "").strip() != "SAO LUU DU LIEU":
+        flash("Trên Production, hãy nhập đúng: SAO LUU DU LIEU", "danger")
+        return redirect_admin("backup")
+
+    backup = {
+        "metadata": {
+            "app_name": APP_NAME,
+            "app_version": APP_VERSION,
+            "created_at": now_iso(),
+            "created_by_user_id": actor.get("id"),
+            "created_by_username": actor.get("username"),
+            "environment": APP_ENV,
+            "test_mode": is_test_mode(),
+            "format_version": 1,
+        },
+        "tables": {},
+        "warnings": [],
+    }
+    for table_name in BACKUP_TABLES:
+        try:
+            backup["tables"][table_name] = _backup_table_rows(table_name)
+        except Exception as exc:
+            backup["warnings"].append({"table": table_name, "error": str(exc)[:300]})
+
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    json_name = f"PES_Arena_Backup_{timestamp}.json"
+    zip_name = f"PES_Arena_Backup_{timestamp}.zip"
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(json_name, json.dumps(backup, ensure_ascii=False, indent=2, default=str))
+        archive.writestr("README.txt", "PES Arena database backup. Keep this file private because it may contain account and activity data.\n")
+    output.seek(0)
+    log_admin_action("Sao lưu dữ liệu", "backup", details={"tables": {k: len(v) for k, v in backup["tables"].items()}, "warnings": backup["warnings"]})
+    return send_file(output, mimetype="application/zip", as_attachment=True, download_name=zip_name)
+
+
+@app.route("/admin/ownership/transfer", methods=["POST"])
+@login_required
+@owner_required
+def admin_transfer_ownership():
+    actor = current_user()
+    target_id = (request.form.get("target_user_id") or "").strip()
+    current_password = request.form.get("current_password", "").strip()
+    confirm_text = request.form.get("confirm_text", "").strip()
+    if actor.get("password_hash") != hash_password(current_password):
+        flash("Mật khẩu hiện tại của tài khoản sở hữu không đúng.", "danger")
+        return redirect_admin("overview")
+    if confirm_text != "CHUYEN GIAO":
+        flash("Hãy nhập đúng CHUYEN GIAO để xác nhận.", "danger")
+        return redirect_admin("overview")
+    target = get_user(target_id)
+    if not target or target.get("account_status") != "approved" or target.get("id") == actor.get("id"):
+        flash("Tài khoản nhận chuyển giao không hợp lệ.", "danger")
+        return redirect_admin("overview")
+
+    full_permissions = {code: True for codes in ADMIN_PERMISSION_GROUPS.values() for code in codes}
+    try:
+        execute_query(db.table("users").update({
+            "admin_level": "owner", "admin_permissions": full_permissions,
+            "updated_at": now_iso(),
+        }).eq("id", target["id"]), "transfer_owner_to_target")
+        execute_query(db.table("users").update({
+            "admin_level": "admin", "admin_permissions": full_permissions,
+            "updated_at": now_iso(),
+        }).eq("id", actor["id"]), "transfer_owner_from_actor")
+    except Exception:
+        app.logger.exception("Ownership transfer failed")
+        # Best-effort restore the actor as owner if the second write failed.
+        execute_query(db.table("users").update({"admin_level": "owner"}).eq("id", actor["id"]), "restore_owner_after_transfer_failure", attempts=2)
+        raise
+    log_admin_action("Chuyển giao quyền sở hữu", "user", target["id"], target.get("username"), f"Từ {actor.get('username')} sang {target.get('username')}")
+    session.clear()
+    flash("Đã chuyển giao quyền sở hữu. Hãy đăng nhập lại.", "success")
+    return redirect(url_for("login"))
+
 
 # =========================
 # Admin
@@ -5859,11 +6028,12 @@ def admin():
 
 
 
-def _safe_int(value, default=0, minimum=0, maximum=999999):
+def _safe_bounded_int(value, default=0, minimum=0, maximum=999999):
+    """Parse integers that must stay inside an explicit range."""
     try:
         parsed = int(str(value).strip())
     except (TypeError, ValueError):
-        return default
+        return int(default)
     return max(minimum, min(maximum, parsed))
 
 
@@ -5883,13 +6053,13 @@ def _build_test_user_payload(row, default_password="Test@12345"):
     zalo_name = str(row.get("zalo_name") or "Tài khoản test").strip() or "Tài khoản test"
     if len(username) < 3 or len(username) > 30:
         raise ValueError("Tên tài khoản phải từ 3 đến 30 ký tự.")
-    if len(password) < 6:
-        raise ValueError(f"Mật khẩu của {username} phải có ít nhất 6 ký tự.")
+    if len(password) < minimum_password_length():
+        raise ValueError(f"Mật khẩu của {username} phải có ít nhất {minimum_password_length()} ký tự.")
 
-    wins = _safe_int(row.get("wins"), 0)
-    draws = _safe_int(row.get("draws"), 0)
-    losses = _safe_int(row.get("losses"), 0)
-    supplied_total = _safe_int(row.get("total_matches"), wins + draws + losses)
+    wins = _safe_bounded_int(row.get("wins"), 0)
+    draws = _safe_bounded_int(row.get("draws"), 0)
+    losses = _safe_bounded_int(row.get("losses"), 0)
+    supplied_total = _safe_bounded_int(row.get("total_matches"), wins + draws + losses)
     total_matches = max(supplied_total, wins + draws + losses)
 
     return {
@@ -5900,13 +6070,13 @@ def _build_test_user_payload(row, default_password="Test@12345"):
         "role": "player",
         "account_status": "approved",
         "invite_code_used": None,
-        "rank_points": _safe_int(row.get("rank_points"), DEFAULT_POINTS, -999999, 999999),
+        "rank_points": _safe_bounded_int(row.get("rank_points"), DEFAULT_POINTS, -999999, 999999),
         "wins": wins,
         "draws": draws,
         "losses": losses,
         "total_matches": total_matches,
-        "goals_for": _safe_int(row.get("goals_for"), 0),
-        "goals_against": _safe_int(row.get("goals_against"), 0),
+        "goals_for": _safe_bounded_int(row.get("goals_for"), 0),
+        "goals_against": _safe_bounded_int(row.get("goals_against"), 0),
         "is_online": False,
         "must_change_password": False,
         "register_ip": "ADMIN_TEST_IMPORT",
@@ -5957,7 +6127,7 @@ def admin_download_test_account_sample():
     writer.writerows(sample_rows)
     response = make_response("\ufeff" + output.getvalue())
     response.headers["Content-Type"] = "text/csv; charset=utf-8"
-    response.headers["Content-Disposition"] = 'attachment; filename="PES_Arena_Import_Tai_Khoan_Mau_v1.13.0.csv"'
+    response.headers["Content-Disposition"] = 'attachment; filename="PES_Arena_Import_Tai_Khoan_Mau_v1.13.2.csv"'
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -5969,8 +6139,8 @@ def admin_import_test_accounts():
     upload = request.files.get("csv_file")
     pasted_csv = request.form.get("csv_text", "").strip()
     default_password = request.form.get("default_password", "Test@12345").strip() or "Test@12345"
-    if len(default_password) < 6:
-        flash("Mật khẩu mặc định phải có ít nhất 6 ký tự.", "danger")
+    if len(default_password) < minimum_password_length():
+        flash(f"Mật khẩu mặc định phải có ít nhất {minimum_password_length()} ký tự.", "danger")
         return redirect_admin("test-data")
 
     if upload and upload.filename:
@@ -6046,9 +6216,9 @@ def admin_import_test_accounts():
                 # Chỉ rank_points được phép nhập số âm để Admin hoàn tác/trừ RP.
                 # Các thống kê trận đấu vẫn bắt buộc không âm để tránh dữ liệu sai.
                 if field == "rank_points":
-                    increments[field] = _safe_int(raw_value, 0, -999999, 999999)
+                    increments[field] = _safe_bounded_int(raw_value, 0, -999999, 999999)
                 else:
-                    increments[field] = _safe_int(raw_value, 0, 0, 999999)
+                    increments[field] = _safe_bounded_int(raw_value, 0, 0, 999999)
 
             # Nếu CSV có thắng/hòa/thua nhưng không có total_matches,
             # tự cộng tổng số trận tương ứng để dữ liệu không bị lệch.
@@ -6066,7 +6236,7 @@ def admin_import_test_accounts():
 
             update_payload = {}
             for field, increment in increments.items():
-                current_value = _safe_int(existing_user.get(field), 0, 0, 999999)
+                current_value = _safe_bounded_int(existing_user.get(field), 0, 0, 999999)
                 if field == "rank_points":
                     # Cho phép cộng/trừ RP nhưng không để tổng điểm xuống dưới 0.
                     update_payload[field] = max(0, min(999999, current_value + increment))
@@ -6077,8 +6247,8 @@ def admin_import_test_accounts():
             # Chỉ cập nhật mật khẩu khi CSV thực sự cung cấp một giá trị hợp lệ.
             supplied_password = _csv_password_value(row)
             if supplied_password:
-                if len(supplied_password) < 6:
-                    raise ValueError(f"Mật khẩu mới của {username} phải có ít nhất 6 ký tự.")
+                if len(supplied_password) < minimum_password_length():
+                    raise ValueError(f"Mật khẩu mới của {username} phải có ít nhất {minimum_password_length()} ký tự.")
                 update_payload["password_hash"] = hash_password(supplied_password)
                 update_payload["must_change_password"] = False
                 update_payload["password_changed_at"] = now_iso()
@@ -6118,6 +6288,7 @@ def admin_import_test_accounts():
 @app.route("/admin/password-reset/<request_id>/resolve", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("password_reset")
 def admin_resolve_password_reset(request_id):
     reset_request = get_password_reset_request(request_id)
     if not reset_request or reset_request.get("status") != "pending":
@@ -6129,8 +6300,8 @@ def admin_resolve_password_reset(request_id):
     if not user:
         flash("Không tìm thấy tài khoản cần khôi phục.", "danger")
         return redirect_admin("passwords")
-    if len(temporary_password) < 6:
-        flash("Mật khẩu tạm phải có ít nhất 6 ký tự.", "danger")
+    if len(temporary_password) < minimum_password_length():
+        flash(f"Mật khẩu tạm phải có ít nhất {minimum_password_length()} ký tự.", "danger")
         return redirect_admin("passwords")
 
     actor = current_user()
@@ -6165,6 +6336,7 @@ def admin_resolve_password_reset(request_id):
 @app.route("/admin/password-reset/<request_id>/reject", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("password_reset")
 def admin_reject_password_reset(request_id):
     reset_request = get_password_reset_request(request_id)
     if not reset_request or reset_request.get("status") != "pending":
@@ -6625,8 +6797,8 @@ def admin_update_player(user_id):
         return redirect_admin("users")
 
     if new_password:
-        if len(new_password) < 6:
-            flash("Mật khẩu mới phải có ít nhất 6 ký tự.", "danger")
+        if len(new_password) < minimum_password_length():
+            flash(f"Mật khẩu mới phải có ít nhất {minimum_password_length()} ký tự.", "danger")
             return redirect(url_for("admin") + "#users")
         update_data["password_hash"] = hash_password(new_password)
         update_data["must_change_password"] = True
@@ -6804,6 +6976,12 @@ def admin_update_match_result(match_id):
             "admin_finish_updated_room",
             attempts=3,
         )
+        # Một trận cũ có thể làm thay đổi Rank/chuỗi của tất cả trận sau đó.
+        # Vì vậy phải rebuild lịch sử, không chỉ áp dụng lại riêng trận vừa sửa.
+        recalculate_rank_history()
+        refreshed_match = get_match(match_id) or {}
+        delta1 = _safe_int(refreshed_match.get("delta1"), delta1)
+        delta2 = _safe_int(refreshed_match.get("delta2"), delta2)
         ttl_cache_delete("rooms_raw", "players_raw", "achievement_map")
     except Exception as exc:
         print(f"admin_update_match_result ERROR match={match_id}: {type(exc).__name__}: {exc}")
@@ -6826,14 +7004,10 @@ def admin_update_match_result(match_id):
                 attempts=2,
             )
             if old_was_applied:
-                restored = get_match(match_id)
-                if restored:
-                    # Only reapply when the rollback had already removed old stats.
-                    p1 = get_user(old_match.get("player1_id"))
-                    p2 = get_user(old_match.get("player2_id"))
-                    if p1 and p2:
-                        update_player_after_match(p1, _safe_int(old_match.get("delta1")), _safe_int(old_match.get("score1")), _safe_int(old_match.get("score2")))
-                        update_player_after_match(p2, _safe_int(old_match.get("delta2")), _safe_int(old_match.get("score2")), _safe_int(old_match.get("score1")))
+                app.logger.error(
+                    "Old match row restored after a failed edit. Player snapshots may require a controlled full RP recalculation; "
+                    "automatic reapply is intentionally disabled to prevent double-credit."
+                )
         except Exception as rollback_exc:
             print(f"admin_update_match_result ROLLBACK ERROR match={match_id}: {type(rollback_exc).__name__}: {rollback_exc}")
         flash(f"Không thể lưu lại trận đấu: {exc}. Hệ thống đã ghi log chi tiết trên Vercel.", "danger")
@@ -6866,6 +7040,7 @@ def admin_delete_match(match_id):
 @app.route("/admin/room/<room_id>/cancel", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("rooms_manage")
 def admin_cancel_room(room_id):
     room = get_room(room_id)
     if not room:
@@ -6880,9 +7055,16 @@ def admin_cancel_room(room_id):
     }).eq("id", room_id).execute()
 
     if room.get("match_id"):
+        linked_match = get_match(room.get("match_id"))
+        if linked_match and linked_match.get("status") == "confirmed":
+            if not reverse_confirmed_match_result(linked_match):
+                flash("Không thể hoàn tác RP của trận đã xác nhận; phòng chưa bị hủy.", "danger")
+                return redirect_admin("rooms")
         db.table("matches").update({
             "status": "cancelled",
-            "note": "Admin đã hủy phòng/trận.",
+            "delta1": None,
+            "delta2": None,
+            "note": "Admin đã hủy phòng/trận và hoàn tác RP.",
             "updated_at": now_iso(),
         }).eq("id", room["match_id"]).execute()
 
@@ -6894,6 +7076,7 @@ def admin_cancel_room(room_id):
 @app.route("/admin/room/<room_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("rooms_manage")
 def admin_delete_room(room_id):
     room = get_room(room_id)
     if not room:
@@ -6909,6 +7092,7 @@ def admin_delete_room(room_id):
 @app.route("/admin/invite/<invite_id>/delete", methods=["POST"])
 @login_required
 @admin_required
+@admin_permission_required("invites_manage")
 def admin_delete_invite(invite_id):
     invite = get_invite(invite_id)
     if not invite:

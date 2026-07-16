@@ -22,6 +22,7 @@ function toggleTheme(){
 </script>
 </head>
 <body>
+{% if is_test_mode %}<div style="position:fixed;z-index:99999;left:0;right:0;top:0;text-align:center;background:#ffcc00;color:#111;font-weight:800;padding:6px">🧪 PES ARENA TEST MODE — KHÔNG DÙNG DATABASE PRODUCTION</div><div style="height:34px"></div>{% endif %}
 {% if current_user and not (auth_only|default(false)) %}
 <div class="layout player-app-shell">
     <aside class="sidebar player-sidebar">
@@ -37,7 +38,6 @@ function toggleTheme(){
             <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📘</span> Hướng dẫn</a>
             <a class="{{ 'active' if request.endpoint == 'matches' else '' }}" href="{{ url_for('matches') }}"><span>📜</span> Lịch sử</a>
             <a class="{{ 'active' if request.endpoint == 'profile' else '' }}" href="{{ url_for('profile', user_id=current_user.id) }}"><span>🪪</span> Hồ sơ cá nhân</a>
-            <a class="{{ 'active' if request.endpoint == 'change_password' else '' }}" href="{{ url_for('change_password') }}"><span>🔐</span> Đổi mật khẩu</a>
             {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> Admin</a>{% endif %}
             <a class="logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
         </nav>

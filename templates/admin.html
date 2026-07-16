@@ -37,6 +37,7 @@
     {% if can_admin('matches_create') %}<button class="admin-tab-button" type="button" data-admin-tab="create-match">➕ Tạo trận</button>{% endif %}
 {% if can_create_test_account or can_import_accounts_csv %}<button class="admin-tab-button" type="button" data-admin-tab="test-data">🧪 Tài khoản test & Import</button>{% endif %}
     <button class="admin-tab-button" type="button" data-admin-tab="system">⚙️ Hệ thống</button>
+    {% if can_admin('backup_manage') %}<button class="admin-tab-button" type="button" data-admin-tab="backup">💾 Backup dữ liệu</button>{% endif %}
     {% if can_admin('rp_view') %}<button class="admin-tab-button" type="button" data-admin-tab="rp-tools">📈 Công cụ RP</button>{% endif %}
     {% if can_admin('admin_logs_view') %}<button class="admin-tab-button" type="button" data-admin-tab="logs">🧾 Nhật ký</button>{% endif %}
 </div>
@@ -115,6 +116,18 @@
             </article>
         {% endfor %}
         </div>
+        {% if current_user.admin_level == 'owner' %}
+        <div class="panel ownership-transfer-panel" id="ownership-transfer">
+            <h3>🔐 Chuyển giao quyền sở hữu</h3>
+            <p class="notice warning">Sau khi chuyển giao, tài khoản nhận sẽ có quyền sở hữu. Tài khoản hiện tại trở thành Admin và hệ thống sẽ đăng xuất ngay.</p>
+            <form method="post" action="{{ url_for('admin_transfer_ownership') }}" class="grid-form" onsubmit="return confirm('Bạn chắc chắn muốn chuyển giao quyền sở hữu?');">
+                <div><label>Tài khoản nhận chuyển giao</label><select name="target_user_id" required><option value="">-- Chọn tài khoản --</option>{% for p in admin_users if p.id != current_user.id and p.account_status == 'approved' %}<option value="{{ p.id }}">{{ p.username }} — {{ p.display_name or p.username }}</option>{% endfor %}</select></div>
+                <div><label>Mật khẩu hiện tại của bạn</label><input type="password" name="current_password" minlength="{{ minimum_password_length }}" required autocomplete="current-password"></div>
+                <div><label>Nhập CHUYEN GIAO</label><input name="confirm_text" required autocomplete="off" placeholder="CHUYEN GIAO"></div>
+                <button class="btn red" type="submit">Chuyển giao quyền sở hữu</button>
+            </form>
+        </div>
+        {% endif %}
     </div>
 </section>
 
@@ -123,7 +136,7 @@
         <div class="admin-section-heading">
             <div>
                 <h2>🔑 Yêu cầu quên mật khẩu</h2>
-                <p class="small">Admin đặt mật khẩu tạm rồi gửi riêng cho user qua Zalo. User bắt buộc đổi mật khẩu sau khi đăng nhập.</p>
+                <p class="small">Admin đặt mật khẩu tạm rồi gửi riêng cho user. Người dùng đổi lại trong phần Điều khiển hồ sơ sau khi đăng nhập.</p>
             </div>
             <span class="admin-count">{{ password_reset_requests|length }}</span>
         </div>
@@ -139,7 +152,7 @@
                 </div>
                 <div class="password-reset-actions">
                     <form method="post" action="{{ url_for('admin_resolve_password_reset', request_id=item.id) }}" class="password-reset-form" onsubmit="return confirm('Cấp mật khẩu tạm cho tài khoản này?');">
-                        <input class="temporary-password-input" type="password" name="temporary_password" minlength="6" placeholder="Nhập mật khẩu tạm" required autocomplete="new-password">
+                        <input class="temporary-password-input" type="password" name="temporary_password" minlength="{{ minimum_password_length }}" placeholder="Nhập mật khẩu tạm" required autocomplete="new-password">
                         <button class="btn green" type="submit">Cấp mật khẩu tạm</button>
                     </form>
                     <form method="post" action="{{ url_for('admin_reject_password_reset', request_id=item.id) }}" class="password-reset-form" onsubmit="return confirm('Từ chối yêu cầu này?');">
@@ -267,7 +280,7 @@
                                 <div class="admin-user-edit-group">
                                     <h3>Mật khẩu và điểm</h3>
                                     <label>Mật khẩu tạm mới
-                                        <input class="admin-new-password" type="password" name="new_password" minlength="6" autocomplete="new-password" placeholder="Bỏ trống nếu không reset" {% if not can_edit %}disabled{% endif %}>
+                                        <input class="admin-new-password" type="password" name="new_password" minlength="{{ minimum_password_length }}" autocomplete="new-password" placeholder="Bỏ trống nếu không reset" {% if not can_edit %}disabled{% endif %}>
                                     </label>
                                     <label>Điểm rank<input name="rank_points" type="number" value="{{ p.rank_points or 0 }}" min="0" required {% if not can_edit %}disabled{% endif %}></label>
                                     <p class="small">Ngày tạo: {{ format_vn_datetime(p.created_at) }}</p>
@@ -491,7 +504,7 @@
             <form class="admin-test-form" method="post" action="{{ url_for('admin_create_test_account') }}">
                 <label>Tên tài khoản<input name="username" minlength="3" maxlength="30" placeholder="test_player_01" required></label>
                 <label>Tên hiển thị<input name="display_name" maxlength="80" placeholder="Test Player 01"></label>
-                <label>Mật khẩu<input name="password" type="password" minlength="6" value="Test@12345" required></label>
+                <label>Mật khẩu<input name="password" type="password" minlength="{{ minimum_password_length }}" value="{{ '1' if simple_test_passwords_enabled else 'Test@12345' }}" required></label>
                 <label>Tên Zalo<input name="zalo_name" maxlength="80" value="Tài khoản test"></label>
                 <label>Điểm RP ban đầu<input name="rank_points" type="number" min="0" max="999999" value="1000"></label>
                 <button class="btn admin-primary-action" type="submit">Tạo tài khoản test</button>
@@ -510,7 +523,7 @@
                 </div>
             </div>
             <form class="admin-import-form" method="post" action="{{ url_for('admin_import_test_accounts') }}" enctype="multipart/form-data">
-                <label>Mật khẩu mặc định<input name="default_password" type="password" minlength="6" value="Test@12345" required></label>
+                <label>Mật khẩu mặc định<input name="default_password" type="password" minlength="{{ minimum_password_length }}" value="{{ '1' if simple_test_passwords_enabled else 'Test@12345' }}" required></label>
                 <label>Chọn file CSV<input name="csv_file" type="file" accept=".csv,text/csv"></label>
                 <div class="admin-import-divider"><span>hoặc dán CSV</span></div>
                 <label>Dữ liệu CSV<textarea name="csv_text" rows="8" placeholder="username,display_name,password,rank_points,wins,draws,losses,goals_for,goals_against&#10;test01,Test 01,Test@12345,1200,5,2,3,12,9"></textarea></label>
@@ -546,9 +559,23 @@
 
 </section>
 
+{% if can_admin('backup_manage') %}
+<section class="admin-tab-panel" data-admin-panel="backup">
+    <div class="panel">
+        <h2>💾 Backup dữ liệu hệ thống</h2>
+        <p>Tải một file ZIP chứa dữ liệu JSON của người dùng, trận đấu, phòng, lời mời, cấu hình, nhật ký và các bảng quan trọng.</p>
+        <p class="notice warning">File backup có thể chứa dữ liệu tài khoản và lịch sử hoạt động. Hãy giữ kín, không đưa lên GitHub hoặc gửi công khai.</p>
+        <form method="post" action="{{ url_for('admin_download_backup') }}" onsubmit="return confirm('Tạo và tải bản backup dữ liệu ngay bây giờ?');">
+            {% if not is_test_mode %}<label>Production: nhập <strong>SAO LUU DU LIEU</strong></label><input name="confirm_text" autocomplete="off" placeholder="SAO LUU DU LIEU" required>{% endif %}
+            <button class="btn gold" type="submit">⬇️ Tạo và tải Backup ZIP</button>
+        </form>
+        <p class="small">Backup chỉ đọc dữ liệu, không sửa hoặc xóa dữ liệu trong Supabase.</p>
+    </div>
+</section>
+{% endif %}
 
 {% if current_user.admin_level == 'owner' %}
-<section class="admin-tab-panel" data-admin-panel="rp-tools"><div class="panel"><h2>📈 Công cụ RP</h2><p>Lịch sử trận là nguồn dữ liệu chuẩn cho RP, thống kê, chuỗi và huy hiệu.</p>{% if can_admin('rp_recalculate_all') %}<form method="post" action="{{ url_for('admin_recalculate_rp') }}" onsubmit="return confirm('Tính lại RP của toàn bộ hệ thống từ lịch sử trận?')"><button class="btn gold" type="submit">Tính lại toàn hệ thống</button></form>{% endif %}</div></section>
+<section class="admin-tab-panel" data-admin-panel="rp-tools"><div class="panel"><h2>📈 Công cụ RP</h2><p>Lịch sử trận là nguồn dữ liệu chuẩn cho RP, thống kê, chuỗi và huy hiệu.</p>{% if is_test_mode %}<p class="notice success">🧪 TEST MODE đang bật — dữ liệu phải trỏ sang Supabase thử nghiệm.</p>{% else %}<p class="notice warning">⚠ Production: chỉ chạy khi đã dừng xác nhận trận và có bản sao lưu.</p>{% endif %}{% if can_admin('rp_recalculate_all') %}<form method="post" action="{{ url_for('admin_recalculate_rp') }}" onsubmit="return confirm('Tính lại RP của toàn bộ hệ thống từ lịch sử trận?')"><label>Nhập <strong>TINH LAI RP</strong> khi chạy trên Production</label><input name="confirm_text" autocomplete="off" placeholder="TINH LAI RP"><button class="btn gold" type="submit">Tính lại toàn hệ thống</button></form>{% endif %}</div></section>
 
 <section class="admin-tab-panel" data-admin-panel="logs">
     <div class="panel">

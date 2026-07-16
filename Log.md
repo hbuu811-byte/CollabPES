@@ -1,3 +1,57 @@
+# V1.13.2 — Backup dữ liệu, mật khẩu Test và chuyển giao quyền sở hữu
+
+## Thay đổi chính
+
+- Thêm tab **Backup dữ liệu**. Backup tải xuống dạng ZIP, bên trong là JSON của các bảng quan trọng; thao tác chỉ đọc dữ liệu.
+- Thêm quyền `backup_manage`; tài khoản sở hữu luôn có quyền, Admin khác phải được cấp riêng.
+- Production bắt buộc nhập `SAO LUU DU LIEU` trước khi tạo backup.
+- Thêm chế độ mật khẩu đơn giản dành riêng cho môi trường Test bằng `ALLOW_SIMPLE_TEST_PASSWORDS=true`.
+- Chỉ khi đồng thời có `APP_ENV=test`, `PES_ARENA_TEST_MODE=true`, `DATABASE_SAFETY_TOKEN=PES_ARENA_TEST_DATABASE` thì mật khẩu một ký tự như `1` mới được chấp nhận.
+- Module đổi mật khẩu được đưa vào **Hồ sơ cá nhân → Điều khiển hồ sơ**.
+- Đổi mật khẩu chỉ cần mật khẩu hiện tại và mật khẩu mới; bỏ ô nhập lại mật khẩu.
+- Thêm chuyển giao quyền sở hữu: chọn người nhận, nhập mật khẩu hiện tại và cụm `CHUYEN GIAO`.
+- Sau chuyển giao, chủ cũ trở thành Admin, chủ mới nhận quyền sở hữu và phiên đăng nhập hiện tại bị đóng.
+- Sửa `is_owner_user()` để chỉ dựa vào `admin_level=owner`; username `admin` không còn tự động được coi là chủ sau khi đã chuyển giao.
+- Cập nhật CSV mẫu lên V1.13.2 và dùng mật khẩu `1` cho môi trường Test.
+
+## File và vị trí đã sửa
+
+| File | Vị trí gần đúng | Nội dung |
+|---|---:|---|
+| `app.py` | 57 | Tăng phiên bản lên V1.13.2 |
+| `app.py` | 167–186 | Cấu hình và kiểm tra mật khẩu đơn giản trong Test Mode |
+| `app.py` | 544–567 | Sửa xác định owner; thêm quyền `backup_manage` |
+| `app.py` | 3332–3374 | Đơn giản hóa đổi mật khẩu và chuyển về Profile |
+| `app.py` | 5862–5927 | Xuất backup ZIP/JSON theo từng bảng |
+| `app.py` | 5932–5975 | Chuyển giao quyền sở hữu |
+| `app.py` | vùng Import/Reset user | Áp dụng độ dài mật khẩu theo môi trường |
+| `templates/profile.html` | 73–91 | Form đổi mật khẩu trong Điều khiển hồ sơ |
+| `templates/base.html` | menu trái | Bỏ tab Đổi mật khẩu riêng |
+| `templates/admin.html` | 40, 120–132, 562–576 | Tab Backup và form chuyển giao |
+| `.env.example` | cuối file | Biến `ALLOW_SIMPLE_TEST_PASSWORDS` |
+| `samples/PES_Arena_Import_Tai_Khoan_Mau_v1.13.2.csv` | toàn file | CSV mẫu phiên bản mới |
+| `docs/HUONG_DAN_BACKUP_MAT_KHAU_CHUYEN_GIAO_V1.13.2.md` | toàn file | Hướng dẫn sử dụng |
+
+## Cài đặt
+
+1. Backup Production hiện tại trước khi ghi đè code.
+2. Chép toàn bộ file của V1.13.2 vào repository.
+3. Commit và deploy lên project Test trước.
+4. Với project Test, thêm `ALLOW_SIMPLE_TEST_PASSWORDS=true`; không thêm biến này vào Production.
+5. Đăng nhập owner, mở **Admin → Backup dữ liệu** để kiểm tra tải ZIP.
+6. Mở Profile cá nhân để kiểm tra đổi mật khẩu bằng hai ô.
+7. Chỉ thử chuyển giao trên database Test trước.
+
+## Kiểm tra kỹ thuật
+
+- `app.py` biên dịch thành công.
+- Toàn bộ template Jinja parse thành công.
+- Không có route Flask trùng URL + HTTP method.
+- Không có hàm top-level bị khai báo trùng.
+- ZIP phát hành không có thư mục cha.
+
+---
+
 # PES Arena – Bản Lĩnh Sân Cỏ
 
 ## Phiên bản V1.13.0 – Nâng cấp hệ thống Admin
@@ -60,3 +114,30 @@
 - Kiểm tra cú pháp toàn bộ template Jinja: đạt.
 - `python test_rp_engine.py`: đạt, hiển thị OK - RP Engine V1.11.1.
 - Không chạy thử kết nối Supabase/Vercel thật vì môi trường đóng gói không có biến môi trường và thư viện Flask/Supabase đầy đủ.
+
+# V1.13.1 — Bản vá an toàn dữ liệu và chống đè lệnh
+
+## File đã sửa
+
+- `app.py`
+  - Tách `_safe_int` có dấu và `_safe_bounded_int`, loại bỏ khai báo trùng gây mất RP âm.
+  - `ensure_admin()` không còn tự đặt lại mật khẩu owner.
+  - Bổ sung quyền `system_features_manage`.
+  - Bổ sung kiểm tra backend cho Chat Sảnh và Thông báo.
+  - Bổ sung decorator quyền cho xử lý mật khẩu, hủy/xóa phòng và xóa lời mời.
+  - Hủy phòng có trận confirmed phải hoàn tác RP trước.
+  - Công cụ tính lại RP có khóa chống chạy đồng thời, snapshot và phục hồi khi lỗi.
+  - Production bắt buộc nhập `TINH LAI RP` trước khi chạy tính lại toàn hệ thống.
+  - Thêm nhận diện Test Mode bằng biến môi trường.
+- `templates/admin.html`
+  - Thêm cảnh báo Production/Test và ô xác nhận tính lại RP.
+- `templates/base.html`
+  - Thêm banner vàng khi chạy Test Mode.
+- `.env.example`
+  - Thêm bộ biến môi trường Test Mode.
+- `docs/HUONG_DAN_TEST_AN_TOAN_V1.13.1.md`
+  - Hướng dẫn tạo Supabase Test riêng và checklist kiểm thử.
+
+## Lưu ý
+
+Bản vá không biến database Production thành sandbox. Cách test an toàn đúng là dùng một Supabase project Test hoàn toàn riêng.

@@ -54,9 +54,7 @@
                 <span class="eyebrow">THÔNG TIN TÀI KHOẢN</span>
                 <h2>{{ 'Hồ sơ của bạn' if current_user.id == player.id else 'Thông tin player' }}</h2>
             </div>
-            {% if current_user.id == player.id %}
-            <a class="btn gold small" href="{{ url_for('change_password') }}">🔐 Đổi mật khẩu</a>
-            {% endif %}
+
         </div>
         <div class="profile-account-list">
             <div><span>Tài khoản</span><strong>@{{ player.username }}</strong></div>
@@ -72,6 +70,22 @@
 
 
     {% if current_user.id == player.id %}
+    <section class="panel account-controls-panel" id="account-controls">
+        <span class="eyebrow">ĐIỀU KHIỂN HỒ SƠ</span>
+        <h2>Đổi mật khẩu đăng nhập</h2>
+        <p>Chỉ cần nhập đúng mật khẩu hiện tại và mật khẩu mới.</p>
+        {% if simple_test_passwords_enabled %}
+        <p class="notice warning">🧪 Test Mode: được phép dùng mật khẩu đơn giản như <code>1</code>. Không dùng cấu hình này cho Production.</p>
+        {% else %}
+        <p class="small">Mật khẩu mới cần tối thiểu {{ minimum_password_length }} ký tự.</p>
+        {% endif %}
+        <form class="grid-form profile-password-form" method="post" action="{{ url_for('change_password') }}">
+            <div><label>Mật khẩu hiện tại</label><input type="password" name="current_password" minlength="{{ minimum_password_length }}" required autocomplete="current-password"></div>
+            <div><label>Mật khẩu mới</label><input type="password" name="new_password" minlength="{{ minimum_password_length }}" required autocomplete="new-password"></div>
+            <button class="btn gold" type="submit">Lưu mật khẩu mới</button>
+        </form>
+    </section>
+
     <section class="panel display-name-manager-panel">
         <span class="eyebrow">TÊN HIỂN THỊ</span>
         <h2>Đổi tên hiển thị</h2>

@@ -72,15 +72,8 @@
     {% if current_user.id == player.id %}
     <section class="panel account-controls-panel" id="account-controls">
         <span class="eyebrow">ĐIỀU KHIỂN HỒ SƠ</span>
-        <div class="account-controls-heading-row">
-            <div>
-                <h2>Đổi mật khẩu đăng nhập</h2>
-                <p>Chỉ cần nhập đúng mật khẩu hiện tại và mật khẩu mới.</p>
-            </div>
-            {% if profile_active_room %}
-            <a class="btn green return-room-button" href="{{ url_for('room_detail', room_id=profile_active_room.id) }}">🎮 Trở Lại Phòng Đấu</a>
-            {% endif %}
-        </div>
+        <h2>Đổi mật khẩu đăng nhập</h2>
+        <p>Chỉ cần nhập đúng mật khẩu hiện tại và mật khẩu mới.</p>
         {% if simple_test_passwords_enabled %}
         <p class="notice warning">🧪 Test Mode: được phép dùng mật khẩu đơn giản như <code>1</code>. Không dùng cấu hình này cho Production.</p>
         {% else %}
@@ -222,6 +215,15 @@
             <small>{{ m.opponent_team or '-' }}</small>
         </div>
     </div>
+    {% if current_user and (current_user.role == 'admin' or current_user.admin_level in ['owner','admin']) and can_admin('matches_edit') %}
+    <details class="profile-admin-match-edit"><summary>✏️ Admin sửa trận</summary>
+        <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}" class="inline-form">
+            <input class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}" required>
+            <span>–</span><input class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}" required>
+            <input name="note" maxlength="500" value="{{ m.note or '' }}" placeholder="Ghi chú Admin">
+            <button class="btn green" type="submit">Lưu và tính lại RP</button>
+        </form>
+    </details>{% endif %}
     <div class="history-points">
         {% if m.status == 'confirmed' %}
         <strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>

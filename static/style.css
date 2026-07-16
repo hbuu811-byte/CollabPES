@@ -3678,3 +3678,31 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
 /* League logo from Supabase Storage */
 .room-team-league-text{display:flex;align-items:center;justify-content:center;gap:8px}
 .room-league-logo{width:24px;height:24px;object-fit:contain;border-radius:4px;flex:0 0 auto}
+
+/* V1.12.0 - Room primary actions */
+.room-center-primary-actions {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    width: min(100%, 360px);
+    margin: 18px auto 0;
+}
+.room-center-primary-actions form { margin: 0; }
+.room-center-action-btn {
+    min-width: 128px;
+    min-height: 46px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+}
+.room-finished-summary {
+    text-align: center;
+    padding: 12px 16px;
+}
+@media (max-width: 760px) {
+    .room-center-primary-actions { gap: 8px; }
+    .room-center-action-btn { min-width: 118px; }
+}

@@ -6,7 +6,7 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.9.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.12.0">
 
 <script>
 (function initTheme(){
@@ -27,7 +27,7 @@ function toggleTheme(){
     <aside class="sidebar player-sidebar">
         <div class="brand-lockup">
             <div class="brand-wordmark" aria-label="PES 2026">PES 2026</div>
-            <div class="app-version">CHAMPIONSHIP • {{ APP_VERSION }}</div>
+            <div class="app-version">{{ APP_VERSION }}</div>
         </div>
 
         <nav class="nav player-nav">
@@ -42,7 +42,6 @@ function toggleTheme(){
             <a class="logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
         </nav>
 
-        <div class="sidebar-system-status"><small>Trạng thái hệ thống</small><strong><i></i> Tất cả hệ thống hoạt động tốt</strong></div>
     </aside>
 
     <main class="main player-main">

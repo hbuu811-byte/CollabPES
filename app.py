@@ -11,8 +11,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 from collections import Counter
-import unicodedata
-from threading import Lock, BoundedSemaphore
+from threading import Lock
 
 from dotenv import load_dotenv
 from PIL import Image, ImageOps, UnidentifiedImageError
@@ -31,11 +30,29 @@ from flask import (
 )
 from supabase import create_client
 
+from modules.cache_utils import (
+    cache_get, cache_set, cache_delete, ttl_cache_get, ttl_cache_set, ttl_cache_delete,
+)
+from modules.datetime_utils import (
+    now_dt, now_iso, future_iso, aware_utc, seconds_until, parse_dt, format_vn_datetime,
+)
+from modules.rp_engine import (
+    BASE_WIN_POINTS, BASE_LOSS_POINTS, PLACEMENT_MATCHES,
+    PLACEMENT_WIN_MULTIPLIER, MIN_RANK_ADJUSTED_WIN_POINTS,
+    MAX_RANK_ADJUSTED_WIN_POINTS, MAX_POSITIVE_POINTS_PER_MATCH,
+    WIN_STREAK_BONUSES, calculate_deltas as calculate_ranked_deltas,
+)
+from modules.win_streaks import (
+    WIN_STREAK_TITLES, WIN_STREAK_EVENT_PREFIX, get_win_streak_title,
+    get_win_streak_badge, build_win_streak_event, encode_win_streak_room_note,
+    parse_win_streak_room_note,
+)
+
 
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.63"
+APP_VERSION = "V1.10.12"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -43,20 +60,13 @@ ONLINE_TIMEOUT_SECONDS = 90
 CHAT_COOLDOWN_SECONDS = 5
 CHAT_MAX_LENGTH = 200
 AVATAR_BUCKET = "avatars"
-AVATAR_MAX_BYTES = 8 * 1024 * 1024
+AVATAR_MAX_BYTES = 2 * 1024 * 1024
 AVATAR_OUTPUT_SIZE = 512
 AVATAR_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
 DISPUTE_EVIDENCE_BUCKET = "dispute-evidence"
 DISPUTE_EVIDENCE_MAX_BYTES = 4 * 1024 * 1024
 DISPUTE_EVIDENCE_MAX_SIDE = 1600
 DISPUTE_EVIDENCE_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}
-
-# V1.10.15 - Daily check-in reward economy merged with league logo update.
-DAILY_CHECKIN_MIN_ZCOIN = 80
-DAILY_CHECKIN_MAX_ZCOIN = 150
-GIFT_CODE_DEFAULT_PREFIX = "PES"
-GIFT_CODE_MAX_REWARD_ZCOIN = 100000
-VN_TIMEZONE = timezone(timedelta(hours=7))
 
 ACHIEVEMENT_DEFINITIONS = [
     {"code": "first_match", "icon": "⚽", "name": "Bước chân đầu tiên", "description": "Hoàn thành trận đấu đầu tiên.", "metric": "total_matches", "threshold": 1, "priority": 10},
@@ -98,99 +108,16 @@ RANK_SCALE = 400
 TEAM_OVR_BASE = 79
 TEAM_OVR_WEIGHT = 20
 
-# Rank points system V1.9
-BASE_WIN_POINTS = 21
-BASE_LOSS_POINTS = -20
-PLACEMENT_MATCHES = 10
-PLACEMENT_WIN_MULTIPLIER = 1.10
-MIN_RANK_ADJUSTED_WIN_POINTS = 19
-MAX_RANK_ADJUSTED_WIN_POINTS = 24
-MAX_POSITIVE_POINTS_PER_MATCH = 35
+# Công thức RP nằm trong modules/rp_engine.py
 
 # Rank/Tier difficulty system (V1.8.1)
 SMART_RANDOM_CORRECT_WEIGHT = 0.70
 SMART_RANDOM_STRONGER_WEIGHT = 0.15
 SMART_RANDOM_WEAKER_WEIGHT = 0.15
-WIN_STREAK_BONUSES = {3: 5, 5: 10, 8: 15, 10: 20}
 
-SUPABASE_PUBLIC_STORAGE_URL = "https://wlnvdfghatgeygecwrqb.supabase.co/storage/v1/object/public/team-logos"
+# Danh hiệu chuỗi thắng đã tách sang modules/win_streaks.py
 
-def _league_logo_storage_url(filename):
-    return f"{SUPABASE_PUBLIC_STORAGE_URL}/league-logos/{filename}"
 
-# V1.10.18 - League logo aliases/fallbacks.
-# Keep several filename candidates because storage filenames may differ between collaborators.
-LEAGUE_LOGO_FILE_CANDIDATES = {
-    "africa": ["africa.png"],
-    "bundesliga": ["bundesliga.png"],
-    "europe": ["europe.png"],
-    "laliga": ["laliga-ea-sports.png", "laliga.png", "la-liga.png", "la-liga-ea-sports.png"],
-    "super_lig": ["super-lig.png", "superlig.png", "süper-lig.png"],
-    "serie_bkt": ["serie-bkt.png", "serie-b.png", "serie-b-kt.png"],
-    "sky_bet_championship": ["sky-bet-championship.png", "championship.png", "efl-championship.png"],
-    "south_america": ["south-america.png", "southamerica.png"],
-    "serie_a": ["serie-a.png", "seriea.png"],
-    "premier_league": ["premier-league.png", "premierleague.png", "epl.png"],
-    "ligue_1": ["ligue-1.png", "ligue1.png", "ligue-1-mcdonalds.png", "ligue-1-uber-eats.png", "france.png"],
-}
-
-LEAGUE_LOGO_ALIASES = {
-    "africa": "africa",
-    "bundesliga": "bundesliga",
-    "germany": "bundesliga",
-    "german bundesliga": "bundesliga",
-    "europe": "europe",
-    "uefa": "europe",
-    "laliga": "laliga",
-    "la liga": "laliga",
-    "laliga ea sports": "laliga",
-    "la liga ea sports": "laliga",
-    "süper lig": "super_lig",
-    "super lig": "super_lig",
-    "turkish super lig": "super_lig",
-    "serie bkt": "serie_bkt",
-    "serie b": "serie_bkt",
-    "italy serie b": "serie_bkt",
-    "sky bet championship": "sky_bet_championship",
-    "championship": "sky_bet_championship",
-    "efl championship": "sky_bet_championship",
-    "south america": "south_america",
-    "copa libertadores": "south_america",
-    "serie a": "serie_a",
-    "italy serie a": "serie_a",
-    "premier league": "premier_league",
-    "english premier league": "premier_league",
-    "epl": "premier_league",
-    "ligue 1": "ligue_1",
-    "ligue1": "ligue_1",
-    "ligue 1 mcdonalds": "ligue_1",
-    "ligue 1 mcdonald s": "ligue_1",
-    "ligue 1 uber eats": "ligue_1",
-    "france ligue 1": "ligue_1",
-    "french ligue 1": "ligue_1",
-}
-
-def normalize_league_key(league_name):
-    raw = str(league_name or "").strip().lower().replace("_", " ").replace("-", " ")
-    raw = unicodedata.normalize("NFKD", raw)
-    raw = "".join(ch for ch in raw if not unicodedata.combining(ch))
-    raw = "".join(ch if ch.isalnum() or ch.isspace() else " " for ch in raw)
-    return " ".join(raw.split())
-
-def get_league_logo_urls(league_name):
-    key = normalize_league_key(league_name)
-    canonical = LEAGUE_LOGO_ALIASES.get(key)
-    if not canonical:
-        return []
-    return [_league_logo_storage_url(filename) for filename in LEAGUE_LOGO_FILE_CANDIDATES.get(canonical, [])]
-
-def get_league_logo_url(league_name):
-    urls = get_league_logo_urls(league_name)
-    return urls[0] if urls else ""
-
-def get_league_logo_fallback_urls(league_name):
-    urls = get_league_logo_urls(league_name)
-    return urls[1:]
 
 DEFAULT_RANKS = [
     {"min": 0, "max": 499, "name": "Gà", "short_name": "Gà", "abbr": "G", "code": "CHICKEN", "icon": "🐔", "slug": "ga"},
@@ -235,8 +162,6 @@ app.secret_key = (
 
 APP_ENV = (os.getenv("APP_ENV") or os.getenv("VERCEL_ENV") or "production").strip().lower()
 supabase_url = (os.getenv("SUPABASE_URL") or "").strip().rstrip("/")
-supabase_anon_key = (os.getenv("SUPABASE_ANON_KEY") or "").strip()
-SUPABASE_REALTIME_ENABLED = (os.getenv("SUPABASE_REALTIME_ENABLED") or "1").strip().lower() not in {"0", "false", "off", "no"}
 supabase_key = (
     os.getenv("SUPABASE_SERVICE_ROLE_KEY")
     or os.getenv("SUPABASE_KEY")
@@ -245,120 +170,39 @@ supabase_key = (
 
 db = create_client(supabase_url, supabase_key) if supabase_url and supabase_key else None
 
-# Chỉ lấy các cột thật sự cần cho các màn hình đọc nhiều.
-# Điều này giảm JSON, Supabase egress, thời gian giải mã và Fast Origin Transfer.
-USER_PUBLIC_COLUMNS = ",".join([
-    "id", "username", "display_name", "avatar_url", "role", "account_status",
-    "admin_level", "rank_points", "wins", "draws", "losses", "total_matches",
-    "goals_for", "goals_against", "streak",
-    "is_online", "last_seen_at", "matchmaking_cooldown_until", "must_change_password",
-    "zcoin_balance", "created_at"
-])
 
-# Lưu ý: không chọn cột `mode` ở đây. Trong PostgREST/PostgreSQL, `mode` cũng là
-# tên một ordered-set aggregate. Với một số phiên bản PostgREST, chuỗi select bare
-# `mode` bị phân tích thành hàm aggregate và phát sinh lỗi 42809 (WITHIN GROUP).
-# Luồng hiển thị hiện tại không dùng matches.mode, nên bỏ cột này là an toàn.
-MATCH_LIST_COLUMNS = ",".join([
-    "id", "player1_id", "player2_id", "score1", "score2", "team1", "team2",
-    "status", "winner_id", "loser_id", "delta1", "delta2", "submitted_by_id",
-    "note", "created_at", "updated_at"
-])
-
-
-def cache_get(key):
-    if not has_request_context():
-        return None
-    return getattr(g, key, None)
-
-
-def cache_set(key, value):
-    if has_request_context():
-        setattr(g, key, value)
-    return value
-
-
-def cache_delete(key):
-    if has_request_context() and hasattr(g, key):
-        delattr(g, key)
-
-
-# Cache RAM rất ngắn cho Vercel warm instance. Mục tiêu là gộp các API polling
-# cùng lúc, không thay thế Supabase và không giữ dữ liệu lâu.
-_ttl_cache = {}
-_ttl_cache_lock = Lock()
-
-
-def ttl_cache_get(key):
-    now = time.monotonic()
-    with _ttl_cache_lock:
-        item = _ttl_cache.get(key)
-        if not item:
-            return None
-        expires_at, value = item
-        if expires_at <= now:
-            _ttl_cache.pop(key, None)
-            return None
-        return value
-
-
-def ttl_cache_set(key, value, ttl_seconds):
-    with _ttl_cache_lock:
-        _ttl_cache[key] = (time.monotonic() + max(0.1, float(ttl_seconds)), value)
-    return value
-
-
-def ttl_cache_delete(*keys):
-    with _ttl_cache_lock:
-        for key in keys:
-            _ttl_cache.pop(key, None)
-
-
-# Giới hạn số kết nối TCP đi Supabase trên cùng một Vercel warm instance.
-# Các API polling có thể đổ vào cùng lúc; nếu tất cả cùng mở socket, Linux có thể
-# trả [Errno 16] Device or resource busy trước khi request kịp tới Supabase.
-_supabase_query_slots = BoundedSemaphore(max(1, int(os.getenv("SUPABASE_MAX_CONCURRENT", "3") or 3)))
-
+# Cache đã tách sang modules/cache_utils.py
 
 def execute_query(query, label="Supabase", attempts=4, delay=0.25):
-    """Retry lỗi mạng ngắn hạn và chặn bùng nổ kết nối TCP trên Vercel."""
+    """Retry short-lived Vercel/Supabase network failures before returning 500."""
     last_error = None
 
     for attempt in range(max(1, attempts)):
-        acquired = _supabase_query_slots.acquire(timeout=5)
-        if not acquired:
-            last_error = RuntimeError("Supabase query queue is busy")
-        else:
-            try:
-                return query.execute()
-            except Exception as exc:
-                last_error = exc
-            finally:
-                _supabase_query_slots.release()
+        try:
+            return query.execute()
+        except Exception as exc:
+            last_error = exc
+            message = f"{type(exc).__name__}: {exc}".lower()
 
-        exc = last_error
-        message = f"{type(exc).__name__}: {exc}".lower()
-        transient = any(token in message for token in (
-            "connecterror",
-            "connection",
-            "server disconnected",
-            "remoteprotocolerror",
-            "timeout",
-            "temporarily",
-            "device or resource busy",
-            "resource busy",
-            "errno 16",
-            "eagain",
-            "query queue is busy",
-        ))
+            transient = any(token in message for token in (
+                "connecterror",
+                "connection",
+                "server disconnected",
+                "remoteprotocolerror",
+                "timeout",
+                "temporarily",
+                "device or resource busy",
+                "resource busy",
+                "errno 16",
+                "eagain",
+            ))
 
-        if not transient or attempt >= max(1, attempts) - 1:
-            print(f"{label} failed after {attempt + 1} attempt(s): {exc}")
-            raise exc
+            if not transient or attempt >= max(1, attempts) - 1:
+                print(f"{label} failed after {attempt + 1} attempt(s): {exc}")
+                raise
 
-        # Exponential backoff + jitter để các request không retry cùng một nhịp.
-        sleep_seconds = delay * (2 ** attempt) + random.uniform(0.05, 0.18)
-        time.sleep(sleep_seconds)
+            # Backoff ngắn: 0.25s, 0.5s, 0.75s...
+            time.sleep(delay * (attempt + 1))
 
     raise last_error
 
@@ -370,53 +214,7 @@ _admin_checked = False
 # =========================
 # Basic helpers
 # =========================
-def now_dt():
-    return datetime.now(timezone.utc)
-
-
-def now_iso():
-    return now_dt().isoformat()
-
-
-def future_iso(seconds: int) -> str:
-    return (now_dt() + timedelta(seconds=max(0, int(seconds)))).isoformat()
-
-
-def aware_utc(dt):
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt.astimezone(timezone.utc)
-
-
-def seconds_until(value) -> int:
-    dt = aware_utc(parse_dt(value))
-    if not dt:
-        return 0
-    return max(0, int((dt - now_dt()).total_seconds()))
-
-
-def parse_dt(value):
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None
-
-
-def format_vn_datetime(value) -> str:
-    dt = parse_dt(value)
-    if not dt:
-        return "-"
-
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-
-    vietnam_time = dt.astimezone(timezone(timedelta(hours=7)))
-    return vietnam_time.strftime("%d/%m/%Y %H:%M")
-
+# Tiện ích thời gian đã tách sang modules/datetime_utils.py
 
 def _normalize_storage_public_url(value):
     if isinstance(value, str):
@@ -432,7 +230,7 @@ def prepare_avatar_bytes(file_storage):
 
     raw = file_storage.read(AVATAR_MAX_BYTES + 1)
     if len(raw) > AVATAR_MAX_BYTES:
-        raise ValueError("Ảnh đại diện không được vượt quá 8 MB.")
+        raise ValueError("Ảnh đại diện không được vượt quá 2 MB.")
     if not raw:
         raise ValueError("File ảnh đang trống.")
 
@@ -727,282 +525,20 @@ def is_owner_user(user) -> bool:
     )
 
 
-def can_review_room_result(user, room) -> bool:
-    """Only the invited opponent can confirm/dispute a submitted room result.
-
-    Admin accounts are powerful elsewhere, but inside a player room an admin who is
-    also the host/submitter must not be allowed to confirm their own submitted
-    score. A non-participant admin may still help only as a moderation fallback.
-    """
-    if not user or not room or room.get("status") != "waiting_result_confirm":
-        return False
-    current_id = str(user.get("id") or "")
-    submitted_by_id = str(room.get("submitted_by_id") or "")
-    host_id = str(room.get("host_user_id") or "")
-    guest_id = str(room.get("guest_user_id") or "")
-
-    if not current_id:
-        return False
-    if submitted_by_id and current_id == submitted_by_id:
-        return False
-    if current_id == guest_id:
-        return True
-    if is_admin_user(user) and current_id not in {host_id, guest_id}:
-        return True
-    return False
-
-
-
-
-ADMIN_PERMISSION_DEFINITIONS = {
-    "view_users": ("Xem người dùng", "Xem danh sách tài khoản và thông tin cơ bản."),
-    "approve_users": ("Duyệt tài khoản", "Duyệt hoặc từ chối tài khoản đăng ký mới."),
-    "reset_passwords": ("Xử lý quên mật khẩu", "Cấp mật khẩu tạm hoặc từ chối yêu cầu."),
-    "edit_users": ("Sửa người dùng", "Khóa/mở khóa, sửa RP, thống kê và trạng thái online."),
-    "delete_users": ("Xóa người dùng", "Xóa tài khoản và dữ liệu liên quan."),
-    "view_matches": ("Xem trận đấu", "Xem danh sách trận, phòng và thông tin RP."),
-    "create_matches": ("Tạo trận thủ công", "Chọn 2 người chơi, nhập tỷ số và cập nhật RP."),
-    "edit_matches": ("Sửa trận đấu", "Sửa tỷ số, trạng thái và xác nhận kết quả."),
-    "delete_matches": ("Hủy/Xóa trận", "Hủy hoặc xóa trận và tính lại dữ liệu."),
-    "manage_rooms": ("Quản lý phòng & lời mời", "Hủy/xóa phòng và lời mời đang chờ."),
-    "manage_disputes": ("Xử lý tranh chấp", "Chấp nhận, sửa hoặc hủy tranh chấp."),
-    "manage_announcements": ("Quản lý thông báo", "Đăng và xóa thông báo hệ thống."),
-    "manage_chat": ("Bật/tắt Chat", "Bật hoặc tắt Chat Sảnh và Chat Phòng."),
-    "manage_friendly": ("Bật/tắt Giao hữu", "Bật hoặc khóa tính năng Giao hữu."),
-    "manage_gift_codes": ("Quản lý Gift Code", "Tạo và bật/tắt Gift Code."),
-    "manage_invite_codes": ("Quản lý mã đăng ký", "Tạo và vô hiệu hóa mã đăng ký."),
-    "manage_test_data": ("Tài khoản test & Import", "Tạo tài khoản test và import CSV."),
-    "view_logs": ("Xem nhật ký Admin", "Xem lịch sử thao tác của quản trị viên."),
+ADMIN_PERMISSION_FIELDS = {
+    "create_test_account": "admin_can_create_test_account",
+    "import_accounts_csv": "admin_can_import_accounts_csv",
 }
-ADMIN_PERMISSION_CODES = tuple(ADMIN_PERMISSION_DEFINITIONS.keys())
-_admin_permission_cache = {}
-
-
-def _admin_permission_setting_key(user_id):
-    return f"admin_permissions:{str(user_id or '').strip()}"
-
-
-def _normalize_admin_permissions(value):
-    if isinstance(value, str):
-        try:
-            value = json.loads(value)
-        except Exception:
-            value = {}
-    if not isinstance(value, dict):
-        value = {}
-    return {code: bool(value.get(code, False)) for code in ADMIN_PERMISSION_CODES}
-
-
-def get_admin_permissions(user, force=False):
-    if is_owner_user(user):
-        return {code: True for code in ADMIN_PERMISSION_CODES}
-    if not is_admin_user(user):
-        return {code: False for code in ADMIN_PERMISSION_CODES}
-
-    user_id = str((user or {}).get("id") or "")
-    now_ts = time.time()
-    cached = _admin_permission_cache.get(user_id)
-    if not force and cached and cached.get("expires_at", 0) > now_ts:
-        return dict(cached.get("value") or {})
-
-    permissions = {code: False for code in ADMIN_PERMISSION_CODES}
-    # Giữ tương thích với 2 cột quyền cũ.
-    permissions["manage_test_data"] = bool(
-        user.get("admin_can_create_test_account") or user.get("admin_can_import_accounts_csv")
-    )
-    try:
-        result = execute_query(
-            db.table("system_settings")
-            .select("setting_value")
-            .eq("setting_key", _admin_permission_setting_key(user_id))
-            .limit(1),
-            "get_admin_permissions",
-            attempts=2,
-        )
-        rows = result.data or []
-        if rows:
-            permissions.update(_normalize_admin_permissions(rows[0].get("setting_value")))
-    except Exception as exc:
-        print(f"get_admin_permissions warning user={user_id}: {type(exc).__name__}: {exc}")
-
-    _admin_permission_cache[user_id] = {"value": dict(permissions), "expires_at": now_ts + 15}
-    return permissions
-
-
-def save_admin_permissions(user_id, permissions):
-    normalized = _normalize_admin_permissions(permissions)
-    payload = {
-        "setting_key": _admin_permission_setting_key(user_id),
-        "setting_value": normalized,
-        "updated_at": now_iso(),
-    }
-    execute_query(
-        db.table("system_settings").upsert(payload, on_conflict="setting_key"),
-        "save_admin_permissions",
-    )
-    _admin_permission_cache.pop(str(user_id), None)
-    return normalized
 
 
 def has_admin_permission(user, permission_code: str) -> bool:
+    """Owner always has access; sub-admins only have explicitly checked permissions."""
     if is_owner_user(user):
         return True
-    return bool(get_admin_permissions(user).get(permission_code, False))
-
-
-FRIENDLY_MATCHES_SETTING_KEY = "friendly_matches_enabled"
-LOBBY_CHAT_SETTING_KEY = "lobby_chat_enabled"
-ROOM_CHAT_SETTING_KEY = "room_chat_enabled"
-_friendly_matches_cache = {"value": None, "expires_at": 0.0}
-_chat_features_cache = {"value": None, "expires_at": 0.0}
-
-
-def _setting_to_bool(value, default=True) -> bool:
-    """Parse a system_settings value safely from bool/json/text/int."""
-    if value is None:
-        return bool(default)
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (int, float)):
-        return value != 0
-    if isinstance(value, dict):
-        if "enabled" in value:
-            return _setting_to_bool(value.get("enabled"), default)
-        if "value" in value:
-            return _setting_to_bool(value.get("value"), default)
-        return bool(default)
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"true", "1", "yes", "y", "on", "enabled", "bật", "bat"}:
-            return True
-        if lowered in {"false", "0", "no", "n", "off", "disabled", "tắt", "tat"}:
-            return False
-        try:
-            return _setting_to_bool(json.loads(value), default)
-        except Exception:
-            return bool(default)
-    return bool(value)
-
-
-def friendly_matches_enabled(force=False) -> bool:
-    """Global Admin toggle for friendly matches. Defaults to enabled."""
-    now = time.time()
-    if not force and _friendly_matches_cache["value"] is not None and now < _friendly_matches_cache["expires_at"]:
-        return bool(_friendly_matches_cache["value"])
-    enabled = True
-    if db is not None:
-        try:
-            result = execute_query(
-                db.table("system_settings").select("setting_value,updated_at").eq("setting_key", FRIENDLY_MATCHES_SETTING_KEY).order("updated_at", desc=True).limit(1),
-                "load_friendly_matches_enabled",
-                attempts=2,
-            )
-            if result.data:
-                enabled = _setting_to_bool(result.data[0].get("setting_value"), True)
-            else:
-                execute_query(
-                    db.table("system_settings").upsert({
-                        "setting_key": FRIENDLY_MATCHES_SETTING_KEY,
-                        "setting_value": {"enabled": True},
-                        "updated_at": now_iso(),
-                    }, on_conflict="setting_key"),
-                    "seed_friendly_matches_enabled",
-                    attempts=2,
-                )
-        except Exception as exc:
-            print(f"friendly_matches_enabled fallback warning: {exc}")
-    _friendly_matches_cache.update({"value": enabled, "expires_at": now + 5})
-    return bool(enabled)
-
-
-def set_friendly_matches_enabled(enabled: bool):
-    if db is None:
-        raise RuntimeError("Chưa cấu hình Supabase.")
-    payload = {
-        "setting_key": FRIENDLY_MATCHES_SETTING_KEY,
-        "setting_value": {"enabled": bool(enabled)},
-        "updated_at": now_iso(),
-    }
-    try:
-        execute_query(
-            db.table("system_settings").update({
-                "setting_value": payload["setting_value"],
-                "updated_at": payload["updated_at"],
-            }).eq("setting_key", FRIENDLY_MATCHES_SETTING_KEY),
-            "update_friendly_matches_enabled",
-            attempts=3,
-        )
-    except Exception as exc:
-        print(f"update_friendly_matches_enabled warning: {exc}")
-    execute_query(
-        db.table("system_settings").upsert(payload, on_conflict="setting_key"),
-        "set_friendly_matches_enabled",
-        attempts=3,
-    )
-    _friendly_matches_cache.update({"value": bool(enabled), "expires_at": time.time() + 5})
-
-
-def chat_features_enabled(force=False):
-    """Return global chat feature toggles using one short cached settings query."""
-    now = time.time()
-    cached = _chat_features_cache.get("value")
-    if not force and cached is not None and now < _chat_features_cache.get("expires_at", 0):
-        return dict(cached)
-
-    states = {"lobby": True, "room": True}
-    if db is not None:
-        try:
-            result = execute_query(
-                db.table("system_settings")
-                .select("setting_key,setting_value,updated_at")
-                .in_("setting_key", [LOBBY_CHAT_SETTING_KEY, ROOM_CHAT_SETTING_KEY]),
-                "load_chat_feature_settings",
-                attempts=2,
-            )
-            found = set()
-            for row in result.data or []:
-                key = row.get("setting_key")
-                found.add(key)
-                if key == LOBBY_CHAT_SETTING_KEY:
-                    states["lobby"] = _setting_to_bool(row.get("setting_value"), True)
-                elif key == ROOM_CHAT_SETTING_KEY:
-                    states["room"] = _setting_to_bool(row.get("setting_value"), True)
-            missing = []
-            if LOBBY_CHAT_SETTING_KEY not in found:
-                missing.append({"setting_key": LOBBY_CHAT_SETTING_KEY, "setting_value": {"enabled": True}, "updated_at": now_iso()})
-            if ROOM_CHAT_SETTING_KEY not in found:
-                missing.append({"setting_key": ROOM_CHAT_SETTING_KEY, "setting_value": {"enabled": True}, "updated_at": now_iso()})
-            for payload in missing:
-                execute_query(
-                    db.table("system_settings").upsert(payload, on_conflict="setting_key"),
-                    "seed_chat_feature_setting",
-                    attempts=2,
-                )
-        except Exception as exc:
-            print(f"chat_features_enabled fallback warning: {exc}")
-    _chat_features_cache.update({"value": dict(states), "expires_at": now + 10})
-    return states
-
-
-def set_chat_feature_enabled(feature: str, enabled: bool):
-    if db is None:
-        raise RuntimeError("Chưa cấu hình Supabase.")
-    key = LOBBY_CHAT_SETTING_KEY if feature == "lobby" else ROOM_CHAT_SETTING_KEY if feature == "room" else None
-    if not key:
-        raise ValueError("Tính năng chat không hợp lệ.")
-    payload = {
-        "setting_key": key,
-        "setting_value": {"enabled": bool(enabled)},
-        "updated_at": now_iso(),
-    }
-    execute_query(
-        db.table("system_settings").upsert(payload, on_conflict="setting_key"),
-        "set_chat_feature_enabled",
-        attempts=3,
-    )
-    current = chat_features_enabled(force=False)
-    current[feature] = bool(enabled)
-    _chat_features_cache.update({"value": current, "expires_at": time.time() + 10})
+    if not is_admin_user(user):
+        return False
+    field = ADMIN_PERMISSION_FIELDS.get(permission_code)
+    return bool(field and user.get(field) is True)
 
 
 def normalize_invite_code(value: str) -> str:
@@ -1057,51 +593,38 @@ def _validate_rank_ranges(raw_ranges):
 
 
 def load_rank_ranges(force=False):
-    """Đọc Rank từ Supabase; khi mạng chập chờn dùng cache cũ/DEFAULT_RANKS."""
+    """Always load active Rank ranges from Supabase system_settings."""
     now = time.time()
-    cached_value = _rank_range_cache.get("value")
-    if not force and cached_value is not None and now < _rank_range_cache["expires_at"]:
-        return cached_value
-
-    # Không để context processor làm sập toàn bộ HTML chỉ vì cấu hình Rank chưa đọc được.
-    fallback = cached_value or _validate_rank_ranges(DEFAULT_RANKS)
+    if not force and _rank_range_cache["value"] is not None and now < _rank_range_cache["expires_at"]:
+        return _rank_range_cache["value"]
     if db is None:
-        return fallback
+        raise RuntimeError("Chưa cấu hình kết nối Supabase để đọc khoảng điểm Rank.")
 
-    try:
-        result = execute_query(
-            db.table("system_settings").select("setting_value").eq("setting_key", RANK_RANGE_SETTING_KEY).limit(1),
-            "load_rank_ranges",
+    result = execute_query(
+        db.table("system_settings").select("setting_value").eq("setting_key", RANK_RANGE_SETTING_KEY).limit(1),
+        "load_rank_ranges",
+        attempts=3,
+    )
+    if not result.data:
+        # Tự tạo cấu hình lần đầu để không cần chạy hoặc lưu file SQL trên GitHub.
+        execute_query(
+            db.table("system_settings").upsert({
+                "setting_key": RANK_RANGE_SETTING_KEY,
+                "setting_value": DEFAULT_RANKS,
+                "updated_at": now_iso(),
+            }, on_conflict="setting_key"),
+            "seed_rank_ranges",
             attempts=3,
         )
-        if not result.data:
-            # Seed là best-effort; trang vẫn dùng DEFAULT_RANKS nếu ghi thất bại.
-            try:
-                execute_query(
-                    db.table("system_settings").upsert({
-                        "setting_key": RANK_RANGE_SETTING_KEY,
-                        "setting_value": DEFAULT_RANKS,
-                        "updated_at": now_iso(),
-                    }, on_conflict="setting_key"),
-                    "seed_rank_ranges",
-                    attempts=2,
-                )
-            except Exception as exc:
-                print(f"seed_rank_ranges warning: {exc}")
-            configured = fallback
-        else:
-            stored = result.data[0].get("setting_value")
-            if isinstance(stored, str):
-                stored = json.loads(stored)
-            configured = _validate_rank_ranges(stored)
+        configured = _validate_rank_ranges(DEFAULT_RANKS)
+    else:
+        stored = result.data[0].get("setting_value")
+        if isinstance(stored, str):
+            stored = json.loads(stored)
+        configured = _validate_rank_ranges(stored)
 
-        _rank_range_cache.update({"value": configured, "expires_at": now + 60})
-        return configured
-    except Exception as exc:
-        print(f"load_rank_ranges fallback warning: {exc}")
-        # Cache fallback ngắn để tránh mỗi request tiếp theo lại mở thêm 3 kết nối.
-        _rank_range_cache.update({"value": fallback, "expires_at": now + 15})
-        return fallback
+    _rank_range_cache.update({"value": configured, "expires_at": now + 30})
+    return configured
 
 
 def get_rank_ranges():
@@ -1176,111 +699,56 @@ def get_difficulty_factor(difficulty, won):
     return 1.00
 
 
-def get_win_streak_bonus(player, won):
-    """Award a one-time bonus when the new streak reaches 3, 5, 8 or 10."""
-    if not won:
-        return 0
-    next_streak = int(player.get("streak", 0) or 0) + 1
-    return WIN_STREAK_BONUSES.get(next_streak, 0)
-
-
-def _rank_adjusted_win_points(winner, loser):
-    """Return the V1.9 base win reward before placement/streak bonuses.
-
-    A lower-ranked winner gains +1 per rank level, capped at +24.
-    A higher-ranked winner loses 1 point per rank level, floored at +19.
-    RP difference inside the same rank is intentionally ignored.
-    """
-    winner_level = get_rank_level(winner.get("rank_points", 0))
-    loser_level = get_rank_level(loser.get("rank_points", 0))
-    rank_advantage = loser_level - winner_level
-    return max(
-        MIN_RANK_ADJUSTED_WIN_POINTS,
-        min(MAX_RANK_ADJUSTED_WIN_POINTS, BASE_WIN_POINTS + rank_advantage),
-    )
-
-
 def calculate_deltas(player_a, player_b, score_a: int, score_b: int, team_a=None, team_b=None,
                      team_overall_a=None, team_overall_b=None, team_tier_a=None, team_tier_b=None):
-    """Calculate ranked RP using the V1.9 rules.
-
-    Club/Tier, score margin and RP difference inside one rank do not affect RP.
-    Draws are neutral (0 RP for both players).
-    """
-    score_a = int(score_a)
-    score_b = int(score_b)
-
-    if score_a == score_b:
-        return 0, 0
-
-    a_won = score_a > score_b
-    winner = player_a if a_won else player_b
-    loser = player_b if a_won else player_a
-
-    winner_matches = int(winner.get("total_matches", 0) or 0)
-    loser_matches = int(loser.get("total_matches", 0) or 0)
-
-    # If either participant is still inside the first 10 matches, do not compare
-    # rank or RP between the two players.
-    if winner_matches < PLACEMENT_MATCHES or loser_matches < PLACEMENT_MATCHES:
-        win_points = BASE_WIN_POINTS
-    else:
-        win_points = _rank_adjusted_win_points(winner, loser)
-
-    # The placement reward belongs to the winner's own first 10 matches.
-    if winner_matches < PLACEMENT_MATCHES:
-        win_points = round(BASE_WIN_POINTS * PLACEMENT_WIN_MULTIPLIER)
-
-    win_points += get_win_streak_bonus(winner, True)
-    win_points = min(MAX_POSITIVE_POINTS_PER_MATCH, max(1, int(win_points)))
-
-    if a_won:
-        return enforce_ranked_delta_signs(score_a, score_b, win_points, BASE_LOSS_POINTS)
-    return enforce_ranked_delta_signs(score_a, score_b, BASE_LOSS_POINTS, win_points)
-
-
-def enforce_ranked_delta_signs(score1, score2, delta1, delta2):
-    """Guarantee winner-positive / loser-negative RP for ranked matches.
-
-    This is a final guard against bad/old rows or unexpected form/admin flows that
-    could otherwise store 0 RP for a non-draw result.
-    """
-    score1 = _safe_int(score1)
-    score2 = _safe_int(score2)
-    delta1 = _safe_int(delta1)
-    delta2 = _safe_int(delta2)
-
-    if score1 == score2:
-        return 0, 0
-
-    if score1 > score2:
-        if delta1 <= 0:
-            delta1 = BASE_WIN_POINTS
-        if delta2 >= 0:
-            delta2 = BASE_LOSS_POINTS
-    else:
-        if delta1 >= 0:
-            delta1 = BASE_LOSS_POINTS
-        if delta2 <= 0:
-            delta2 = BASE_WIN_POINTS
-
-    return int(delta1), int(delta2)
-
-
-def display_delta_with_result_guard(score_for, score_against, stored_delta):
-    """Display fallback for older confirmed rows that were saved with invalid 0 RP."""
-    score_for = _safe_int(score_for)
-    score_against = _safe_int(score_against)
-    stored_delta = _safe_int(stored_delta)
-    if score_for == score_against:
-        return 0
-    if score_for > score_against and stored_delta <= 0:
-        return BASE_WIN_POINTS
-    if score_for < score_against and stored_delta >= 0:
-        return BASE_LOSS_POINTS
-    return stored_delta
+    """Lớp tương thích: route cũ gọi như trước, công thức nằm trong rp_engine."""
+    return calculate_ranked_deltas(
+        player_a, player_b, score_a, score_b, get_rank_level=get_rank_level,
+        team_a=team_a, team_b=team_b, team_overall_a=team_overall_a,
+        team_overall_b=team_overall_b, team_tier_a=team_tier_a, team_tier_b=team_tier_b,
+    )
 
 TEAM_LOGO_BUCKET = "team-logos"
+LEAGUE_LOGO_FOLDER = "league-logos"
+LEAGUE_LOGO_FILES = {
+    "africa": "africa.png",
+    "bundesliga": "bundesliga.png",
+    "europe": "europe.png",
+    "laliga ea sports": "laliga-ea-sports.png",
+    "la liga ea sports": "laliga-ea-sports.png",
+    "laliga": "laliga-ea-sports.png",
+    "ligue 1": "ligue-1.png",
+    "ligue1": "ligue-1.png",
+    "premier league": "premier-league.png",
+    "serie a": "serie-a.png",
+    "serie bkt": "serie-bkt.png",
+    "sky bet championship": "sky-bet-championship.png",
+    "championship": "sky-bet-championship.png",
+    "south america": "south-america.png",
+    "super lig": "super-lig.png",
+    "süper lig": "super-lig.png",
+}
+
+def get_league_logo_url(league_name):
+    """Tạo URL public tới team-logos/league-logos trên Supabase Storage."""
+    import unicodedata
+    raw = str(league_name or "").strip()
+    if not raw or not supabase_url:
+        return ""
+    key = " ".join(raw.lower().replace("-", " ").replace("_", " ").split())
+    key_ascii = "".join(ch for ch in unicodedata.normalize("NFKD", key) if not unicodedata.combining(ch))
+    filename = LEAGUE_LOGO_FILES.get(key) or LEAGUE_LOGO_FILES.get(key_ascii)
+    if not filename:
+        for alias, candidate in LEAGUE_LOGO_FILES.items():
+            if alias in key or alias in key_ascii:
+                filename = candidate
+                break
+    if not filename:
+        return ""
+    from urllib.parse import quote
+    object_path = f"{LEAGUE_LOGO_FOLDER}/{filename}"
+    return f"{supabase_url}/storage/v1/object/public/{TEAM_LOGO_BUCKET}/{quote(object_path, safe='/')}"
+
 SMART_RANDOM_MODE = "Smart Rank"
 
 
@@ -1803,7 +1271,7 @@ def get_user_by_username(username):
 def get_user(user_id):
     require_db()
     result = execute_query(
-        db.table("users").select(USER_PUBLIC_COLUMNS).eq("id", user_id).limit(1),
+        db.table("users").select("*").eq("id", user_id).limit(1),
         "get_user",
     )
     return result.data[0] if result.data else None
@@ -1832,7 +1300,7 @@ def list_players(include_admin=False):
         shared = ttl_cache_get("players_raw")
         if shared is None:
             result = execute_query(
-                db.table("users").select(USER_PUBLIC_COLUMNS).order("rank_points", desc=True),
+                db.table("users").select("*").order("rank_points", desc=True),
                 "list_players",
             )
             shared = result.data or []
@@ -1878,7 +1346,7 @@ def get_device_link(device_id):
 
 
 def link_device_to_user(user):
-    # Tài khoản admin không bị giới hạn thiết bị; admin vẫn là player.
+    # Tài khoản admin chính không bị giới hạn thiết bị; admin phụ vẫn là player.
     if user.get("role") == "admin":
         return True, ""
 
@@ -1949,98 +1417,6 @@ def list_all_users():
         "list_all_users",
     )
     return result.data or []
-
-
-def list_admin_player_picker(limit=1000):
-    """Danh sách player tối thiểu cho form chọn người, không tải thiết bị/IP/admin khác."""
-    require_db()
-    safe_limit = max(50, min(int(limit or 1000), 2000))
-    result = execute_query(
-        db.table("users")
-        .select(USER_PUBLIC_COLUMNS)
-        .eq("role", "player")
-        .eq("account_status", "approved")
-        .order("display_name")
-        .limit(safe_limit),
-        "list_admin_player_picker",
-    )
-    return result.data or []
-
-
-def decorate_matches(rows):
-    """Gắn tên/avatar cho danh sách trận đã có mà không tải lại bảng matches."""
-    matches = [dict(row) for row in (rows or [])]
-    users = users_map()
-    for match in matches:
-        player1 = users.get(match.get("player1_id"), {})
-        player2 = users.get(match.get("player2_id"), {})
-        match["player1_name"] = player1.get("display_name", "Unknown")
-        match["player2_name"] = player2.get("display_name", "Unknown")
-        match["player1_avatar_url"] = player1.get("avatar_url")
-        match["player2_avatar_url"] = player2.get("avatar_url")
-        match["player1_achievement"] = player1.get("featured_achievement")
-        match["player2_achievement"] = player2.get("featured_achievement")
-        match["submitted_by_name"] = users.get(match.get("submitted_by_id"), {}).get("display_name", "")
-        match["winner_name"] = users.get(match.get("winner_id"), {}).get("display_name", "")
-        match["loser_name"] = users.get(match.get("loser_id"), {}).get("display_name", "")
-    return matches
-
-
-def list_recent_matches(limit=80):
-    """Query riêng cho Admin: chỉ lấy số trận cần hiển thị, tránh tải cả bảng."""
-    require_db()
-    safe_limit = max(20, min(int(limit or 80), 200))
-    result = execute_query(
-        db.table("matches")
-        .select(MATCH_LIST_COLUMNS)
-        .order("created_at", desc=True)
-        .limit(safe_limit),
-        "list_recent_matches",
-    )
-    return decorate_matches(result.data or [])
-
-
-def list_admin_active_rooms(limit=80):
-    """Chỉ lấy phòng còn hoạt động cho Admin thay vì toàn bộ lịch sử phòng."""
-    require_db()
-    statuses = ["waiting_ready", "playing", "friendly_playing", "waiting_result_confirm", "disputed"]
-    result = execute_query(
-        db.table("match_rooms")
-        .select("*")
-        .in_("status", statuses)
-        .order("created_at", desc=True)
-        .limit(max(20, min(int(limit or 80), 200))),
-        "list_admin_active_rooms",
-    )
-    rooms = []
-    for raw in (result.data or []):
-        room = expire_room_if_needed(dict(raw))
-        enrich_room(room)
-        rooms.append(room)
-    return rooms
-
-
-def list_admin_pending_invites(limit=100):
-    """Chỉ lấy lời mời pending cho trang Admin."""
-    require_db()
-    result = execute_query(
-        db.table("match_invites")
-        .select("*")
-        .eq("status", "pending")
-        .order("created_at", desc=True)
-        .limit(max(20, min(int(limit or 100), 300))),
-        "list_admin_pending_invites",
-    )
-    rows = []
-    for raw in (result.data or []):
-        invite = expire_invite_if_needed(dict(raw))
-        if invite.get("status") == "pending":
-            rows.append(invite)
-    users = users_map()
-    for invite in rows:
-        invite["from_name"] = users.get(invite.get("from_user_id"), {}).get("display_name", "Unknown")
-        invite["to_name"] = users.get(invite.get("to_user_id"), {}).get("display_name", "Unknown")
-    return rows
 
 
 def log_admin_action(action, target_type="system", target_id=None, target_label="", details=""):
@@ -2302,60 +1678,28 @@ def list_matches(status=None):
 
     cached = cache_get("_rz_matches_all")
     if cached is None:
-        shared = ttl_cache_get("matches_raw")
-        if shared is None:
-            query = db.table("matches").select(MATCH_LIST_COLUMNS).order("created_at", desc=True)
-            result = execute_query(query, "list_matches")
-            shared = result.data or []
-            ttl_cache_set("matches_raw", shared, 8)
-        cached = [dict(row) for row in shared]
+        query = db.table("matches").select("*").order("created_at", desc=True)
+        result = execute_query(query, "list_matches")
+        cached = result.data or []
         cache_set("_rz_matches_all", cached)
 
     matches = [dict(m) for m in cached if not status or m.get("status") == status]
-    return decorate_matches(matches)
-
-
-def list_user_matches_page(user_id, page=1, page_size=20):
-    """Phân trang thật tại Supabase; lấy thêm 1 dòng để biết còn trang sau."""
-    require_db()
-    safe_page = max(1, int(page or 1))
-    safe_size = max(5, min(int(page_size or 20), 50))
-    offset = (safe_page - 1) * safe_size
-    query = (
-        db.table("matches")
-        .select(MATCH_LIST_COLUMNS)
-        .or_(f"player1_id.eq.{user_id},player2_id.eq.{user_id}")
-        .order("created_at", desc=True)
-        .range(offset, offset + safe_size)
-    )
-    result = execute_query(query, "list_user_matches_page")
-    rows = [dict(row) for row in (result.data or [])]
-    has_next = len(rows) > safe_size
-    return decorate_matches(rows[:safe_size]), has_next
-
-
-def list_user_matches(user_id, limit=200):
-    """Chỉ đọc lịch sử của một người thay vì tải toàn bộ bảng matches."""
-    require_db()
-    safe_limit = max(20, min(int(limit or 200), 500))
-    query = (
-        db.table("matches")
-        .select(MATCH_LIST_COLUMNS)
-        .or_(f"player1_id.eq.{user_id},player2_id.eq.{user_id}")
-        .order("created_at", desc=True)
-        .limit(safe_limit)
-    )
-    result = execute_query(query, "list_user_matches")
-    rows = [dict(row) for row in (result.data or [])]
     users = users_map()
-    for match in rows:
-        p1 = users.get(match.get("player1_id"), {})
-        p2 = users.get(match.get("player2_id"), {})
-        match["player1_name"] = p1.get("display_name", "Unknown")
-        match["player2_name"] = p2.get("display_name", "Unknown")
-        match["player1_avatar_url"] = p1.get("avatar_url")
-        match["player2_avatar_url"] = p2.get("avatar_url")
-    return rows
+
+    for match in matches:
+        player1 = users.get(match.get("player1_id"), {})
+        player2 = users.get(match.get("player2_id"), {})
+        match["player1_name"] = player1.get("display_name", "Unknown")
+        match["player2_name"] = player2.get("display_name", "Unknown")
+        match["player1_avatar_url"] = player1.get("avatar_url")
+        match["player2_avatar_url"] = player2.get("avatar_url")
+        match["player1_achievement"] = player1.get("featured_achievement")
+        match["player2_achievement"] = player2.get("featured_achievement")
+        match["submitted_by_name"] = users.get(match.get("submitted_by_id"), {}).get("display_name", "")
+        match["winner_name"] = users.get(match.get("winner_id"), {}).get("display_name", "")
+        match["loser_name"] = users.get(match.get("loser_id"), {}).get("display_name", "")
+
+    return matches
 
 
 def match_status_label(status):
@@ -2367,9 +1711,6 @@ def decorate_match_for_view(match, viewer_id=None):
     item["status_label"] = match_status_label(item.get("status"))
     item["created_at_display"] = format_vn_datetime(item.get("created_at"))
     item["is_cancelled"] = item.get("status") == "cancelled"
-    # Default score keeps database orientation (player1 - player2).
-    # When a viewer_id is provided, it is overwritten below to viewer perspective
-    # so profile/history rows remain consistent with the THẮNG/THUA badge.
     item["score_display"] = (
         "Không tính"
         if item["is_cancelled"]
@@ -2396,9 +1737,7 @@ def decorate_match_for_view(match, viewer_id=None):
         as_player1 = item.get("player1_id") == viewer_id
         my_score = item.get("score1") if as_player1 else item.get("score2")
         opponent_score = item.get("score2") if as_player1 else item.get("score1")
-        stored_my_delta = int((item.get("delta1") if as_player1 else item.get("delta2")) or 0)
-        item["my_delta"] = stored_my_delta
-        item["my_delta_was_guarded"] = False
+        item["my_delta"] = int((item.get("delta1") if as_player1 else item.get("delta2")) or 0)
         item["opponent_id"] = item.get("player2_id") if as_player1 else item.get("player1_id")
         item["opponent_name"] = item.get("player2_name") if as_player1 else item.get("player1_name")
         item["my_avatar_url"] = item.get("player1_avatar_url") if as_player1 else item.get("player2_avatar_url")
@@ -2408,19 +1747,7 @@ def decorate_match_for_view(match, viewer_id=None):
         item["my_team"] = item.get("team1") if as_player1 else item.get("team2")
         item["opponent_team"] = item.get("team2") if as_player1 else item.get("team1")
 
-        # Profile/history UI displays the viewed player on the left, so the score
-        # must also be displayed from that same perspective. Otherwise a match where
-        # the viewed player is player2 can look like "6 - 2" while showing THUA.
-        item["score_display"] = (
-            "Không tính"
-            if item["is_cancelled"]
-            else f'{my_score if my_score is not None else "-"} - {opponent_score if opponent_score is not None else "-"}'
-        )
-
         if item.get("status") == "confirmed" and my_score is not None and opponent_score is not None:
-            guarded_delta = display_delta_with_result_guard(my_score, opponent_score, stored_my_delta)
-            item["my_delta_was_guarded"] = guarded_delta != stored_my_delta
-            item["my_delta"] = guarded_delta
             if my_score > opponent_score:
                 item["result_code"], item["result_label"] = "win", "THẮNG"
             elif my_score < opponent_score:
@@ -2974,6 +2301,8 @@ def enrich_room(room):
     room["host_points"] = host.get("rank_points", 0)
     room["host_rank_info"] = get_rank_info(host.get("rank_points", 0))
     room["host_rank"] = get_rank_display(host.get("rank_points", 0))
+    room["host_streak"] = int(host.get("streak", 0) or 0)
+    room["host_streak_badge"] = get_win_streak_badge(room["host_streak"])
     room["has_guest"] = bool(room.get("guest_user_id"))
     room["guest_name"] = guest.get("display_name", "Đang chờ đối thủ") if room["has_guest"] else "Đang chờ đối thủ"
     room["guest_avatar_url"] = guest.get("avatar_url") if room["has_guest"] else None
@@ -2981,6 +2310,9 @@ def enrich_room(room):
     room["guest_points"] = guest.get("rank_points", 0) if room["has_guest"] else 0
     room["guest_rank_info"] = get_rank_info(guest.get("rank_points", 0)) if room["has_guest"] else None
     room["guest_rank"] = get_rank_display(guest.get("rank_points", 0)) if room["has_guest"] else "Chưa có người chơi"
+    room["guest_streak"] = int(guest.get("streak", 0) or 0) if room["has_guest"] else 0
+    room["guest_streak_badge"] = get_win_streak_badge(room["guest_streak"]) if room["has_guest"] else None
+    room["streak_event"] = parse_win_streak_room_note(room.get("note"))
     if room.get("host_team"):
         info = get_db_team_info(room.get("host_team")) or {}
         room["host_team_overall"] = room.get("host_team_overall") or info.get("overall") or get_team_overall(room.get("host_team"))
@@ -3011,12 +2343,8 @@ def enrich_room(room):
     room["friendly_tier"] = room.get("friendly_tier") or "A"
     room["host_team_league"] = room.get("host_team_league") or ""
     room["guest_team_league"] = room.get("guest_team_league") or ""
-    host_league_logo_urls = get_league_logo_urls(room["host_team_league"])
-    guest_league_logo_urls = get_league_logo_urls(room["guest_team_league"])
-    room["host_team_league_logo_url"] = host_league_logo_urls[0] if host_league_logo_urls else ""
-    room["guest_team_league_logo_url"] = guest_league_logo_urls[0] if guest_league_logo_urls else ""
-    room["host_team_league_logo_alt_urls"] = host_league_logo_urls[1:]
-    room["guest_team_league_logo_alt_urls"] = guest_league_logo_urls[1:]
+    room["host_team_league_logo_url"] = room.get("host_team_league_logo_url") or get_league_logo_url(room["host_team_league"])
+    room["guest_team_league_logo_url"] = room.get("guest_team_league_logo_url") or get_league_logo_url(room["guest_team_league"])
     room["rematch_expired"] = room.get("note") == REMATCH_EXPIRED_NOTE
     room["dispute"] = None
     if room.get("status") == "disputed" and room.get("match_id"):
@@ -3122,7 +2450,7 @@ def enrich_chat_message(message, users=None):
 
 
 def list_chat_messages(scope="global", room_id=None, limit=20):
-    query = db.table("chat_messages").select("id,user_id,scope,room_id,message,created_at").eq("scope", scope)
+    query = db.table("chat_messages").select("*").eq("scope", scope)
 
     if room_id:
         query = query.eq("room_id", room_id)
@@ -3137,7 +2465,7 @@ def list_chat_messages(scope="global", room_id=None, limit=20):
 
 
 def user_can_chat(user_id, scope="global", room_id=None):
-    query = db.table("chat_messages").select("id,created_at").eq("user_id", user_id).eq("scope", scope)
+    query = db.table("chat_messages").select("*").eq("user_id", user_id).eq("scope", scope)
 
     if room_id:
         query = query.eq("room_id", room_id)
@@ -3426,34 +2754,35 @@ def mark_current_user_active():
 
 
 def ensure_admin():
-    """Create the first owner only when it does not exist.
-
-    Never reset an existing owner's password or role during a cold start. The
-    initial password must come from an environment variable instead of source.
-    """
     global _admin_checked
     if _admin_checked or db is None:
         return
 
+    admin_password_hash = hash_password("Do12345")
     admin = get_user_by_username("admin")
     if not admin:
-        initial_password = (os.getenv("INITIAL_ADMIN_PASSWORD") or "").strip()
-        if len(initial_password) < 8:
-            print("ensure_admin skipped: set INITIAL_ADMIN_PASSWORD (minimum 8 characters) to create the first owner.")
-            _admin_checked = True
-            return
         execute_query(
             db.table("users").insert({
                 "username": "admin",
-                "password_hash": hash_password(initial_password),
+                "password_hash": admin_password_hash,
                 "display_name": "Admin",
                 "role": "admin",
                 "admin_level": "owner",
                 "account_status": "approved",
-                "zalo_name": "Admin",
+                "zalo_name": "Chủ hệ thống",
                 "rank_points": DEFAULT_POINTS,
             }),
             "ensure_admin_create",
+        )
+    else:
+        execute_query(
+            db.table("users").update({
+                "password_hash": admin_password_hash,
+                "role": "admin",
+                "admin_level": "owner",
+                "account_status": "approved",
+            }).eq("username", "admin"),
+            "ensure_admin_update",
         )
 
     _admin_checked = True
@@ -3536,7 +2865,8 @@ def admin_permission_required(permission_code: str):
         def wrapped(*args, **kwargs):
             user = current_user()
             if not has_admin_permission(user, permission_code):
-                return redirect(url_for("dashboard"))
+                flash("Admin phụ chưa được Chủ hệ thống cấp quyền sử dụng chức năng này.", "danger")
+                return redirect_admin("overview")
             return view(*args, **kwargs)
         return wrapped
     return decorator
@@ -3579,21 +2909,18 @@ def inject_globals():
         return {
             "APP_NAME": APP_NAME,
             "current_user": user,
-            "ADMIN_CAPS": get_admin_permissions(user) if user else {},
             "get_rank_name": get_rank_name,
             "get_rank_info": get_rank_info,
             "get_rank_display": get_rank_display,
             "get_team_overall": get_team_overall,
             "get_team_tier": get_team_tier,
+        "get_win_streak_title": get_win_streak_title,
+        "get_win_streak_badge": get_win_streak_badge,
+        "get_league_logo_url": get_league_logo_url,
             "TEAM_COUNT": TEAM_COUNT,
             "APP_VERSION": APP_VERSION,
             "RANKS": load_rank_ranges(),
             "format_vn_datetime": format_vn_datetime,
-            "SUPABASE_PUBLIC_URL": supabase_url or "",
-            "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key or "",
-            "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
-            "lobby_chat_enabled": chat_features_enabled().get("lobby", True),
-            "room_chat_enabled": chat_features_enabled().get("room", True),
             "pending_invite_count": 0,
             "incoming_invites": [],
             "active_room": None,
@@ -3618,21 +2945,17 @@ def inject_globals():
     return {
         "APP_NAME": APP_NAME,
         "current_user": user,
-        "ADMIN_CAPS": get_admin_permissions(user) if user else {},
         "get_rank_name": get_rank_name,
         "get_rank_info": get_rank_info,
         "get_rank_display": get_rank_display,
         "get_team_overall": get_team_overall,
         "get_team_tier": get_team_tier,
+        "get_win_streak_title": get_win_streak_title,
+        "get_win_streak_badge": get_win_streak_badge,
         "TEAM_COUNT": TEAM_COUNT,
         "APP_VERSION": APP_VERSION,
         "RANKS": load_rank_ranges(),
         "format_vn_datetime": format_vn_datetime,
-        "SUPABASE_PUBLIC_URL": supabase_url or "",
-        "SUPABASE_PUBLIC_ANON_KEY": supabase_anon_key or "",
-        "SUPABASE_REALTIME_ENABLED": bool(SUPABASE_REALTIME_ENABLED and supabase_url and supabase_anon_key),
-        "lobby_chat_enabled": chat_features_enabled().get("lobby", True),
-        "room_chat_enabled": chat_features_enabled().get("room", True),
         "pending_invite_count": pending_count,
         "incoming_invites": incoming,
         "active_room": active_room,
@@ -3674,11 +2997,6 @@ def api_pending_invites():
     if not user or user.get("role") == "admin":
         return jsonify({"invites": []})
 
-    cache_key = f"api_pending_invites:{user['id']}"
-    cached = ttl_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
-
     try:
         result = execute_query(
             db.table("match_invites")
@@ -3710,9 +3028,7 @@ def api_pending_invites():
                 "accept_url": url_for("respond_invite", invite_id=invite["id"]),
                 "reject_url": url_for("respond_invite", invite_id=invite["id"]),
             })
-        payload = {"invites": data}
-        ttl_cache_set(cache_key, payload, 3)
-        return jsonify(payload)
+        return jsonify({"invites": data})
     except Exception as exc:
         print(f"api_pending_invites ERROR user={user.get('id')}: {type(exc).__name__}: {exc}")
         return jsonify({"invites": []})
@@ -3728,20 +3044,13 @@ def api_active_room():
     if not user or user.get("role") == "admin":
         return jsonify({"ok": True, "has_room": False})
 
-    cache_key = f"api_active_room:{user['id']}"
-    cached = ttl_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
-
     try:
         room = active_room_for_user(user["id"])
     except Exception:
         return jsonify({"ok": False, "has_room": False, "error": "temporary_db_error"}), 503
 
     if not room:
-        payload = {"ok": True, "has_room": False}
-        ttl_cache_set(cache_key, payload, 5)
-        return jsonify(payload)
+        return jsonify({"ok": True, "has_room": False})
 
     is_host = room.get("host_user_id") == user["id"]
     is_guest = room.get("guest_user_id") == user["id"]
@@ -3751,7 +3060,7 @@ def api_active_room():
     # Chỉ tự động vào phòng khi đối thủ đã tham gia hoặc người dùng là khách.
     auto_redirect = bool(has_opponent or is_guest)
 
-    payload = {
+    return jsonify({
         "ok": True,
         "has_room": True,
         "room_id": room["id"],
@@ -3761,47 +3070,16 @@ def api_active_room():
         "is_guest": is_guest,
         "has_opponent": has_opponent,
         "auto_redirect": auto_redirect,
-    }
-    ttl_cache_set(cache_key, payload, 5)
-    return jsonify(payload)
-
-ROOM_STATE_LIGHT_FIELDS = ",".join([
-    "id", "host_user_id", "guest_user_id", "status", "host_team", "guest_team",
-    "guest_ready", "host_score", "guest_score", "note", "state_expires_at",
-    "updated_at", "match_id", "match_mode"
-])
-
-
-def get_room_state_light(room_id):
-    """Lấy đúng dữ liệu phục vụ polling; không users_map, CLB, rank, achievement hay tranh chấp."""
-    result = execute_query(
-        db.table("match_rooms").select(ROOM_STATE_LIGHT_FIELDS).eq("id", room_id).limit(1),
-        "get_room_state_light",
-        attempts=2,
-    )
-    room = dict(result.data[0]) if result.data else None
-    if not room:
-        return None
-    # Vẫn giữ cơ chế hết hạn, nhưng chỉ làm giàu các cờ nhỏ cần cho client.
-    expire_room_if_needed(room)
-    note = room.get("note") or ""
-    room["rematch_host_ready"] = note == REMATCH_HOST_READY_NOTE
-    room["rematch_guest_ready"] = note == REMATCH_GUEST_READY_NOTE
-    room["rematch_host_declined"] = note == REMATCH_HOST_DECLINED_NOTE
-    room["rematch_guest_declined"] = note == REMATCH_GUEST_DECLINED_NOTE
-    room["rematch_declined"] = room["rematch_host_declined"] or room["rematch_guest_declined"]
-    room["rematch_expired"] = note == REMATCH_EXPIRED_NOTE
-    room["timeout_seconds"] = seconds_until(room.get("state_expires_at"))
-    return room
-
+    })
 
 @app.route("/api/room/<room_id>/state")
 @login_required
+
 def api_room_state(room_id):
     user = current_user()
 
     try:
-        room = get_room_state_light(room_id)
+        room = get_room(room_id)
     except Exception:
         return jsonify({"ok": False, "error": "temporary_db_error"}), 503
 
@@ -3824,7 +3102,8 @@ def api_room_state(room_id):
         str(room.get("rematch_guest_declined")),
         str(room.get("rematch_expired")),
         str(room.get("state_expires_at")),
-        str(room.get("updated_at")),
+        str((room.get("dispute") or {}).get("status")),
+        str((room.get("dispute") or {}).get("updated_at")),
     ])
 
     rematch_declined_by_me = (
@@ -3832,7 +3111,7 @@ def api_room_state(room_id):
         or (user["id"] == room.get("guest_user_id") and room.get("rematch_guest_declined"))
     )
 
-    response = jsonify({
+    return jsonify({
         "ok": True,
         "state_key": state_key,
         "status": room.get("status"),
@@ -3840,10 +3119,8 @@ def api_room_state(room_id):
         "rematch_declined_by_me": bool(rematch_declined_by_me),
         "rematch_expired": bool(room.get("rematch_expired")),
         "timeout_seconds": int(room.get("timeout_seconds") or 0),
-        "timeout_label": "",
+        "timeout_label": room.get("timeout_label") or "",
     })
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    return response
 
 # =========================
 # Auth
@@ -4082,18 +3359,12 @@ def logout():
 @app.route("/chat")
 @login_required
 def lobby_chat():
-    if not chat_features_enabled().get("lobby", True):
-        flash("Chat Sảnh đang được Admin tạm ẩn.", "warning")
-        return redirect(url_for("dashboard"))
     return render_template("chat.html", messages=list_chat_messages("global", limit=20))
 
 
 @app.route("/chat/send", methods=["POST"])
 @login_required
 def send_global_chat():
-    if not chat_features_enabled().get("lobby", True):
-        flash("Chat Sảnh đang được Admin tạm ẩn.", "warning")
-        return redirect(url_for("dashboard"))
     user = current_user()
     message = request.form.get("message", "")
 
@@ -4109,8 +3380,6 @@ def send_global_chat():
 @app.route("/api/chat/global")
 @login_required
 def api_global_chat():
-    if not chat_features_enabled().get("lobby", True):
-        return jsonify({"ok": False, "error": "chat_disabled", "messages": []}), 403
     messages = list_chat_messages("global", limit=20)
     return jsonify({"ok": True, "messages": messages})
 
@@ -4118,39 +3387,40 @@ def api_global_chat():
 @app.route("/api/chat/global/status")
 @login_required
 def api_global_chat_status():
-    if not chat_features_enabled().get("lobby", True):
-        return jsonify({"ok": True, "disabled": True, "unread_count": 0, "latest_created_at": None})
-    """Trả payload nhỏ: chỉ số tin chưa đọc và mốc mới nhất, không gửi lại 100 bản ghi."""
+    """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
     user = current_user()
-    since = (request.args.get("since") or "").strip()
     limit = 100
     query = (
         db.table("chat_messages")
         .select("id,user_id,created_at")
         .eq("scope", "global")
         .is_("room_id", "null")
-        .order("created_at", desc=False)
+        .order("created_at", desc=True)
         .limit(limit)
     )
-    if since:
-        query = query.gt("created_at", since)
-    result = execute_query(query, "api_global_chat_status", attempts=2)
-    rows = result.data or []
-    latest_created_at = rows[-1].get("created_at") if rows else None
-    unread_count = sum(1 for row in rows if row.get("user_id") != user.get("id"))
+    result = execute_query(query, "api_global_chat_status")
+    rows = list(reversed(result.data or []))
+
+    messages = [
+        {
+            "id": row.get("id"),
+            "created_at": row.get("created_at"),
+            "is_own": row.get("user_id") == user.get("id"),
+        }
+        for row in rows
+    ]
+
     return jsonify({
         "ok": True,
-        "unread_count": unread_count,
-        "latest_created_at": latest_created_at,
-        "limit_reached": len(rows) >= limit,
+        "messages": messages,
+        "latest_created_at": messages[-1]["created_at"] if messages else None,
+        "limit_reached": len(messages) >= limit,
     })
 
 
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
-    if not chat_features_enabled().get("room", True):
-        return jsonify({"ok": False, "error": "chat_disabled", "messages": []}), 403
     user = current_user()
     room = get_room(room_id)
 
@@ -4167,9 +3437,6 @@ def api_room_chat(room_id):
 @app.route("/room/<room_id>/chat/send", methods=["POST"])
 @login_required
 def send_room_chat(room_id):
-    if not chat_features_enabled().get("room", True):
-        flash("Chat Phòng đang được Admin tạm ẩn.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
     user = current_user()
     room = get_room(room_id)
 
@@ -4193,7 +3460,6 @@ def send_room_chat(room_id):
 @app.route("/admin/announcement", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_announcements")
 def admin_create_announcement():
     user = current_user()
     title = request.form.get("title", "THÔNG BÁO").strip() or "THÔNG BÁO"
@@ -4209,7 +3475,6 @@ def admin_create_announcement():
         admin_user_id=user.get("id"),
     )
     announcement_id = created.data[0].get("id") if created.data else None
-    ttl_cache_delete("api_current_announcement")
     log_admin_action("Đăng thông báo", "announcement", announcement_id, title[:40], message[:220])
 
     flash("Đã đăng thông báo admin.", "success")
@@ -4219,70 +3484,21 @@ def admin_create_announcement():
 @app.route("/admin/announcement/clear", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_announcements")
 def admin_clear_announcement():
     db.table("admin_announcements").update({"is_active": False}).eq("is_active", True).execute()
-    ttl_cache_delete("api_current_announcement")
     log_admin_action("Tắt thông báo", "announcement", details="Đã tắt toàn bộ thông báo đang hoạt động.")
     flash("Đã tắt thông báo admin.", "success")
-    return redirect_admin("system")
-
-
-@app.route("/admin/settings/friendly-matches", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("manage_friendly")
-def admin_toggle_friendly_matches():
-    raw_value = (request.form.get("friendly_matches_enabled") or "0").strip().lower()
-    enabled = raw_value in {"1", "true", "on", "yes", "enable", "enabled"}
-    set_friendly_matches_enabled(enabled)
-    log_admin_action(
-        "Cập nhật trận giao hữu",
-        "system",
-        target_label="friendly_matches_enabled",
-        details="Bật trận giao hữu" if enabled else "Tắt trận giao hữu",
-    )
-    flash("Đã bật trận giao hữu." if enabled else "Đã tắt trận giao hữu.", "success")
-    return redirect_admin("system")
-
-
-@app.route("/admin/settings/chat", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("manage_chat")
-def admin_toggle_chat_features():
-    feature = (request.form.get("feature") or "").strip().lower()
-    raw_value = (request.form.get("enabled") or "0").strip().lower()
-    enabled = raw_value in {"1", "true", "on", "yes", "enable", "enabled"}
-    if feature not in {"lobby", "room"}:
-        flash("Loại Chat không hợp lệ.", "danger")
-        return redirect_admin("system")
-    set_chat_feature_enabled(feature, enabled)
-    label = "Chat Sảnh" if feature == "lobby" else "Chat Phòng"
-    log_admin_action(
-        "Cập nhật tính năng Chat",
-        "system",
-        target_label=f"{feature}_chat_enabled",
-        details=f"{'Bật' if enabled else 'Tắt'} {label}",
-    )
-    flash(f"Đã {'bật' if enabled else 'tạm ẩn'} {label}.", "success")
     return redirect_admin("system")
 
 
 @app.route("/api/announcement/current")
 @login_required
 def api_current_announcement():
-    cache_key = "api_current_announcement"
-    cached = ttl_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
     announcement = get_active_announcement()
     if not announcement:
-        payload = {"ok": True, "announcement": None}
-        ttl_cache_set(cache_key, payload, 15)
-        return jsonify(payload)
+        return jsonify({"ok": True, "announcement": None})
 
-    payload = {
+    return jsonify({
         "ok": True,
         "announcement": {
             "id": announcement["id"],
@@ -4290,16 +3506,12 @@ def api_current_announcement():
             "message": announcement["message"],
             "created_at": announcement["created_at"],
         },
-    }
-    ttl_cache_set(cache_key, payload, 15)
-    return jsonify(payload)
+    })
 
 
 @app.route("/api/chat/global/send", methods=["POST"])
 @login_required
 def api_send_global_chat():
-    if not chat_features_enabled().get("lobby", True):
-        return jsonify({"ok": False, "error": "Chat Sảnh đang được Admin tạm ẩn."}), 403
     user = current_user()
     payload = request.get_json(silent=True) or {}
     message = payload.get("message", "")
@@ -4329,7 +3541,6 @@ def api_admin_send_announcement():
         admin_user_id=user.get("id"),
     )
     announcement_id = created.data[0].get("id") if created.data else None
-    ttl_cache_delete("api_current_announcement")
     log_admin_action("Đăng thông báo", "announcement", announcement_id, title, message)
 
     return jsonify({"ok": True})
@@ -4338,14 +3549,9 @@ def api_admin_send_announcement():
 @app.route("/api/online-count")
 @login_required
 def api_online_count():
-    cache_key = "api_online_count"
-    cached = ttl_cache_get(cache_key)
-    if cached is not None:
-        return jsonify(cached)
     players = list_players(include_admin=False)
-    payload = {"ok": True, "online_count": sum(1 for player in players if player.get("is_online"))}
-    ttl_cache_set(cache_key, payload, 20)
-    return jsonify(payload)
+    online_count = sum(1 for player in players if player.get("is_online"))
+    return jsonify({"ok": True, "online_count": online_count})
 
 
 # =========================
@@ -4522,31 +3728,19 @@ def _build_recent_form_map(matches, player_ids=None, limit=5):
 @app.route("/ranking")
 @app.route("/bxh")
 def ranking():
-    """BXH công khai với cache CDN 45 giây cho khách và cache RAM ngắn cho dữ liệu."""
-    user = current_user()
-    query_raw = (request.args.get("q") or "").strip()
-    rank_filter = (request.args.get("rank") or "all").strip()
-
-    # Chỉ cache HTML cho khách chưa đăng nhập để tuyệt đối không lẫn dữ liệu cá nhân.
-    guest_cache_key = f"public_ranking_html:{query_raw.casefold()}:{rank_filter}"
-    if not user:
-        cached_html = ttl_cache_get(guest_cache_key)
-        if cached_html is not None:
-            response = make_response(cached_html)
-            response.headers["Cache-Control"] = "public, s-maxage=45, stale-while-revalidate=120"
-            response.headers["X-Rankzone-Cache"] = "HIT"
-            return response
-
+    # BXH là trang công khai: khách chưa đăng nhập vẫn xem được.
+    # Khi đã đăng nhập, hệ thống vẫn hiển thị thêm vị trí cá nhân như trước.
     try:
-        player_rows = ttl_cache_get("ranking_players_v11044")
-        if player_rows is None:
-            player_rows = list_players()
-            ttl_cache_set("ranking_players_v11044", player_rows, 45)
+        player_rows = list_players()
     except Exception as exc:
+        # BXH là trang công khai; nếu Supabase chập chờn thì vẫn trả trang thay vì HTTP 500.
         print(f"ranking list_players warning: {exc}")
         player_rows = []
 
-    query = query_raw.casefold()
+    user = current_user()
+    query = (request.args.get("q") or "").strip().casefold()
+    rank_filter = (request.args.get("rank") or "all").strip()
+
     current_player = None
     current_position = None
     if user:
@@ -4565,10 +3759,7 @@ def ranking():
 
     top_players = filtered[:100]
     try:
-        confirmed_matches = ttl_cache_get("ranking_confirmed_matches_v11044")
-        if confirmed_matches is None:
-            confirmed_matches = list_matches(status="confirmed")
-            ttl_cache_set("ranking_confirmed_matches_v11044", confirmed_matches, 45)
+        confirmed_matches = list_matches(status="confirmed")
     except Exception as exc:
         print(f"ranking list_matches warning: {exc}")
         confirmed_matches = []
@@ -4588,36 +3779,16 @@ def ranking():
         player["record_text"] = f"{wins}T • {draws}H • {losses}B"
         player["recent_form"] = recent_form_map.get(player.get("id"), [])
 
-    if is_htmx_request():
-        response = make_response(render_template(
-            "partials/ranking_results.html",
-            players=filtered,
-            current_player=current_player,
-            current_position=current_position,
-            q=query_raw,
-            rank_filter=rank_filter,
-        ))
-        response.headers["Cache-Control"] = "private, no-store"
-        response.headers["Vary"] = "HX-Request"
-        return response
-
     template_name = "ranking.html" if user else "public_ranking.html"
-    html = render_template(
+    return render_template(
         template_name,
         players=filtered,
         current_player=current_player,
         current_position=current_position,
-        q=query_raw,
+        q=request.args.get("q", ""),
         rank_filter=rank_filter,
     )
-    response = make_response(html)
-    if not user:
-        ttl_cache_set(guest_cache_key, html, 45)
-        response.headers["Cache-Control"] = "public, s-maxage=45, stale-while-revalidate=120"
-        response.headers["X-Rankzone-Cache"] = "MISS"
-    else:
-        response.headers["Cache-Control"] = "private, no-store"
-    return response
+
 
 @app.route("/profile")
 @login_required
@@ -4646,11 +3817,6 @@ def update_profile_avatar():
             "update_profile_avatar",
         )
         session["avatar_url"] = new_url
-        cache_delete("_rz_current_user")
-        cache_delete("_rz_users_map")
-        cache_delete("_rz_players_all")
-        cache_delete("_rz_matches_all")
-        ttl_cache_delete("players_raw", "rooms_raw", "achievement_map", f"user:{user.get('id')}")
         if old_path and old_path != new_path:
             remove_avatar_object(old_path)
         flash("Ảnh đại diện đã được cập nhật và sẽ hiển thị trên toàn app.", "success")
@@ -4742,373 +3908,6 @@ def update_display_name():
     return redirect(url_for("profile", user_id=user.get("id")))
 
 
-# =========================
-# ZCOIN / Daily check-in helpers
-# =========================
-def _profile_feature_setup_state():
-    return {
-        "setup_required": True,
-        "balance": 0,
-        "transactions": [],
-        "can_claim": False,
-        "claimed_today": False,
-        "streak": 0,
-        "total_checkins": 0,
-        "today_reward": None,
-        "today_key": datetime.now(VN_TIMEZONE).date().isoformat(),
-        "reward_min": DAILY_CHECKIN_MIN_ZCOIN,
-        "reward_max": DAILY_CHECKIN_MAX_ZCOIN,
-    }
-
-
-def get_profile_reward_state(user_id):
-    """Read ZCOIN/check-in state without breaking profile if SQL is not installed yet."""
-    state = _profile_feature_setup_state()
-    state["setup_required"] = False
-    today_key = datetime.now(VN_TIMEZONE).date().isoformat()
-    state["today_key"] = today_key
-
-    try:
-        user_row = get_user(user_id) or {}
-        state["balance"] = _safe_int(user_row.get("zcoin_balance"), 0)
-    except Exception as exc:
-        print(f"get_profile_reward_state balance warning: {exc}")
-        state["setup_required"] = True
-        return state
-
-    try:
-        tx_result = execute_query(
-            db.table("zcoin_transactions")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-            .limit(12),
-            "list_zcoin_transactions",
-        )
-        state["transactions"] = tx_result.data or []
-    except Exception as exc:
-        print(f"list_zcoin_transactions warning: {exc}")
-        state["setup_required"] = True
-        return state
-
-    try:
-        today_result = execute_query(
-            db.table("daily_checkins")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("checkin_date", today_key)
-            .limit(1),
-            "get_today_checkin",
-        )
-        today_row = (today_result.data or [None])[0]
-        state["claimed_today"] = bool(today_row)
-        if today_row:
-            state["today_reward"] = _safe_int(today_row.get("reward_zcoin"), 0)
-            state["streak"] = _safe_int(today_row.get("streak_count"), 0)
-
-        latest_result = execute_query(
-            db.table("daily_checkins")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("checkin_date", desc=True)
-            .limit(1),
-            "get_latest_checkin",
-        )
-        latest_row = (latest_result.data or [None])[0]
-        if latest_row and not today_row:
-            state["streak"] = _safe_int(latest_row.get("streak_count"), 0)
-
-        all_result = execute_query(
-            db.table("daily_checkins")
-            .select("id")
-            .eq("user_id", user_id),
-            "count_daily_checkins",
-        )
-        state["total_checkins"] = len(all_result.data or [])
-        state["can_claim"] = not state["claimed_today"]
-    except Exception as exc:
-        print(f"get_profile_reward_state checkin warning: {exc}")
-        state["setup_required"] = True
-
-    return state
-
-
-# =========================
-# Shop shell + Gift code helpers (V1.10.23)
-# =========================
-def normalize_gift_code(raw_code):
-    """Normalize gift code safely for DB lookup/create."""
-    code = str(raw_code or "").strip().upper()
-    code = "".join(ch for ch in code if ch.isalnum() or ch in {"-", "_"})
-    return code[:40]
-
-
-def generate_gift_code(prefix=GIFT_CODE_DEFAULT_PREFIX):
-    safe_prefix = normalize_gift_code(prefix) or GIFT_CODE_DEFAULT_PREFIX
-    alphabet = string.ascii_uppercase + string.digits
-    return f"{safe_prefix}-" + "".join(secrets.choice(alphabet) for _ in range(8))
-
-
-def list_gift_codes(limit=80):
-    try:
-        result = execute_query(
-            db.table("gift_codes")
-            .select("*")
-            .order("created_at", desc=True)
-            .limit(limit),
-            "list_gift_codes",
-            attempts=2,
-        )
-        codes = result.data or []
-        now = now_dt()
-        for code in codes:
-            code["is_expired"] = False
-            expires_at = aware_utc(parse_dt(code.get("expires_at"))) if code.get("expires_at") else None
-            if expires_at:
-                code["is_expired"] = expires_at < now
-            max_redemptions = code.get("max_redemptions")
-            code["is_sold_out"] = bool(max_redemptions is not None and int(code.get("redeemed_count") or 0) >= int(max_redemptions or 0))
-        return codes, False
-    except Exception as exc:
-        print(f"list_gift_codes warning: {exc}")
-        return [], True
-
-
-def list_gift_code_redemptions(limit=80):
-    try:
-        result = execute_query(
-            db.table("gift_code_redemptions")
-            .select("*")
-            .order("redeemed_at", desc=True)
-            .limit(limit),
-            "list_gift_code_redemptions",
-            attempts=2,
-        )
-        rows = result.data or []
-        users = users_map()
-        for row in rows:
-            user = users.get(row.get("user_id"), {})
-            row["user_name"] = user.get("display_name") or user.get("username") or "Unknown"
-            row["username"] = user.get("username") or "-"
-        return rows, False
-    except Exception as exc:
-        print(f"list_gift_code_redemptions warning: {exc}")
-        return [], True
-
-
-
-# Profile banner assets for Shop (V1.10.36).
-# V1.10.36 opens purchase + inventory ownership for profile banner items.
-PROFILE_BANNER_SHOP_ITEMS = [
-    {
-        "code": "profile_banner_locker_room",
-        "name": "Phòng Thay Đồ Elite",
-        "rarity": "Thường",
-        "rarity_slug": "common",
-        "price": 300,
-        "file": "shop/profile_banners/profile_banner_locker_room.png",
-        "icon": "shop/profile_banner_icons/profile_banner_locker_room_icon.png",
-        "desc": "Không gian phòng thay đồ cao cấp, sạch sẽ và chuyên nghiệp cho hồ sơ của bạn.",
-    },
-    {
-        "code": "profile_banner_tactical_master",
-        "name": "Bậc Thầy Chiến Thuật",
-        "rarity": "Hiếm",
-        "rarity_slug": "rare",
-        "price": 700,
-        "file": "shop/profile_banners/profile_banner_tactical_master.png",
-        "icon": "shop/profile_banner_icons/profile_banner_tactical_master_icon.png",
-        "desc": "Bản đồ chiến thuật số với cảm hứng huấn luyện đỉnh cao trên sân cỏ hiện đại.",
-    },
-    {
-        "code": "profile_banner_neon_derby",
-        "name": "Sân Đấu Neon",
-        "rarity": "Sử Thi",
-        "rarity_slug": "epic",
-        "price": 1400,
-        "file": "shop/profile_banners/profile_banner_neon_derby.png",
-        "icon": "shop/profile_banner_icons/profile_banner_neon_derby_icon.png",
-        "desc": "Bầu không khí derby rực sáng với ánh tím xanh nổi bật và cảm giác cực cháy.",
-    },
-    {
-        "code": "profile_banner_trophy_gallery",
-        "name": "Hành Lang Vinh Quang",
-        "rarity": "Huyền Thoại",
-        "rarity_slug": "legendary",
-        "price": 2600,
-        "file": "shop/profile_banners/profile_banner_trophy_gallery.png",
-        "icon": "shop/profile_banner_icons/profile_banner_trophy_gallery_icon.png",
-        "desc": "Phòng trưng bày danh hiệu sang trọng dành cho những người chơi thích chất vương giả.",
-    },
-    {
-        "code": "profile_banner_coronation",
-        "name": "Đăng Quang Hoàng Kim",
-        "rarity": "Tuyệt Phẩm",
-        "rarity_slug": "masterpiece",
-        "price": 4500,
-        "file": "shop/profile_banners/profile_banner_coronation.png",
-        "icon": "shop/profile_banner_icons/profile_banner_coronation_icon.png",
-        "desc": "Khoảnh khắc đăng quang trên bục vàng, nổi bật như một nhà vô địch thực thụ.",
-    },
-]
-
-
-def profile_banner_shop_items():
-    items = []
-    for item in PROFILE_BANNER_SHOP_ITEMS:
-        prepared = dict(item)
-        prepared.setdefault("item_type", "profile_banner")
-        prepared.setdefault("is_featured", True)
-        items.append(prepared)
-    return items
-
-
-def all_shop_items():
-    return profile_banner_shop_items()
-
-
-def featured_shop_items():
-    # Hiện 5 banner đầu tiên trong tab Nổi bật để người chơi thấy vật phẩm thật ngay khi vào Shop.
-    return [item for item in all_shop_items() if item.get("is_featured")][:5]
-
-
-def get_shop_item_by_code(item_code):
-    target = str(item_code or "").strip()
-    if not target:
-        return None
-    return next((item for item in all_shop_items() if item.get("code") == target), None)
-
-
-def list_user_inventory(user_id):
-    """Read owned Shop items. If SQL is missing, fail softly so Shop still loads."""
-    if not user_id:
-        return [], False
-    try:
-        result = execute_query(
-            db.table("user_inventory")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True),
-            "list_user_inventory",
-            attempts=2,
-        )
-        return result.data or [], False
-    except Exception as exc:
-        print(f"list_user_inventory warning: {exc}")
-        return [], True
-
-
-def user_inventory_codes(user_id):
-    items, setup_required = list_user_inventory(user_id)
-    return {row.get("item_code") for row in items if row.get("item_code")}, setup_required
-
-
-def get_equipped_profile_banner(user_id):
-    """Return the equipped profile banner for a user. Uses existing user_inventory.is_equipped column."""
-    if not user_id:
-        return None
-    try:
-        result = execute_query(
-            db.table("user_inventory")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("item_type", "profile_banner")
-            .eq("is_equipped", True)
-            .limit(1),
-            "get_equipped_profile_banner",
-            attempts=2,
-        )
-        rows = result.data or []
-        return rows[0] if rows else None
-    except Exception as exc:
-        print(f"get_equipped_profile_banner warning: {exc}")
-        return None
-
-
-def shop_shell_sections():
-    """Shop tab structure. Featured/Decor now use real profile banner items."""
-    return [
-        {
-            "key": "featured",
-            "icon": "🔥",
-            "title": "Nổi bật",
-            "subtitle": "Trang chủ Cửa Hàng",
-            "description": "Các vật phẩm thật đang được đề xuất sẽ được trưng bày tại đây để người chơi mua nhanh bằng ZCOIN.",
-            "items": ["Banner nổi bật", "Vật phẩm mới", "Đề xuất", "Giới hạn", "Gift Code"],
-        },
-        {
-            "key": "decor",
-            "icon": "🎨",
-            "title": "Trang trí",
-            "subtitle": "Khung avatar, banner, màu nickname, danh hiệu",
-            "description": "Khu làm đẹp hồ sơ, tên hiển thị và nhận diện người chơi trong toàn hệ thống. Banner hồ sơ đã mở bán thử nghiệm bằng ZCOIN.",
-            "items": ["Hồ sơ", "Banner", "Khung Avatar", "Aura", "Màu Nickname", "Danh hiệu", "Chat", "Emoji"],
-        },
-        {
-            "key": "utility",
-            "icon": "🧰",
-            "title": "Tiện ích",
-            "subtitle": "Các quyền đổi thông tin và mở rộng tài khoản",
-            "description": "Khu tiện ích tài khoản. Các vật phẩm thật sẽ được thêm dần ở những bản sau.",
-            "items": ["Đổi tên", "Đổi slogan", "Đổi Avatar", "Đổi CLB", "Reset thống kê", "Slot đội hình"],
-        },
-        {
-            "key": "lucky",
-            "icon": "🎁",
-            "title": "Lucky Box",
-            "subtitle": "Khung chuẩn bị cho hòm quà và vé quay",
-            "description": "Khu hòm quà, vé quay, pity và lịch sử quay sẽ phát triển sau khi Shop/Kho đồ ổn định.",
-            "items": ["Hòm Đồng", "Hòm Bạc", "Hòm Vàng", "Hòm VIP", "Vé quay", "Pity", "Lịch sử quay"],
-        },
-    ]
-
-
-def get_shop_section_by_key(tab_key):
-    sections = shop_shell_sections()
-    return next((section for section in sections if section.get("key") == tab_key), None)
-
-
-
-
-@app.route("/profile/daily-checkin", methods=["POST"])
-@login_required
-def claim_daily_checkin_route():
-    user = current_user()
-    user_id = user.get("id")
-    try:
-        result = execute_query(
-            db.rpc("claim_daily_checkin", {"p_user_id": user_id}),
-            "claim_daily_checkin_rpc",
-        )
-        payload = result.data
-        if isinstance(payload, list):
-            payload = payload[0] if payload else {}
-        payload = payload or {}
-
-        if not payload.get("ok"):
-            return redirect(url_for("profile", user_id=user_id, daily_result="already") + "#checkin")
-
-        ttl_cache_delete(f"user:{user_id}", "players_raw")
-        cache_delete("_rz_current_user")
-        reward = _safe_int(payload.get("reward"), 0)
-        streak = _safe_int(payload.get("streak"), 0)
-        balance_after = _safe_int(payload.get("balance_after"), 0)
-        return redirect(
-            url_for(
-                "profile",
-                user_id=user_id,
-                daily_result="success",
-                reward=reward,
-                streak=streak,
-                balance=balance_after,
-            ) + "#checkin"
-        )
-    except Exception as exc:
-        print(f"claim_daily_checkin_route error: {exc}")
-        flash("Không thể điểm danh lúc này. Hãy kiểm tra SQL V1.10.15 đã chạy thành công chưa.", "danger")
-        return redirect(url_for("profile", user_id=user_id) + "#checkin")
-
-
 @app.route("/profile/<user_id>")
 @login_required
 def profile(user_id):
@@ -5118,19 +3917,12 @@ def profile(user_id):
         return redirect(url_for("players"))
 
     viewer = current_user()
-    page = max(1, request.args.get("page", 1, type=int) or 1)
-    page_size = 20
-    # Phân trang ngay tại Supabase: mỗi lần chỉ lấy 20 trận + 1 dòng kiểm tra trang sau.
-    page_rows, has_next = list_user_matches_page(user_id, page=page, page_size=page_size)
-    matches = [decorate_match_for_view(match, user_id) for match in page_rows]
-    history_pagination = {
-        "page": page,
-        "page_size": page_size,
-        "has_prev": page > 1,
-        "has_next": has_next,
-        "prev_page": page - 1,
-        "next_page": page + 1,
-    }
+    all_matches = list_matches()
+    player_matches_raw = [
+        match for match in all_matches
+        if user_id in {match.get("player1_id"), match.get("player2_id")}
+    ]
+    matches = [decorate_match_for_view(match, user_id) for match in player_matches_raw[:10]]
 
     form = []
     for match in matches:
@@ -5151,10 +3943,6 @@ def profile(user_id):
     decorate_player_achievements(user, position)
     user["is_online"] = is_user_online_now(user)
 
-    # Dữ liệu tổng hợp hồ sơ cần nhiều hơn 20 trận của trang hiện tại.
-    # V1.10.57 đã chuyển lịch sử sang phân trang Supabase nhưng bỏ quên biến raw dùng
-    # cho đội yêu thích, đối thủ thường gặp và H2H, gây NameError khi mở Profile.
-    player_matches_raw = list_user_matches(user_id, limit=200)
     confirmed = [match for match in player_matches_raw if match.get("status") == "confirmed"]
     teams = []
     opponents = []
@@ -5171,7 +3959,7 @@ def profile(user_id):
     if viewer.get("id") != user_id:
         h2h_matches = [
             decorate_match_for_view(match, viewer.get("id"))
-            for match in player_matches_raw
+            for match in all_matches
             if match.get("status") == "confirmed"
             and {match.get("player1_id"), match.get("player2_id")} == {viewer.get("id"), user_id}
         ]
@@ -5190,24 +3978,6 @@ def profile(user_id):
         and not activity
     )
 
-    is_own_profile = viewer.get("id") == user_id
-    reward_state = get_profile_reward_state(user_id) if is_own_profile else _profile_feature_setup_state()
-    daily_checkin_event = {
-        "status": request.args.get("daily_result", ""),
-        "reward": _safe_int(request.args.get("reward"), 0),
-        "streak": _safe_int(request.args.get("streak"), 0),
-        "balance": _safe_int(request.args.get("balance"), reward_state.get("balance", 0)),
-    }
-    user["equipped_profile_banner"] = get_equipped_profile_banner(user_id)
-
-    if is_htmx_request():
-        return render_template(
-            "partials/profile_history.html",
-            player=user,
-            matches=matches,
-            history_pagination=history_pagination,
-        )
-
     return render_template(
         "profile.html",
         player=user,
@@ -5216,258 +3986,7 @@ def profile(user_id):
         h2h=h2h,
         can_invite=can_invite,
         activity=activity,
-        reward_state=reward_state,
-        daily_checkin_event=daily_checkin_event,
-        history_pagination=history_pagination,
     )
-
-
-
-# =========================
-# Shop shell / Inventory / Gift Code (V1.10.23)
-# =========================
-@app.route("/shop")
-@login_required
-def shop():
-    user = current_user()
-    user_id = user.get("id")
-    sections = shop_shell_sections()
-    tab_keys = [section.get("key") for section in sections]
-    active_tab = (request.args.get("tab") or "featured").strip().lower()
-    if active_tab not in {*tab_keys, "gift-code"}:
-        active_tab = "featured"
-    active_section = get_shop_section_by_key(active_tab)
-    shop_tabs = [
-        {"key": section.get("key"), "icon": section.get("icon"), "title": section.get("title")}
-        for section in sections
-    ] + [{"key": "gift-code", "icon": "🎟️", "title": "Gift Code"}]
-    gift_result = {
-        "status": request.args.get("gift_result", ""),
-        "reward": _safe_int(request.args.get("reward"), 0),
-        "balance": _safe_int(request.args.get("balance"), _safe_int(user.get("zcoin_balance"), 0)),
-        "code": request.args.get("code", ""),
-    }
-    purchase_result = {
-        "status": request.args.get("purchase_result", ""),
-        "item": request.args.get("item", ""),
-        "balance": _safe_int(request.args.get("balance"), _safe_int(user.get("zcoin_balance"), 0)),
-    }
-    owned_item_codes, inventory_setup_required = user_inventory_codes(user_id)
-    return render_template(
-        "shop.html",
-        sections=sections,
-        shop_tabs=shop_tabs,
-        active_tab=active_tab,
-        active_section=active_section,
-        gift_result=gift_result,
-        purchase_result=purchase_result,
-        inventory_setup_required=inventory_setup_required,
-        owned_item_codes=owned_item_codes,
-        featured_items=featured_shop_items(),
-        profile_banner_items=profile_banner_shop_items(),
-    )
-
-
-@app.route("/shop/buy/<item_code>", methods=["POST"])
-@login_required
-def buy_shop_item_route(item_code):
-    user = current_user()
-    user_id = user.get("id")
-    tab = (request.form.get("tab") or request.args.get("tab") or "featured").strip().lower()
-    item = get_shop_item_by_code(item_code)
-    if not item:
-        flash("Vật phẩm này không tồn tại hoặc chưa được mở bán.", "danger")
-        return redirect(url_for("shop", tab=tab))
-
-    try:
-        result = execute_query(
-            db.rpc(
-                "buy_shop_item",
-                {
-                    "p_user_id": user_id,
-                    "p_item_code": item.get("code"),
-                    "p_price": _safe_int(item.get("price"), 0),
-                    "p_item_name": item.get("name"),
-                    "p_item_type": item.get("item_type", "profile_banner"),
-                    "p_item_rarity": item.get("rarity"),
-                    "p_item_image": item.get("file"),
-                    "p_item_icon": item.get("icon"),
-                    "p_metadata": {
-                        "rarity_slug": item.get("rarity_slug"),
-                        "desc": item.get("desc"),
-                        "source": "shop_profile_banner_v1_10_36",
-                    },
-                },
-            ),
-            "buy_shop_item_rpc",
-        )
-        payload = result.data
-        if isinstance(payload, list):
-            payload = payload[0] if payload else {}
-        payload = payload or {}
-
-        if not payload.get("ok"):
-            error_messages = {
-                "item_not_available": "Vật phẩm này chưa được mở bán.",
-                "already_owned": "Bạn đã sở hữu vật phẩm này rồi. Hãy vào Kho đồ để xem.",
-                "not_enough_zcoin": "Bạn chưa đủ ZCOIN để mua vật phẩm này.",
-                "user_not_found": "Không tìm thấy tài khoản mua vật phẩm.",
-                "invalid_price": "Giá vật phẩm không hợp lệ.",
-            }
-            flash(error_messages.get(payload.get("error"), "Không thể mua vật phẩm lúc này."), "danger")
-            return redirect(url_for("shop", tab=tab))
-
-        ttl_cache_delete(f"user:{user_id}", "players_raw")
-        cache_delete("_rz_current_user")
-        flash(f"Đã mua {item.get('name')} thành công! Vật phẩm đã được đưa vào Kho đồ.", "success")
-        return redirect(
-            url_for(
-                "shop",
-                tab=tab,
-                purchase_result="success",
-                item=item.get("name"),
-                balance=_safe_int(payload.get("balance_after"), 0),
-            )
-        )
-    except Exception as exc:
-        print(f"buy_shop_item_route error: {exc}")
-        flash("Không thể mua vật phẩm. Hãy kiểm tra đã chạy SQL V1.10.36 chưa.", "danger")
-        return redirect(url_for("shop", tab=tab))
-
-
-@app.route("/inventory")
-@login_required
-def inventory():
-    user = current_user()
-    items, setup_required = list_user_inventory(user.get("id"))
-    profile_banners = [item for item in items if item.get("item_type") == "profile_banner"]
-    equipped_profile_banner = next((item for item in profile_banners if item.get("is_equipped")), None)
-    return render_template(
-        "inventory.html",
-        inventory_items=items,
-        profile_banner_inventory=profile_banners,
-        equipped_profile_banner=equipped_profile_banner,
-        inventory_setup_required=setup_required,
-    )
-
-
-@app.route("/inventory/equip/<inventory_id>", methods=["POST"])
-@login_required
-def equip_inventory_item_route(inventory_id):
-    user = current_user()
-    user_id = user.get("id")
-    try:
-        result = execute_query(
-            db.table("user_inventory")
-            .select("*")
-            .eq("id", inventory_id)
-            .eq("user_id", user_id)
-            .limit(1),
-            "equip_inventory_fetch_item",
-            attempts=2,
-        )
-        rows = result.data or []
-        item = rows[0] if rows else None
-        if not item:
-            flash("Không tìm thấy vật phẩm trong Kho đồ của bạn.", "danger")
-            return redirect(url_for("inventory"))
-
-        if item.get("item_type") != "profile_banner":
-            flash("Vật phẩm này chưa hỗ trợ trang bị.", "warning")
-            return redirect(url_for("inventory"))
-
-        execute_query(
-            db.table("user_inventory")
-            .update({"is_equipped": False, "updated_at": now_iso()})
-            .eq("user_id", user_id)
-            .eq("item_type", "profile_banner"),
-            "equip_inventory_clear_profile_banners",
-            attempts=2,
-        )
-        execute_query(
-            db.table("user_inventory")
-            .update({"is_equipped": True, "updated_at": now_iso()})
-            .eq("id", inventory_id)
-            .eq("user_id", user_id),
-            "equip_inventory_set_profile_banner",
-            attempts=2,
-        )
-        ttl_cache_delete(f"user:{user_id}", "players_raw")
-        cache_delete("_rz_current_user")
-        flash(f"Đã trang bị {item.get('item_name') or 'banner hồ sơ'} vào hồ sơ.", "success")
-        return redirect(url_for("inventory"))
-    except Exception as exc:
-        print(f"equip_inventory_item_route error: {exc}")
-        flash("Không thể trang bị vật phẩm lúc này. Hãy kiểm tra bảng user_inventory đã có cột is_equipped.", "danger")
-        return redirect(url_for("inventory"))
-
-
-@app.route("/inventory/unequip/profile-banner", methods=["POST"])
-@login_required
-def unequip_profile_banner_route():
-    user = current_user()
-    user_id = user.get("id")
-    try:
-        execute_query(
-            db.table("user_inventory")
-            .update({"is_equipped": False, "updated_at": now_iso()})
-            .eq("user_id", user_id)
-            .eq("item_type", "profile_banner"),
-            "unequip_profile_banner",
-            attempts=2,
-        )
-        ttl_cache_delete(f"user:{user_id}", "players_raw")
-        cache_delete("_rz_current_user")
-        flash("Đã gỡ banner hồ sơ đang sử dụng.", "success")
-        return redirect(url_for("inventory"))
-    except Exception as exc:
-        print(f"unequip_profile_banner_route error: {exc}")
-        flash("Không thể gỡ banner lúc này.", "danger")
-        return redirect(url_for("inventory"))
-
-
-@app.route("/gift-code/redeem", methods=["POST"])
-@login_required
-def redeem_gift_code_route():
-    user = current_user()
-    user_id = user.get("id")
-    code = normalize_gift_code(request.form.get("gift_code"))
-    if not code:
-        flash("Hãy nhập gift code.", "warning")
-        return redirect(url_for("shop", tab="gift-code"))
-
-    try:
-        result = execute_query(
-            db.rpc("redeem_gift_code", {"p_user_id": user_id, "p_code": code}),
-            "redeem_gift_code_rpc",
-        )
-        payload = result.data
-        if isinstance(payload, list):
-            payload = payload[0] if payload else {}
-        payload = payload or {}
-
-        if not payload.get("ok"):
-            reason_messages = {
-                "code_not_found": "Gift code không tồn tại.",
-                "inactive": "Gift code này đã bị tắt.",
-                "expired": "Gift code này đã hết hạn.",
-                "sold_out": "Gift code này đã hết lượt sử dụng.",
-                "already_redeemed": "Bạn đã sử dụng gift code này rồi.",
-                "user_not_found": "Không tìm thấy tài khoản nhận thưởng.",
-                "unsupported_reward": "Loại phần thưởng của gift code chưa được hỗ trợ.",
-            }
-            flash(reason_messages.get(payload.get("error"), "Không thể đổi gift code này."), "danger")
-            return redirect(url_for("shop", tab="gift-code"))
-
-        ttl_cache_delete(f"user:{user_id}", "players_raw")
-        cache_delete("_rz_current_user")
-        reward = _safe_int(payload.get("reward_zcoin"), 0)
-        balance_after = _safe_int(payload.get("balance_after"), 0)
-        return redirect(url_for("shop", tab="gift-code", gift_result="success", reward=reward, balance=balance_after, code=code))
-    except Exception as exc:
-        print(f"redeem_gift_code_route error: {exc}")
-        flash("Không thể đổi gift code lúc này. Hãy kiểm tra SQL V1.10.23 đã chạy thành công chưa.", "danger")
-        return redirect(url_for("shop", tab="gift-code"))
 
 
 # =========================
@@ -5772,65 +4291,7 @@ def room_detail(room_id):
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 
-    return render_template(
-        "room_detail.html",
-        **room_view_context(room),
-    )
-
-
-def room_view_context(room, room_action_message=None, room_action_category=None):
-    return {
-        "room": room,
-        "friendly_tiers": get_available_team_tiers(),
-        "friendly_matches_enabled": friendly_matches_enabled(force=True),
-        "room_chat_enabled": chat_features_enabled().get("room", True),
-        "room_action_message": room_action_message,
-        "room_action_category": room_action_category,
-    }
-
-
-def is_room_fragment_request():
-    return (
-        request.headers.get("HX-Request", "").lower() == "true"
-        or request.headers.get("X-RZ-Fragment", "") == "1"
-    )
-
-
-def room_action_response(room_id, message, category="success", fallback="room_detail"):
-    if is_room_fragment_request():
-        return render_room_dynamic_state(room_id, message, category)
-    flash(message, category)
-    if fallback == "rooms":
-        return redirect(url_for("rooms"))
-    if fallback == "dashboard":
-        return redirect(url_for("dashboard"))
-    return redirect(url_for("room_detail", room_id=room_id))
-
-
-def render_room_dynamic_state(room_id, message=None, category="success"):
-    room = get_room(room_id)
-    if not room:
-        return '<div id="roomDynamicState" class="panel">Không tìm thấy phòng.</div>', 404
-    return render_template(
-        "partials/room_dynamic_state.html",
-        **room_view_context(room, message, category),
-    )
-
-
-@app.route("/room/<room_id>/state-fragment")
-@login_required
-def room_state_fragment(room_id):
-    user = current_user()
-    room = get_room(room_id)
-    if not room:
-        return '<div id="roomDynamicState" class="panel">Không tìm thấy phòng.</div>', 404
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return '<div id="roomDynamicState" class="panel">Bạn không thuộc phòng này.</div>', 403
-    response = make_response(render_template("partials/room_dynamic_state.html", **room_view_context(room)))
-    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-    response.headers["Pragma"] = "no-cache"
-    response.headers["Expires"] = "0"
-    return response
+    return render_template("room_detail.html", room=room, friendly_tiers=get_available_team_tiers())
 
 
 @app.route("/room/<room_id>/leave", methods=["POST"])
@@ -5965,24 +4426,25 @@ def room_rematch(room_id):
     user = current_user()
     room = get_room(room_id)
 
-    def respond(message, category="success", fallback="room_detail"):
-        return room_action_response(room_id, message, category, fallback)
-
     if not room:
-        return respond("Không tìm thấy phòng.", "danger", "dashboard")
+        flash("Không tìm thấy phòng.", "danger")
+        return redirect(url_for("dashboard"))
 
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]]:
-        return respond("Bạn không thuộc phòng này.", "danger", "dashboard")
+        flash("Bạn không thuộc phòng này.", "danger")
+        return redirect(url_for("dashboard"))
 
     if room["status"] != "confirmed":
-        return respond("Chỉ có thể đá tiếp sau khi kết quả trận trước đã được xác nhận.", "warning")
+        flash("Chỉ có thể đá tiếp sau khi kết quả trận trước đã được xác nhận.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     host_active_room = active_room_for_user(room["host_user_id"], exclude_room_id=room_id)
     guest_active_room = active_room_for_user(room["guest_user_id"], exclude_room_id=room_id)
     host_active_match = active_match_for_user(room["host_user_id"])
     guest_active_match = active_match_for_user(room["guest_user_id"])
     if host_active_room or guest_active_room or host_active_match or guest_active_match:
-        return respond("Một trong hai người đang có phòng hoặc trận khác nên chưa thể đá tiếp từ phòng này.", "warning")
+        flash("Một trong hai người đang có phòng hoặc trận khác nên chưa thể đá tiếp từ phòng này.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     is_host = user["id"] == room["host_user_id"]
     my_ready_note = REMATCH_HOST_READY_NOTE if is_host else REMATCH_GUEST_READY_NOTE
@@ -5990,13 +4452,16 @@ def room_rematch(room_id):
     current_note = room.get("note") or ""
 
     if current_note in {REMATCH_HOST_DECLINED_NOTE, REMATCH_GUEST_DECLINED_NOTE}:
-        return respond("Đối thủ đã chọn không đá tiếp. Phiên đá tiếp đã kết thúc.", "warning", "dashboard")
+        flash("Đối thủ đã chọn không đá tiếp. Phiên đá tiếp đã kết thúc.", "warning")
+        return redirect(url_for("dashboard"))
 
     if current_note == REMATCH_EXPIRED_NOTE:
-        return respond("Yêu cầu đá tiếp đã hết hạn sau 60 giây.", "warning", "dashboard")
+        flash("Yêu cầu đá tiếp đã hết hạn sau 60 giây.", "warning")
+        return redirect(url_for("dashboard"))
 
     if current_note == my_ready_note:
-        return respond("Bạn đã chọn Đá tiếp. Đang chờ đối thủ xác nhận.", "warning")
+        flash("Bạn đã chọn Đá tiếp. Đang chờ đối thủ xác nhận.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     # Khách bấm Đá tiếp: khách được tính là sẵn sàng ngay và chủ phòng thấy nút quay đội Xếp hạng.
     if not is_host:
@@ -6025,7 +4490,8 @@ def room_rematch(room_id):
             }).eq("id", room_id).eq("status", "confirmed"),
             "room_guest_rematch_ready_for_ranked_random",
         )
-        return respond("Bạn đã chọn Đá tiếp. Chủ phòng có thể quay đội Xếp hạng ngay.", "success")
+        flash("Bạn đã chọn Đá tiếp. Chủ phòng có thể quay đội Xếp hạng ngay.", "success")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     # Người đầu tiên bấm Đá tiếp: ghi nhận ngay trong phòng, không tạo lời mời mới.
     if current_note != opponent_ready_note:
@@ -6037,9 +4503,16 @@ def room_rematch(room_id):
             }).eq("id", room_id).eq("status", "confirmed"),
             "room_rematch_first_ready",
         )
-        return respond("Bạn đã chọn Đá tiếp. Đang chờ đối thủ bấm Đá tiếp.", "success")
+        flash("Bạn đã chọn Đá tiếp. Đang chờ đối thủ bấm Đá tiếp.", "success")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     # Người thứ hai đồng ý: dùng lại chính phòng hiện tại và đưa cả hai về bước random đội.
+    host_active_room = active_room_for_user(room["host_user_id"], exclude_room_id=room_id)
+    guest_active_room = active_room_for_user(room["guest_user_id"], exclude_room_id=room_id)
+    if host_active_room or guest_active_room:
+        flash("Một trong hai người đang có phòng khác chưa hoàn tất nên chưa thể đá tiếp.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
+
     # Hủy lời mời chờ cũ giữa hai người (nếu còn từ phiên bản trước), tránh hiện thông báo thừa.
     for from_user_id, to_user_id in [
         (room["host_user_id"], room["guest_user_id"]),
@@ -6071,7 +4544,9 @@ def room_rematch(room_id):
         }).eq("id", room_id).eq("status", "confirmed"),
         "room_rematch_reset_same_room",
     )
-    return respond("Cả hai đã đồng ý đá tiếp. Đang chờ Chủ Phòng quay đội.", "success")
+
+    flash("Cả hai đã đồng ý đá tiếp. Đang chờ Chủ Phòng quay đội.", "success")
+    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/room/<room_id>/rematch-decline", methods=["POST"])
@@ -6113,11 +4588,6 @@ def room_rematch_decline(room_id):
         "room_rematch_declined",
     )
 
-    if is_room_fragment_request():
-        response = make_response("", 204)
-        response.headers["HX-Redirect"] = url_for("dashboard")
-        response.headers["X-RZ-Redirect"] = url_for("dashboard")
-        return response
     flash("Bạn đã rời phòng và trở về sảnh chính.", "success")
     return redirect(url_for("dashboard"))
 
@@ -6128,21 +4598,24 @@ def room_random_teams(room_id):
     user = current_user()
     room = get_room(room_id)
 
-    def respond(message, category="success", fallback="room_detail"):
-        return room_action_response(room_id, message, category, fallback)
-
     if not room:
-        return respond("Không tìm thấy phòng.", "danger", "rooms")
+        flash("Không tìm thấy phòng.", "danger")
+        return redirect(url_for("rooms"))
     if user["id"] != room["host_user_id"] and not is_admin_user(user):
-        return respond("Chỉ chủ phòng mới được quay đội.", "danger")
+        flash("Chỉ chủ phòng mới được quay đội.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
     if room["status"] != "waiting_ready":
-        return respond("Phòng không còn ở bước chờ quay đội.", "warning")
+        flash("Phòng không còn ở bước chờ quay đội.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     if not room.get("guest_user_id"):
-        return respond("Phòng chưa có đối thủ. Hãy mời một người chơi vào phòng.", "warning")
+        flash("Phòng chưa có đối thủ. Hãy mời một người chơi vào phòng.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     if not room.get("guest_ready"):
-        return respond("Đội khách chưa sẵn sàng. Hãy chờ khách bấm Sẵn sàng.", "warning")
+        flash("Đội khách chưa sẵn sàng. Hãy chờ khách bấm Sẵn sàng.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     if room.get("match_id") or room.get("host_team") or room.get("guest_team"):
-        return respond("Phòng đã được quay đội hoặc đã tạo trận.", "warning")
+        flash("Phòng đã được quay đội hoặc đã tạo trận.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     match_mode = (request.form.get("match_mode") or MATCH_MODE_RANKED).strip().lower()
     if match_mode not in {MATCH_MODE_RANKED, MATCH_MODE_FRIENDLY}:
@@ -6151,12 +4624,11 @@ def room_random_teams(room_id):
     host = get_user(room["host_user_id"])
     guest = get_user(room["guest_user_id"])
     if not host or not guest:
-        return respond("Không tải được thông tin hai người chơi.", "danger")
+        flash("Không tải được thông tin hai người chơi.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     try:
         if match_mode == MATCH_MODE_FRIENDLY:
-            if not friendly_matches_enabled(force=True):
-                return respond("Admin đang tắt chế độ trận giao hữu. Vui lòng chọn trận xếp hạng.", "warning")
             selected_tier = (request.form.get("friendly_tier") or room.get("friendly_tier") or "A").strip().upper()
             result = friendly_random_team_pair(selected_tier)
             execute_query(
@@ -6180,11 +4652,12 @@ def room_random_teams(room_id):
                 }).eq("id", room_id).eq("status", "waiting_ready"),
                 "room_friendly_random",
             )
-            return respond(
+            flash(
                 f'Giao hữu Tier {selected_tier}: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
                 f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). Không lưu lịch sử, không tính điểm.',
                 "success",
             )
+            return redirect(url_for("room_detail", room_id=room_id))
 
         result = smart_random_team_pair(host, guest)
         match_result = execute_query(
@@ -6212,7 +4685,8 @@ def room_random_teams(room_id):
         )
         match = match_result.data[0] if match_result.data else None
         if not match:
-            return respond("Không thể tạo trận sau khi quay đội. Vui lòng thử lại.", "danger")
+            flash("Không thể tạo trận sau khi quay đội. Vui lòng thử lại.", "danger")
+            return redirect(url_for("room_detail", room_id=room_id))
 
         execute_query(
             db.table("match_rooms").update({
@@ -6234,14 +4708,16 @@ def room_random_teams(room_id):
             "room_random_start_match",
         )
     except ValueError as exc:
-        return respond(str(exc), "warning")
+        flash(str(exc), "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
-    return respond(
+    flash(
         f'Smart Random: {result["team_a"]} ({result.get("league_a") or "Không rõ giải"}) vs '
         f'{result["team_b"]} ({result.get("league_b") or "Không rõ giải"}). '
         'Hai CLB đã được quay. Chúc hai người thi đấu vui vẻ!',
         "success",
     )
+    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/room/<room_id>/reroll-friendly", methods=["POST"])
@@ -6257,9 +4733,6 @@ def room_reroll_friendly(room_id):
         return redirect(url_for("room_detail", room_id=room_id))
     if room.get("status") != "friendly_playing":
         flash("Phòng không có trận giao hữu đang diễn ra.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
-    if not friendly_matches_enabled(force=True):
-        flash("Admin đang tắt chế độ trận giao hữu. Không thể random tiếp trận giao hữu mới.", "warning")
         return redirect(url_for("room_detail", room_id=room_id))
 
     selected_tier = (room.get("friendly_tier") or "A").strip().upper()
@@ -6347,9 +4820,6 @@ def room_guest_unready(room_id):
     )
     cache_delete("_rz_rooms_all")
     ttl_cache_delete("rooms_raw")
-    if is_htmx_request():
-        updated_room = get_room(room_id)
-        return render_template("partials/room_ready_controls.html", room=updated_room)
     flash("Đã hủy trạng thái sẵn sàng.", "success")
     return redirect(url_for("room_detail", room_id=room_id))
 
@@ -6374,9 +4844,6 @@ def room_guest_ready(room_id):
     )
     cache_delete("_rz_rooms_all")
     ttl_cache_delete("rooms_raw")
-    if is_htmx_request():
-        updated_room = get_room(room_id)
-        return render_template("partials/room_ready_controls.html", room=updated_room)
     flash("Bạn đã sẵn sàng.", "success")
     return redirect(url_for("room_detail", room_id=room_id))
 
@@ -6395,35 +4862,33 @@ def room_submit_result(room_id):
     user = current_user()
     room = get_room(room_id)
 
-    def respond(message, category="success", fallback="room_detail"):
-        if is_room_fragment_request() and room:
-            return render_room_dynamic_state(room_id, message, category)
-        flash(message, category)
-        if fallback == "rooms":
-            return redirect(url_for("rooms"))
-        return redirect(url_for("room_detail", room_id=room_id))
-
     if not room:
-        return respond("Không tìm thấy phòng.", "danger", "rooms")
+        flash("Không tìm thấy phòng.", "danger")
+        return redirect(url_for("rooms"))
 
     if user["id"] != room["host_user_id"] and not is_admin_user(user):
-        return respond("Chỉ chủ phòng mới được nhập kết quả.", "danger")
+        flash("Chỉ chủ phòng mới được nhập kết quả.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     if room["status"] != "playing":
-        return respond("Chỉ trận đang đá mới được nhập kết quả.", "warning")
+        flash("Chỉ trận đang đá mới được nhập kết quả.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     try:
         host_score = int(request.form.get("host_score", "0"))
         guest_score = int(request.form.get("guest_score", "0"))
     except (TypeError, ValueError):
-        return respond("Tỉ số phải là số nguyên.", "danger")
+        flash("Tỉ số phải là số nguyên.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     if host_score < 0 or guest_score < 0:
-        return respond("Tỉ số không được âm.", "danger")
+        flash("Tỉ số không được âm.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     match = get_match(room["match_id"])
     if not match:
-        return respond("Không tìm thấy match gắn với phòng.", "danger")
+        flash("Không tìm thấy match gắn với phòng.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     if host_score > guest_score:
         winner_id = room["host_user_id"]
@@ -6462,9 +4927,11 @@ def room_submit_result(room_id):
         ttl_cache_delete("rooms_raw")
     except Exception as exc:
         print(f"room_submit_result ERROR room={room_id} match={match.get('id')}: {type(exc).__name__}: {exc}")
-        return respond("Không thể lưu kết quả do lỗi dữ liệu/kết nối. Vui lòng thử lại; chưa cộng hoặc trừ RP.", "danger")
+        flash("Không thể lưu kết quả do lỗi dữ liệu/kết nối. Vui lòng thử lại; chưa cộng hoặc trừ RP.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
-    return respond("Đã nhập kết quả. Đang chờ người được mời xác nhận.", "success")
+    flash("Đã nhập kết quả. Đang chờ người được mời xác nhận.", "success")
+    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/room/<room_id>/confirm-result", methods=["POST"])
@@ -6473,49 +4940,48 @@ def room_confirm_result(room_id):
     user = current_user()
     room = get_room(room_id)
 
-    def respond(message, category="success", fallback="room_detail"):
-        if is_room_fragment_request() and room:
-            return render_room_dynamic_state(room_id, message, category)
-        flash(message, category)
-        if fallback == "rooms":
-            return redirect(url_for("rooms"))
+    if not room:
+        flash("Không tìm thấy phòng.", "danger")
+        return redirect(url_for("rooms"))
+
+    if user["id"] != room["guest_user_id"] and not is_admin_user(user):
+        flash("Chỉ người được mời mới được xác nhận kết quả.", "danger")
         return redirect(url_for("room_detail", room_id=room_id))
 
-    if not room:
-        return respond("Không tìm thấy phòng.", "danger", "rooms")
-
-    if not can_review_room_result(user, room):
-        return respond("Chỉ người được mời mới được xác nhận kết quả. Người đã nhập kết quả không thể tự xác nhận.", "danger")
-
     if room["status"] != "waiting_result_confirm":
-        return respond("Phòng chưa có kết quả cần xác nhận.", "warning")
+        flash("Phòng chưa có kết quả cần xác nhận.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     match = get_match(room["match_id"])
     if not match:
-        return respond("Không tìm thấy trận.", "danger")
+        flash("Không tìm thấy trận.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     try:
+        users_before_streak_event = users_map()
         delta1, delta2 = apply_match_result(match)
+        streak_event = build_win_streak_event(match, room, users_before_streak_event)
         execute_query(
             db.table("match_rooms").update({
                 "status": "confirmed",
                 "confirmed_by_id": user["id"],
-                "note": "Khách đã xác nhận kết quả.",
+                "note": encode_win_streak_room_note(streak_event),
                 "state_expires_at": None,
                 "updated_at": now_iso(),
             }).eq("id", room_id).eq("status", "waiting_result_confirm"),
             "confirm_result_room",
         )
-        cache_delete("_rz_rooms_all")
-        ttl_cache_delete("rooms_raw", "matches_raw")
     except ValueError as exc:
         print(f"room_confirm_result validation room={room_id} match={match.get('id')}: {exc}")
-        return respond(str(exc), "warning")
+        flash(str(exc), "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     except Exception as exc:
         print(f"room_confirm_result ERROR room={room_id} match={match.get('id')}: {type(exc).__name__}: {exc}")
-        return respond("Không thể xác nhận kết quả do lỗi kết nối dữ liệu. Điểm chưa được xử lý thêm; vui lòng thử lại sau vài giây.", "danger")
+        flash("Không thể xác nhận kết quả do lỗi kết nối dữ liệu. Điểm chưa được xử lý thêm; vui lòng thử lại sau vài giây.", "danger")
+        return redirect(url_for("room_detail", room_id=room_id))
 
-    return respond(f"Đã xác nhận. Chủ phòng: {int(delta1):+d}, Khách: {int(delta2):+d}. Hai người có thể bấm Đá tiếp.", "success")
+    flash(f"Đã xác nhận. Chủ phòng: {int(delta1):+d}, Khách: {int(delta2):+d}. Hai người có thể bấm Đá tiếp.", "success")
+    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/room/<room_id>/dispute-result", methods=["POST"])
@@ -6528,8 +4994,8 @@ def room_dispute_result(room_id):
         flash("Không tìm thấy phòng.", "danger")
         return redirect(url_for("rooms"))
 
-    if not can_review_room_result(user, room):
-        flash("Chỉ người được mời mới được báo tranh chấp. Người đã nhập kết quả không thể tự tranh chấp/xác nhận kết quả của chính mình.", "danger")
+    if user["id"] != room["guest_user_id"]:
+        flash("Chỉ người được mời mới được báo tranh chấp.", "danger")
         return redirect(url_for("room_detail", room_id=room_id))
 
     if room["status"] != "waiting_result_confirm":
@@ -6804,6 +5270,17 @@ def apply_match_result(match):
         )
         delta1, delta2 = _safe_int(delta1), _safe_int(delta2)
 
+        # Bảo vệ quy tắc RP: trận có thắng/thua luôn phải có đúng một delta âm.
+        # Điều này sửa trường hợp dữ liệu/công thức cũ làm người thua không bị trừ RP.
+        if score1 > score2:
+            delta1 = max(1, abs(delta1))
+            delta2 = -max(1, abs(delta2 or BASE_LOSS_POINTS))
+        elif score2 > score1:
+            delta1 = -max(1, abs(delta1 or BASE_LOSS_POINTS))
+            delta2 = max(1, abs(delta2))
+        else:
+            delta1 = delta2 = 0
+
         # The 0.95 coefficient belongs to the actual room host, not implicitly player1.
         host_user_id = match.get("host_user_id")
         if not host_user_id:
@@ -6821,10 +5298,6 @@ def apply_match_result(match):
         elif str(host_user_id or "") == str(player2_id):
             delta2 = _safe_int(apply_host_xp_factor(delta2, match.get("host_xp_factor", HOST_XP_FACTOR)))
 
-        # Final safety guard: a non-draw ranked match must never save +0/0 RP
-        # for the loser or non-positive RP for the winner.
-        delta1, delta2 = enforce_ranked_delta_signs(score1, score2, delta1, delta2)
-
         update_player_after_match(player1, delta1, score1, score2)
         update_player_after_match(player2, delta2, score2, score1)
 
@@ -6838,10 +5311,6 @@ def apply_match_result(match):
             }).eq("id", match["id"]).eq("status", "processing_result"),
             "finalize_match_result",
         )
-        cache_delete("_rz_matches_all")
-        cache_delete("_rz_players_all")
-        cache_delete("_rz_users_map")
-        ttl_cache_delete("players_raw", "rooms_raw", "achievement_map", f"user:{player1_id}", f"user:{player2_id}")
     except Exception as exc:
         print(f"apply_match_result ERROR match={match.get('id')} status={original_status}: {type(exc).__name__}: {exc}")
         try:
@@ -6892,18 +5361,13 @@ def resolve_match_dispute_with_result(
         winner_id = loser_id = None
 
     final_note = (resolution_note or "Tranh chấp đã được xử lý và kết quả được công nhận.").strip()[:500]
-    # Không chuyển thẳng sang confirmed trước khi tính RP.
-    # Một số database đang đặt matches.delta1/delta2 là NOT NULL, nên luôn giữ 0 tạm thời
-    # trong lúc chuẩn bị; apply_match_result sẽ claim sang processing_result rồi ghi delta thật.
     execute_query(
         db.table("matches").update({
             "score1": score1,
             "score2": score2,
             "winner_id": winner_id,
             "loser_id": loser_id,
-            "status": "waiting_confirm",
-            "delta1": 0,
-            "delta2": 0,
+            "status": "confirmed",
             "note": final_note,
             "updated_at": now_iso(),
         }).eq("id", match.get("id")).eq("status", "disputed"),
@@ -7130,7 +5594,7 @@ def delete_player_safe(user_id):
         return False, "Không tìm thấy tài khoản."
 
     if is_admin_user(user):
-        return False, "Không được xóa tài khoản admin."
+        return False, "Không được xóa tài khoản admin chính."
 
     for room in list_rooms():
         if user_id in [room.get("host_user_id"), room.get("guest_user_id")]:
@@ -7157,85 +5621,32 @@ def redirect_admin(tab="overview"):
     return redirect(url_for("admin") + f"#{tab}")
 
 
-def is_htmx_request():
-    """Nhận diện request HTMX; backend vẫn dùng cùng logic xác thực và truy vấn dữ liệu."""
-    return request.headers.get("HX-Request", "").lower() == "true"
-
-
-def htmx_redirect(location):
-    response = make_response("", 204)
-    response.headers["HX-Redirect"] = location
-    return response
-
-
 @app.route("/admin")
 @login_required
 @admin_required
 def admin():
-    user = current_user()
-    admin_caps = get_admin_permissions(user)
-    owner = is_owner_user(user)
-
-    needs_full_user_admin = owner or any(admin_caps.get(code) for code in (
-        "view_users", "approve_users", "reset_passwords", "edit_users", "delete_users",
+    all_rooms = list_rooms()
+    all_matches = list_matches()
+    admin_users = decorate_admin_users(list_all_users())
+    # Ưu tiên nhóm IP trùng lên đầu và đặt các tài khoản cùng IP cạnh nhau.
+    admin_users.sort(key=lambda item: (
+        0 if item.get("duplicate_ips") else 1,
+        (item.get("duplicate_ips") or [item.get("latest_ip") or "~"])[0],
+        (item.get("username") or "").lower(),
     ))
-    needs_player_picker = bool(admin_caps.get("create_matches") or admin_caps.get("manage_test_data"))
-    needs_matches = any(admin_caps.get(code) for code in (
-        "view_matches", "create_matches", "edit_matches", "delete_matches", "manage_disputes",
-    ))
-    needs_rooms = bool(admin_caps.get("manage_rooms"))
-
-    if needs_full_user_admin:
-        admin_users = decorate_admin_users(list_all_users())
-        admin_users.sort(key=lambda item: (
-            0 if item.get("duplicate_ips") else 1,
-            (item.get("duplicate_ips") or [item.get("latest_ip") or "~"])[0],
-            (item.get("username") or "").lower(),
-        ))
-        players = [item for item in admin_users if item.get("role") == "player"]
-    elif needs_player_picker:
-        admin_users = []
-        players = list_admin_player_picker()
-    else:
-        admin_users = []
-        players = []
-
-    # Chỉ đưa các tài khoản có admin_level=admin vào khu phân quyền.
-    # Owner hiện tại luôn toàn quyền nên không cần render một card rỗng hoặc công tắc quyền.
-    admins = [
-        item for item in admin_users
-        if owner and item.get("admin_level") == "admin"
-    ]
-    pending_users = [item for item in players if item.get("account_status") == "pending"] if admin_caps.get("approve_users") else []
-
-    all_matches = list_recent_matches(80) if needs_matches else []
-    all_rooms = list_admin_active_rooms(80) if needs_rooms else []
-    pending_disputes = (
-        [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
-        if admin_caps.get("manage_disputes") else []
-    )
-    password_reset_requests = list_password_reset_requests("pending") if admin_caps.get("reset_passwords") else []
-    audit_logs = list_admin_activity_logs() if admin_caps.get("view_logs") else []
-
-    if admin_caps.get("manage_gift_codes"):
-        gift_codes, gift_code_setup_required = list_gift_codes()
-        gift_redemptions, gift_redemption_setup_required = list_gift_code_redemptions()
-        gift_code_setup_required = gift_code_setup_required or gift_redemption_setup_required
-    else:
-        gift_codes, gift_redemptions, gift_code_setup_required = [], [], False
-
-    duplicate_ip_groups = build_duplicate_ip_groups(admin_users) if admin_caps.get("view_users") else []
+    players = [u for u in admin_users if u.get("role") == "player"]
+    admins = [u for u in admin_users if is_admin_user(u)]
+    pending_users = [u for u in players if u.get("account_status") == "pending"]
+    password_reset_requests = list_password_reset_requests("pending")
+    pending_disputes = [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
+    audit_logs = list_admin_activity_logs() if is_owner_user(current_user()) else []
+    duplicate_ip_groups = build_duplicate_ip_groups(admin_users)
     duplicate_ip_user_count = len({
         str(account.get("id"))
         for group in duplicate_ip_groups
         for account in group.get("accounts", [])
         if account.get("id")
     })
-    chat_states = chat_features_enabled() if admin_caps.get("manage_chat") else {"lobby": True, "room": True}
-    sub_admin_permissions = {
-        str(item.get("id")): get_admin_permissions(item)
-        for item in admins if item.get("admin_level") == "admin"
-    } if owner else {}
 
     return render_template(
         "admin.html",
@@ -7243,38 +5654,25 @@ def admin():
         players=players,
         admins=admins,
         pending_users=pending_users,
-        all_matches=all_matches,
-        disputed=[m for m in all_matches if m.get("status") == "disputed"],
-        playing=[m for m in all_matches if m.get("status") in {"playing", "friendly_playing"}],
-        rooms=all_rooms,
-        all_rooms=all_rooms,
-        invites=list_admin_pending_invites(100) if needs_rooms else [],
-        active_announcement=get_active_announcement() if admin_caps.get("manage_announcements") else None,
+        all_matches=all_matches[:80],
+        disputed=[m for m in all_matches if m["status"] == "disputed"],
+        playing=[m for m in all_matches if m["status"] == "playing"],
+        rooms=[r for r in all_rooms if r["status"] in ["waiting_ready", "playing", "waiting_result_confirm", "disputed"]],
+        all_rooms=all_rooms[:80],
+        invites=list_invites("pending"),
+        active_announcement=get_active_announcement(),
         password_reset_requests=password_reset_requests,
         audit_logs=audit_logs,
         duplicate_ip_groups=duplicate_ip_groups,
         duplicate_ip_user_count=duplicate_ip_user_count,
         pending_disputes=pending_disputes,
-        can_create_test_account=bool(admin_caps.get("manage_test_data")),
-        can_import_accounts_csv=bool(admin_caps.get("manage_test_data")),
-        friendly_matches_enabled=friendly_matches_enabled() if admin_caps.get("manage_friendly") else False,
-        lobby_chat_enabled=chat_states.get("lobby", True),
-        room_chat_enabled=chat_states.get("room", True),
-        gift_codes=gift_codes,
-        gift_redemptions=gift_redemptions,
-        gift_code_setup_required=gift_code_setup_required,
-        admin_caps=admin_caps,
-        admin_permission_definitions=ADMIN_PERMISSION_DEFINITIONS,
-        sub_admin_permissions=sub_admin_permissions,
+        can_create_test_account=has_admin_permission(current_user(), "create_test_account"),
+        can_import_accounts_csv=has_admin_permission(current_user(), "import_accounts_csv"),
     )
 
 
 
-def _safe_int_bounded(value, default=0, minimum=0, maximum=999999):
-    """Bounded integer parser for admin CSV/import form fields.
-
-    Keep this separate from _safe_int because ranked RP deltas can be negative.
-    """
+def _safe_int(value, default=0, minimum=0, maximum=999999):
     try:
         parsed = int(str(value).strip())
     except (TypeError, ValueError):
@@ -7301,10 +5699,10 @@ def _build_test_user_payload(row, default_password="Test@12345"):
     if len(password) < 6:
         raise ValueError(f"Mật khẩu của {username} phải có ít nhất 6 ký tự.")
 
-    wins = _safe_int_bounded(row.get("wins"), 0)
-    draws = _safe_int_bounded(row.get("draws"), 0)
-    losses = _safe_int_bounded(row.get("losses"), 0)
-    supplied_total = _safe_int_bounded(row.get("total_matches"), wins + draws + losses)
+    wins = _safe_int(row.get("wins"), 0)
+    draws = _safe_int(row.get("draws"), 0)
+    losses = _safe_int(row.get("losses"), 0)
+    supplied_total = _safe_int(row.get("total_matches"), wins + draws + losses)
     total_matches = max(supplied_total, wins + draws + losses)
 
     return {
@@ -7315,13 +5713,13 @@ def _build_test_user_payload(row, default_password="Test@12345"):
         "role": "player",
         "account_status": "approved",
         "invite_code_used": None,
-        "rank_points": _safe_int_bounded(row.get("rank_points"), DEFAULT_POINTS, 0, 999999),
+        "rank_points": _safe_int(row.get("rank_points"), DEFAULT_POINTS, 0, 999999),
         "wins": wins,
         "draws": draws,
         "losses": losses,
         "total_matches": total_matches,
-        "goals_for": _safe_int_bounded(row.get("goals_for"), 0),
-        "goals_against": _safe_int_bounded(row.get("goals_against"), 0),
+        "goals_for": _safe_int(row.get("goals_for"), 0),
+        "goals_against": _safe_int(row.get("goals_against"), 0),
         "is_online": False,
         "must_change_password": False,
         "register_ip": "ADMIN_TEST_IMPORT",
@@ -7329,81 +5727,10 @@ def _build_test_user_payload(row, default_password="Test@12345"):
     }
 
 
-
-@app.route("/admin/gift-code/create", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("manage_gift_codes")
-def admin_create_gift_code():
-    custom_code = normalize_gift_code(request.form.get("code"))
-    code = custom_code or generate_gift_code(request.form.get("prefix") or GIFT_CODE_DEFAULT_PREFIX)
-    reward_zcoin = _safe_int_bounded(request.form.get("reward_zcoin"), 0, 1, GIFT_CODE_MAX_REWARD_ZCOIN)
-    max_redemptions = _safe_int_bounded(request.form.get("max_redemptions"), 1, 1, 100000)
-    note = (request.form.get("note") or "").strip()[:250]
-    expires_at = None
-    expires_raw = (request.form.get("expires_at") or "").strip()
-    if expires_raw:
-        try:
-            # HTML datetime-local returns YYYY-MM-DDTHH:MM in local time.
-            local_dt = datetime.fromisoformat(expires_raw)
-            expires_at = local_dt.replace(tzinfo=VN_TIMEZONE).astimezone(timezone.utc).isoformat()
-        except Exception:
-            flash("Ngày hết hạn gift code không hợp lệ.", "danger")
-            return redirect_admin("gift-codes")
-
-    if not code or len(code) < 4:
-        flash("Mã gift code phải có ít nhất 4 ký tự hợp lệ.", "danger")
-        return redirect_admin("gift-codes")
-
-    actor = current_user()
-    payload = {
-        "code": code,
-        "reward_type": "zcoin",
-        "reward_zcoin": reward_zcoin,
-        "max_redemptions": max_redemptions,
-        "per_user_limit": 1,
-        "is_active": True,
-        "expires_at": expires_at,
-        "created_by": actor.get("id"),
-        "created_by_name": actor.get("username") or actor.get("display_name") or "Admin",
-        "note": note or None,
-        "updated_at": now_iso(),
-    }
-
-    try:
-        execute_query(db.table("gift_codes").insert(payload), "admin_create_gift_code")
-        log_admin_action("Tạo gift code", "gift_code", code, code, {"reward_zcoin": reward_zcoin, "max_redemptions": max_redemptions})
-        flash(f"Đã tạo gift code {code} với phần thưởng {reward_zcoin} ZCOIN.", "success")
-    except Exception as exc:
-        print(f"admin_create_gift_code error: {exc}")
-        flash("Không thể tạo gift code. Có thể mã đã tồn tại hoặc chưa chạy SQL V1.10.23.", "danger")
-    return redirect_admin("gift-codes")
-
-
-@app.route("/admin/gift-code/<code_id>/toggle", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("manage_gift_codes")
-def admin_toggle_gift_code(code_id):
-    action = (request.form.get("action") or "disable").strip()
-    is_active = action == "enable"
-    try:
-        execute_query(
-            db.table("gift_codes").update({"is_active": is_active, "updated_at": now_iso()}).eq("id", code_id),
-            "admin_toggle_gift_code",
-        )
-        log_admin_action("Bật gift code" if is_active else "Tắt gift code", "gift_code", code_id, code_id, "")
-        flash("Đã cập nhật trạng thái gift code.", "success")
-    except Exception as exc:
-        print(f"admin_toggle_gift_code error: {exc}")
-        flash("Không thể cập nhật gift code lúc này.", "danger")
-    return redirect_admin("gift-codes")
-
-
 @app.route("/admin/test-account/create", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_test_data")
+@admin_permission_required("create_test_account")
 def admin_create_test_account():
     row = {
         "username": request.form.get("username", ""),
@@ -7431,7 +5758,7 @@ def admin_create_test_account():
 @app.route("/admin/test-account/sample.csv")
 @login_required
 @admin_required
-@admin_permission_required("manage_test_data")
+@admin_permission_required("import_accounts_csv")
 def admin_download_test_account_sample():
     sample_rows = [
         ["username", "display_name", "password", "zalo_name", "rank_points", "wins", "draws", "losses", "total_matches", "goals_for", "goals_against"],
@@ -7451,7 +5778,7 @@ def admin_download_test_account_sample():
 @app.route("/admin/test-account/import", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_test_data")
+@admin_permission_required("import_accounts_csv")
 def admin_import_test_accounts():
     upload = request.files.get("csv_file")
     pasted_csv = request.form.get("csv_text", "").strip()
@@ -7533,9 +5860,9 @@ def admin_import_test_accounts():
                 # Chỉ rank_points được phép nhập số âm để Admin hoàn tác/trừ RP.
                 # Các thống kê trận đấu vẫn bắt buộc không âm để tránh dữ liệu sai.
                 if field == "rank_points":
-                    increments[field] = _safe_int_bounded(raw_value, 0, -999999, 999999)
+                    increments[field] = _safe_int(raw_value, 0, -999999, 999999)
                 else:
-                    increments[field] = _safe_int_bounded(raw_value, 0, 0, 999999)
+                    increments[field] = _safe_int(raw_value, 0, 0, 999999)
 
             # Nếu CSV có thắng/hòa/thua nhưng không có total_matches,
             # tự cộng tổng số trận tương ứng để dữ liệu không bị lệch.
@@ -7553,7 +5880,7 @@ def admin_import_test_accounts():
 
             update_payload = {}
             for field, increment in increments.items():
-                current_value = _safe_int_bounded(existing_user.get(field), 0, 0, 999999)
+                current_value = _safe_int(existing_user.get(field), 0, 0, 999999)
                 if field == "rank_points":
                     # Cho phép cộng/trừ RP nhưng không để tổng điểm xuống dưới 0.
                     update_payload[field] = max(0, min(999999, current_value + increment))
@@ -7605,7 +5932,6 @@ def admin_import_test_accounts():
 @app.route("/admin/password-reset/<request_id>/resolve", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("reset_passwords")
 def admin_resolve_password_reset(request_id):
     reset_request = get_password_reset_request(request_id)
     if not reset_request or reset_request.get("status") != "pending":
@@ -7653,7 +5979,6 @@ def admin_resolve_password_reset(request_id):
 @app.route("/admin/password-reset/<request_id>/reject", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("reset_passwords")
 def admin_reject_password_reset(request_id):
     reset_request = get_password_reset_request(request_id)
     if not reset_request or reset_request.get("status") != "pending":
@@ -7685,7 +6010,6 @@ def admin_reject_password_reset(request_id):
 @app.route("/admin/account/<user_id>/approve", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("approve_users")
 def admin_approve_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -7710,7 +6034,6 @@ def admin_approve_account(user_id):
 @app.route("/admin/account/<user_id>/reject", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("approve_users")
 def admin_reject_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -7734,7 +6057,6 @@ def admin_reject_account(user_id):
 @app.route("/admin/account/<user_id>/ban", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("edit_users")
 def admin_ban_account(user_id):
     user = get_user(user_id)
     actor = current_user()
@@ -7742,7 +6064,7 @@ def admin_ban_account(user_id):
         flash("Không tìm thấy tài khoản player.", "danger")
         return redirect_admin("users")
     if is_admin_user(user) and not is_owner_user(actor):
-        flash("Chỉ chủ hệ thống mới có thể xử lý tài khoản Admin.", "danger")
+        flash("Chỉ chủ hệ thống mới có thể xử lý tài khoản Admin phụ.", "danger")
         return redirect_admin("users")
     if is_admin_user(user):
         flash("Hãy gỡ quyền Admin trước khi khóa tài khoản.", "danger")
@@ -7759,7 +6081,6 @@ def admin_ban_account(user_id):
 @app.route("/admin/account/<user_id>/unban", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("edit_users")
 def admin_unban_account(user_id):
     user = get_user(user_id)
     if not user or user.get("role") != "player":
@@ -7778,7 +6099,6 @@ def admin_unban_account(user_id):
 @app.route("/admin/invite-code/create", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_invite_codes")
 def admin_create_invite_code():
     actor = current_user()
     label = request.form.get("label", "").strip()[:80]
@@ -7806,7 +6126,6 @@ def admin_create_invite_code():
 @app.route("/admin/invite-code/<code_id>/disable", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_invite_codes")
 def admin_disable_invite_code(code_id):
     execute_query(
         db.table("registration_invite_codes").update({"is_active": False}).eq("id", code_id),
@@ -7835,9 +6154,8 @@ def admin_promote_user(user_id):
         db.table("users").update({"admin_level": "admin", "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
         "promote_admin",
     )
-    save_admin_permissions(user_id, {code: False for code in ADMIN_PERMISSION_CODES})
-    log_admin_action("Thêm Admin", "user", user_id, user.get("username"), "admin_level: none → admin")
-    flash(f"Đã thêm {user.get('username')} làm admin. Người này vẫn có thể thi đấu.", "success")
+    log_admin_action("Thêm Admin phụ", "user", user_id, user.get("username"), "admin_level: none → admin")
+    flash(f"Đã thêm {user.get('username')} làm admin phụ. Người này vẫn có thể thi đấu.", "success")
     return redirect_admin("users")
 
 
@@ -7847,33 +6165,45 @@ def admin_promote_user(user_id):
 def admin_update_permissions(user_id):
     user = get_user(user_id)
     if not user or user.get("admin_level") != "admin":
-        flash("Không tìm thấy Admin.", "danger")
+        flash("Không tìm thấy Admin phụ.", "danger")
         return redirect_admin("overview")
 
     payload = {
-        code: request.form.get(f"permission_{code}") == "1"
-        for code in ADMIN_PERMISSION_CODES
+        "admin_can_create_test_account": request.form.get("can_create_test_account") == "1",
+        "admin_can_import_accounts_csv": request.form.get("can_import_accounts_csv") == "1",
     }
     try:
-        payload = save_admin_permissions(user_id, payload)
-        # Đồng bộ hai cột cũ để các phiên bản cũ hơn vẫn hoạt động hợp lý.
         execute_query(
-            db.table("users").update({
-                "admin_can_create_test_account": bool(payload.get("manage_test_data")),
-                "admin_can_import_accounts_csv": bool(payload.get("manage_test_data")),
-            }).eq("id", user_id),
-            "sync_legacy_admin_permissions",
-            attempts=2,
+            db.table("users").update(payload).eq("id", user_id),
+            "update_admin_permissions",
         )
-    except Exception:
-        app.logger.exception("Không thể lưu quyền Admin")
-        flash("Không thể lưu quyền Admin. Vui lòng kiểm tra Runtime Logs.", "danger")
+    except Exception as exc:
+        error_text = str(exc)
+        lowered = error_text.lower()
+        missing_permission_columns = (
+            "admin_can_create_test_account" in lowered
+            or "admin_can_import_accounts_csv" in lowered
+            or "pgrst204" in lowered
+            or "column" in lowered and "schema cache" in lowered
+        )
+        app.logger.exception("Không thể lưu quyền Admin phụ")
+        if missing_permission_columns:
+            flash(
+                "Supabase chưa có cột quyền Admin phụ. Hãy chạy file "
+                "docs/update_admin_permissions_v1_9_1.sql trong Supabase SQL Editor rồi lưu lại.",
+                "danger",
+            )
+        else:
+            flash(
+                "Không thể lưu quyền Admin phụ do lỗi kết nối dữ liệu. Vui lòng thử lại và kiểm tra Runtime Logs.",
+                "danger",
+            )
         return redirect_admin("overview")
 
     cache_delete("_rz_players_all")
     cache_delete("_rz_users_map")
-    log_admin_action("Cập nhật quyền Admin", "user", user_id, user.get("username"), payload)
-    flash(f"Đã cập nhật quyền cho Admin {user.get('username')}.", "success")
+    log_admin_action("Cập nhật quyền Admin phụ", "user", user_id, user.get("username"), payload)
+    flash(f"Đã cập nhật quyền cho Admin phụ {user.get('username')}.", "success")
     return redirect_admin("overview")
 
 @app.route("/admin/user/<user_id>/demote", methods=["POST"])
@@ -7882,30 +6212,20 @@ def admin_update_permissions(user_id):
 def admin_demote_user(user_id):
     user = get_user(user_id)
     if not user or user.get("admin_level") != "admin":
-        flash("Không tìm thấy admin.", "danger")
+        flash("Không tìm thấy admin phụ.", "danger")
         return redirect_admin("users")
 
     execute_query(
         db.table("users").update({"admin_level": "none", "admin_can_create_test_account": False, "admin_can_import_accounts_csv": False}).eq("id", user_id),
         "demote_admin",
     )
-    try:
-        execute_query(
-            db.table("system_settings").delete().eq("setting_key", _admin_permission_setting_key(user_id)),
-            "delete_admin_permissions",
-            attempts=2,
-        )
-        _admin_permission_cache.pop(str(user_id), None)
-    except Exception as exc:
-        print(f"delete_admin_permissions warning: {exc}")
-    log_admin_action("Gỡ Admin", "user", user_id, user.get("username"), "admin_level: admin → none")
-    flash("Đã gỡ quyền admin.", "success")
+    log_admin_action("Gỡ Admin phụ", "user", user_id, user.get("username"), "admin_level: admin → none")
+    flash("Đã gỡ quyền admin phụ.", "success")
     return redirect_admin("users")
 
 @app.route("/admin/dispute/<dispute_id>/accept", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_disputes")
 def admin_dispute_accept(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -7932,7 +6252,6 @@ def admin_dispute_accept(dispute_id):
 @app.route("/admin/dispute/<dispute_id>/edit", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_disputes")
 def admin_dispute_edit(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -7961,7 +6280,6 @@ def admin_dispute_edit(dispute_id):
 @app.route("/admin/dispute/<dispute_id>/cancel", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_disputes")
 def admin_dispute_cancel(dispute_id):
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
@@ -7982,7 +6300,6 @@ def admin_dispute_cancel(dispute_id):
 @app.route("/admin/cancel/<match_id>", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("delete_matches")
 def admin_cancel(match_id):
     match = get_match(match_id)
     if not match:
@@ -8019,7 +6336,6 @@ def admin_cancel(match_id):
 @app.route("/admin/confirm-disputed/<match_id>", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_disputes")
 def admin_confirm_disputed(match_id):
     match = get_match(match_id)
     if not match:
@@ -8054,7 +6370,6 @@ def admin_confirm_disputed(match_id):
 @app.route("/admin/toggle-online/<user_id>", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("edit_users")
 def admin_toggle_online(user_id):
     user = get_user(user_id)
     if not user:
@@ -8071,7 +6386,6 @@ def admin_toggle_online(user_id):
 @app.route("/admin/player/<user_id>/update", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("edit_users")
 def admin_update_player(user_id):
     player = get_user(user_id)
     actor = current_user()
@@ -8080,7 +6394,7 @@ def admin_update_player(user_id):
         return redirect(url_for("admin") + "#users")
 
     if is_admin_user(player) and not is_owner_user(actor):
-        flash("Chỉ Admin mới được sửa tài khoản Admin.", "danger")
+        flash("Chỉ Chủ hệ thống mới được sửa tài khoản Admin.", "danger")
         return redirect(url_for("admin") + "#users")
 
     display_name = request.form.get("display_name", "").strip()
@@ -8149,7 +6463,6 @@ def admin_update_player(user_id):
 @app.route("/admin/player/<user_id>/reset-stats", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("edit_users")
 def admin_reset_player_stats(user_id):
     player = get_user(user_id)
     if not player or is_admin_user(player):
@@ -8175,7 +6488,6 @@ def admin_reset_player_stats(user_id):
 @app.route("/admin/player/<user_id>/delete", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("delete_users")
 def admin_delete_player(user_id):
     player = get_user(user_id)
     player_label = player.get("username") if player else "Không xác định"
@@ -8189,249 +6501,35 @@ def admin_delete_player(user_id):
     return redirect_admin("users")
 
 
-def _admin_match_redirect(default_tab="matches"):
-    next_url = (request.form.get("return_url") or "").strip()
-    if next_url.startswith("/") and not next_url.startswith("//"):
-        return redirect(next_url)
-    return redirect_admin(default_tab)
-
-
-def _normalize_manual_team_name(value):
-    return str(value or "").strip()[:80]
-
-
-@app.route("/admin/matches/create-manual", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("create_matches")
-def admin_create_manual_match():
-    try:
-        player1_id = str(request.form.get("player1_id") or "").strip()
-        player2_id = str(request.form.get("player2_id") or "").strip()
-        host_side = str(request.form.get("host_side") or "player1").strip().lower()
-        score1 = _safe_int(request.form.get("score1"), 0)
-        score2 = _safe_int(request.form.get("score2"), 0)
-        team1 = _normalize_manual_team_name(request.form.get("team1"))
-        team2 = _normalize_manual_team_name(request.form.get("team2"))
-        note = (request.form.get("note") or "Admin tạo trận thủ công.").strip()[:500]
-    except Exception:
-        flash("Dữ liệu tạo trận không hợp lệ.", "danger")
-        return redirect_admin("matches")
-
-    if not player1_id or not player2_id:
-        flash("Vui lòng chọn đủ 2 người chơi.", "danger")
-        return redirect_admin("matches")
-    if player1_id == player2_id:
-        flash("Không thể tạo trận với cùng một người chơi ở hai bên.", "danger")
-        return redirect_admin("matches")
-    if score1 < 0 or score2 < 0:
-        flash("Tỉ số không được âm.", "danger")
-        return redirect_admin("matches")
-
-    player1 = get_user(player1_id)
-    player2 = get_user(player2_id)
-    if not player1 or not player2:
-        flash("Không tìm thấy một trong hai người chơi.", "danger")
-        return redirect_admin("matches")
-    if is_admin_user(player1) or is_admin_user(player2):
-        flash("Chỉ có thể tạo trận thủ công cho tài khoản người chơi.", "danger")
-        return redirect_admin("matches")
-
-    winner_id = player1_id if score1 > score2 else player2_id if score2 > score1 else None
-    loser_id = player2_id if score1 > score2 else player1_id if score2 > score1 else None
-    host_user_id = player1_id if host_side != "player2" else player2_id
-
-    match = None
-    room = None
-    result_applied = False
-    try:
-        match_result = execute_query(
-            db.table("matches").insert({
-                "player1_id": player1_id,
-                "player2_id": player2_id,
-                "score1": score1,
-                "score2": score2,
-                "team1": team1 or None,
-                "team2": team2 or None,
-                "winner_id": winner_id,
-                "loser_id": loser_id,
-                "delta1": 0,
-                "delta2": 0,
-                "status": "waiting_confirm",
-                "submitted_by_id": current_user().get("id"),
-                "note": note,
-                "updated_at": now_iso(),
-            }),
-            "admin_create_manual_match_insert",
-        )
-        match = (match_result.data or [None])[0]
-        if not match:
-            raise RuntimeError("Không tạo được bản ghi trận đấu.")
-
-        room_result = execute_query(
-            db.table("match_rooms").insert({
-                "host_user_id": host_user_id,
-                "guest_user_id": player2_id if host_user_id == player1_id else player1_id,
-                "team_tier": SMART_RANDOM_MODE,
-                "match_mode": MATCH_MODE_RANKED,
-                "friendly_tier": "A",
-                "status": "waiting_result_confirm",
-                "guest_ready": True,
-                "match_id": match.get("id"),
-                "host_score": score1 if host_user_id == player1_id else score2,
-                "guest_score": score2 if host_user_id == player1_id else score1,
-                "host_team": team1 if host_user_id == player1_id else team2,
-                "guest_team": team2 if host_user_id == player1_id else team1,
-                "note": "Admin tạo trận thủ công.",
-                "state_expires_at": None,
-                "updated_at": now_iso(),
-            }),
-            "admin_create_manual_room_insert",
-            attempts=2,
-        )
-        room = (room_result.data or [None])[0]
-        if not room:
-            raise RuntimeError("Không tạo được phòng liên kết cho trận thủ công.")
-
-        refreshed = get_match(match.get("id"))
-        if not refreshed:
-            raise RuntimeError("Không đọc lại được trận vừa tạo.")
-        delta1, delta2 = apply_match_result(refreshed)
-        result_applied = True
-        execute_query(
-            db.table("matches").update({"note": note, "updated_at": now_iso()}).eq("id", match.get("id")),
-            "admin_create_manual_match_note",
-            attempts=2,
-        )
-        execute_query(
-            db.table("match_rooms").update({
-                "status": "confirmed",
-                "note": "Admin đã tạo và xác nhận trận thủ công.",
-                "state_expires_at": None,
-                "updated_at": now_iso(),
-            }).eq("match_id", match.get("id")),
-            "admin_create_manual_room_finalize",
-            attempts=2,
-        )
-        ttl_cache_delete("rooms_raw", "players_raw", "matches_raw", "achievement_map")
-        cache_delete("_rz_matches_all")
-        cache_delete("_rz_players_all")
-        cache_delete("_rz_users_map")
-    except Exception as exc:
-        print(f"admin_create_manual_match ERROR: {type(exc).__name__}: {exc}")
-        # Best-effort rollback prevents orphan rooms/matches after a partial failure.
-        try:
-            if result_applied and match:
-                fresh_match = get_match(match.get("id"))
-                if fresh_match:
-                    reverse_confirmed_match_result(fresh_match)
-            if room and room.get("id"):
-                execute_query(db.table("match_rooms").delete().eq("id", room.get("id")), "rollback_manual_room", attempts=2)
-            if match and match.get("id"):
-                execute_query(db.table("matches").delete().eq("id", match.get("id")), "rollback_manual_match", attempts=2)
-        except Exception as rollback_exc:
-            print(f"admin_create_manual_match ROLLBACK ERROR: {type(rollback_exc).__name__}: {rollback_exc}")
-        flash(f"Không thể tạo trận thủ công: {exc}", "danger")
-        return redirect_admin("matches")
-
-    log_admin_action(
-        "Tạo trận thủ công",
-        "match",
-        match.get("id"),
-        details=(
-            f"{player1.get('display_name') or player1.get('username')} {score1}-{score2} "
-            f"{player2.get('display_name') or player2.get('username')}; "
-            f"RP {int(delta1):+d}/{int(delta2):+d}; host={host_user_id}. {note}"
-        ),
-    )
-    flash(
-        f"Đã tạo trận thủ công: {(player1.get('display_name') or player1.get('username'))} {score1}-{score2} "
-        f"{(player2.get('display_name') or player2.get('username'))}. RP {int(delta1):+d}/{int(delta2):+d}.",
-        "success",
-    )
-    return redirect_admin("matches")
-
-
 @app.route("/admin/match/<match_id>/update-result", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("edit_matches")
 def admin_update_match_result(match_id):
     match = get_match(match_id)
     if not match:
         flash("Không tìm thấy trận.", "danger")
-        return _admin_match_redirect("matches")
+        return redirect_admin("matches")
 
     try:
         score1 = int(request.form.get("score1", "0"))
         score2 = int(request.form.get("score2", "0"))
     except (TypeError, ValueError):
         flash("Tỉ số phải là số nguyên.", "danger")
-        return _admin_match_redirect("matches")
+        return redirect_admin("matches")
     if score1 < 0 or score2 < 0:
         flash("Tỉ số không được âm.", "danger")
-        return _admin_match_redirect("matches")
+        return redirect_admin("matches")
 
     if not match.get("player1_id") or not match.get("player2_id"):
         flash("Trận đấu thiếu dữ liệu người chơi nên chưa thể sửa.", "danger")
-        return _admin_match_redirect("matches")
+        return redirect_admin("matches")
     if not get_user(match.get("player1_id")) or not get_user(match.get("player2_id")):
         flash("Không tìm thấy một trong hai người chơi. Chưa thay đổi BXH.", "danger")
-        return _admin_match_redirect("matches")
+        return redirect_admin("matches")
 
     winner_id = match.get("player1_id") if score1 > score2 else match.get("player2_id") if score2 > score1 else None
     loser_id = match.get("player2_id") if score1 > score2 else match.get("player1_id") if score2 > score1 else None
     note = request.form.get("note", "").strip()[:500] or "Admin đã sửa kết quả."
-    target_status = (request.form.get("target_status") or "confirmed").strip().lower()
-    if target_status not in {"confirmed", "cancelled"}:
-        flash("Admin chỉ được chuyển trạng thái sang confirmed hoặc cancelled.", "danger")
-        return _admin_match_redirect("matches")
-
-    if target_status == "cancelled":
-        old_match = dict(match)
-        try:
-            if old_match.get("status") == "confirmed" and not reverse_confirmed_match_result(old_match):
-                raise ValueError("Không thể hoàn tác RP của trận đã xác nhận.")
-            if old_match.get("status") == "disputed":
-                dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
-                if dispute:
-                    cancel_match_dispute(dispute, current_user().get("id"), note or "Admin chuyển trận sang cancelled.")
-                else:
-                    execute_query(
-                        db.table("matches").update({
-                            "status": "cancelled", "delta1": 0, "delta2": 0,
-                            "winner_id": None, "loser_id": None, "note": note, "updated_at": now_iso(),
-                        }).eq("id", match_id),
-                        "admin_cancel_disputed_without_record",
-                    )
-            else:
-                execute_query(
-                    db.table("matches").update({
-                        "score1": score1, "score2": score2,
-                        "status": "cancelled", "delta1": 0, "delta2": 0,
-                        "winner_id": None, "loser_id": None, "note": note, "updated_at": now_iso(),
-                    }).eq("id", match_id),
-                    "admin_change_match_status_cancelled",
-                )
-            execute_query(
-                db.table("match_rooms").update({
-                    "status": "cancelled", "note": "Admin đã chuyển trận sang cancelled.",
-                    "state_expires_at": None, "updated_at": now_iso(),
-                }).eq("match_id", match_id),
-                "admin_change_room_status_cancelled",
-                attempts=2,
-            )
-            ttl_cache_delete("rooms_raw", "players_raw", "matches_raw", "achievement_map")
-        except Exception as exc:
-            print(f"admin_change_match_status_cancelled ERROR match={match_id}: {type(exc).__name__}: {exc}")
-            flash(f"Không thể chuyển trận sang cancelled: {exc}", "danger")
-            return _admin_match_redirect("matches")
-        log_admin_action(
-            "Đổi trạng thái trận", "match", match_id,
-            details=f"{old_match.get('status')} → cancelled; tỷ số giữ {score1}-{score2}. {note}",
-        )
-        flash("Đã chuyển trận sang cancelled và hoàn tác RP nếu trước đó đã confirmed.", "success")
-        return _admin_match_redirect("matches")
 
     if match.get("status") == "disputed":
         dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
@@ -8443,10 +6541,10 @@ def admin_update_match_result(match_id):
             except Exception as exc:
                 print(f"admin_update_disputed ERROR match={match_id}: {type(exc).__name__}: {exc}")
                 flash(f"Không thể xử lý tranh chấp: {exc}", "danger")
-                return _admin_match_redirect("disputes")
+                return redirect_admin("disputes")
             log_admin_action("Sửa/Xác nhận tranh chấp", "match", match_id, details=f"Tỷ số mới {score1}-{score2}. {note}")
             flash("Đã sửa tỷ số tranh chấp và cập nhật BXH.", "success")
-            return _admin_match_redirect("disputes")
+            return redirect_admin("disputes")
 
     old_match = dict(match)
     old_was_applied = bool(
@@ -8458,8 +6556,6 @@ def admin_update_match_result(match_id):
         if old_was_applied and not reverse_confirmed_match_result(old_match):
             raise ValueError("Không thể hoàn tác kết quả cũ; chưa lưu tỷ số mới.")
 
-        # Không set delta1/delta2 = None vì production có constraint NOT NULL.
-        # Dùng 0 làm giá trị tạm; apply_match_result sẽ ghi delta thật sau khi tính RP.
         execute_query(
             db.table("matches").update({
                 "score1": score1,
@@ -8467,8 +6563,8 @@ def admin_update_match_result(match_id):
                 "winner_id": winner_id,
                 "loser_id": loser_id,
                 "status": "waiting_confirm",
-                "delta1": 0,
-                "delta2": 0,
+                "delta1": None,
+                "delta2": None,
                 "note": note,
                 "updated_at": now_iso(),
             }).eq("id", match_id),
@@ -8517,8 +6613,8 @@ def admin_update_match_result(match_id):
                     "score2": old_match.get("score2"),
                     "winner_id": old_match.get("winner_id"),
                     "loser_id": old_match.get("loser_id"),
-                    "delta1": _safe_int(old_match.get("delta1"), 0),
-                    "delta2": _safe_int(old_match.get("delta2"), 0),
+                    "delta1": old_match.get("delta1"),
+                    "delta2": old_match.get("delta2"),
                     "status": old_match.get("status"),
                     "note": old_match.get("note"),
                     "updated_at": now_iso(),
@@ -8538,30 +6634,19 @@ def admin_update_match_result(match_id):
         except Exception as rollback_exc:
             print(f"admin_update_match_result ROLLBACK ERROR match={match_id}: {type(rollback_exc).__name__}: {rollback_exc}")
         flash(f"Không thể lưu lại trận đấu: {exc}. Hệ thống đã ghi log chi tiết trên Vercel.", "danger")
-        return _admin_match_redirect("matches")
+        return redirect_admin("matches")
 
     log_admin_action(
         "Sửa/Xác nhận kết quả", "match", match_id,
         details=f"{old_match.get('score1')}–{old_match.get('score2')} → {score1}–{score2}; RP {int(delta1):+d}/{int(delta2):+d}. {note}",
     )
-    if is_htmx_request():
-        refreshed = next((item for item in list_recent_matches(80) if item.get("id") == match_id), None)
-        if not refreshed:
-            return htmx_redirect(url_for("admin") + "#matches")
-        return render_template(
-            "partials/admin_match_row.html",
-            m=refreshed,
-            admin_caps=get_admin_permissions(current_user()),
-            saved_message=f"Đã lưu • RP {int(delta1):+d}/{int(delta2):+d}",
-        )
     flash(f"Đã sửa kết quả và cập nhật lại RP: {int(delta1):+d}/{int(delta2):+d}.", "success")
-    return _admin_match_redirect("matches")
+    return redirect_admin("matches")
 
 
 @app.route("/admin/match/<match_id>/delete", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("delete_matches")
 def admin_delete_match(match_id):
     match = get_match(match_id)
     if not match:
@@ -8577,7 +6662,6 @@ def admin_delete_match(match_id):
 @app.route("/admin/room/<room_id>/cancel", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_rooms")
 def admin_cancel_room(room_id):
     room = get_room(room_id)
     if not room:
@@ -8606,7 +6690,6 @@ def admin_cancel_room(room_id):
 @app.route("/admin/room/<room_id>/delete", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_rooms")
 def admin_delete_room(room_id):
     room = get_room(room_id)
     if not room:
@@ -8622,7 +6705,6 @@ def admin_delete_room(room_id):
 @app.route("/admin/invite/<invite_id>/delete", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("manage_rooms")
 def admin_delete_invite(invite_id):
     invite = get_invite(invite_id)
     if not invite:

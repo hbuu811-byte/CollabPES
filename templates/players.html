@@ -25,7 +25,7 @@
     <tbody>
         {% for p in players %}
         <tr class="{{ 'current-user-row' if p.id == current_user.id else '' }}">
-            <td><a class="player-link player-with-avatar" href="{{ url_for('profile', user_id=p.id) }}">{{ player_avatar(p, size='sm') }}<span class="player-name-stack"><strong>{{ p.display_name }}</strong>{% if p.username != p.display_name %}<small>@{{ p.username }}</small>{% endif %}</span></a></td>
+            <td><a class="player-link player-with-avatar" href="{{ url_for('profile', user_id=p.id) }}">{{ player_avatar(p, size='sm') }}<span class="player-name-stack"><strong>{{ p.display_name }}</strong>{% if p.username != p.display_name %}<small>@{{ p.username }}</small>{% endif %}{% set player_streak_badge = get_win_streak_badge(p.streak or 0) %}{% if player_streak_badge %}<span class="win-streak-badge compact players-win-streak-badge">🔥 <strong>{{ player_streak_badge.title }}</strong> · {{ player_streak_badge.count }}</span>{% endif %}</span></a></td>
             <td>{{ rank_badge(p.rank_info) }}</td>
             <td><strong>{{ p.rank_points or 0 }}</strong></td>
             <td>{{ p.wins or 0 }}-{{ p.draws or 0 }}-{{ p.losses or 0 }}</td>

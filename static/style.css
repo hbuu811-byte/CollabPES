@@ -3899,3 +3899,85 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
     .room-session-match-time { min-width: 0; }
     .room-session-match-rp { align-self: flex-start; }
 }
+
+/* V1.13.12 — Lịch sử đối đầu rõ ràng hơn */
+.room-session-h2h {
+    padding: 22px;
+    border-width: 2px;
+    background: linear-gradient(145deg, rgba(212,175,55,.08), rgba(255,255,255,.025));
+}
+.room-session-h2h .eyebrow {
+    font-size: .82rem;
+    font-weight: 800;
+    letter-spacing: .08em;
+}
+.room-session-h2h-heading h3 {
+    margin: 5px 0 4px;
+    font-size: 1.3rem;
+    font-weight: 800;
+}
+.room-session-h2h-heading .small {
+    font-size: .96rem;
+    font-weight: 600;
+    opacity: .84;
+}
+.room-session-total {
+    padding: 9px 15px;
+    font-size: 1rem;
+    font-weight: 800;
+}
+.room-session-scoreboard {
+    margin-top: 18px;
+    padding: 18px;
+    border: 1px solid rgba(255,255,255,.1);
+}
+.room-session-player span {
+    font-size: 1.05rem;
+    font-weight: 800;
+}
+.room-session-player strong,
+.room-session-draws strong {
+    margin-top: 5px;
+    font-size: 2.15rem;
+    font-weight: 900;
+}
+.room-session-player small,
+.room-session-draws small {
+    font-size: .9rem;
+    font-weight: 700;
+    opacity: .82;
+}
+.room-session-match-list {
+    margin-top: 16px;
+}
+.room-session-match-row {
+    min-height: 52px;
+    padding: 12px 8px;
+    font-size: 1rem;
+    font-weight: 700;
+}
+.room-session-match-row > strong {
+    font-size: 1.04rem;
+    font-weight: 800;
+}
+.room-session-match-time {
+    font-size: .92rem;
+    font-weight: 700;
+    opacity: .82;
+}
+.room-session-match-rp {
+    font-size: .98rem;
+    font-weight: 800;
+}
+.room-session-empty {
+    font-size: 1rem;
+    font-weight: 700;
+}
+@media (max-width: 720px) {
+    .room-session-h2h { padding: 17px; }
+    .room-session-scoreboard { padding: 14px 8px; gap: 8px; }
+    .room-session-player span { font-size: .94rem; }
+    .room-session-player strong,
+    .room-session-draws strong { font-size: 1.85rem; }
+    .room-session-match-row { gap: 5px; }
+}

@@ -1,3 +1,25 @@
+# PES Arena V1.13.12 – Sửa công tắc Giao hữu & làm rõ lịch sử đối đầu
+
+## File đã sửa
+
+- `templates/room_detail.html`
+  - Bọc toàn bộ thẻ quay đội Giao hữu bằng `system_features.friendly_enabled`.
+  - Khi Admin tắt Giao hữu, biểu mẫu và nút quay đội biến mất hoàn toàn.
+
+- `app.py`
+  - Nâng phiên bản từ `V1.13.11` lên `V1.13.12`.
+  - Khi công tắc Giao hữu chuyển từ bật sang tắt, các phòng đang ở `friendly_playing` được đưa về `waiting_ready` và xóa dữ liệu đội giao hữu đang quay.
+  - Backend quay/reroll/kết thúc Giao hữu vẫn giữ kiểm tra `friendly_enabled` và trả về cảnh báo khi bị khóa.
+
+- `static/style.css`
+  - Tăng nhẹ kích thước chữ, độ đậm, khoảng cách và độ tương phản của phần lịch sử đối đầu.
+  - Làm rõ tên người chơi, số trận thắng/hòa, tỷ số từng trận và RP.
+
+## Cài đặt
+
+Chép đè đúng 3 file `app.py`, `templates/room_detail.html`, `static/style.css`, sau đó Commit, Push và Redeploy Vercel. Không cần chạy SQL Supabase.
+
+---
 # PES Arena V1.13.11 – Sửa lỗi khởi động Vercel
 
 ## Lỗi đã sửa

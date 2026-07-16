@@ -292,7 +292,7 @@
     </section>
     {% endif %}
 
-    {% if room.status == "waiting_ready" %}
+    {% if system_features.friendly_enabled and room.status == "waiting_ready" %}
 
         {% if current_user.id == room.host_user_id or current_user.role == "admin" %}
             {% if room.has_guest %}
@@ -311,11 +311,8 @@
                     <button class="btn gold" type="submit">🎲 Quay đội Giao hữu</button>
                 </form>
             </div>
-            {% else %}
-
             {% endif %}
         {% endif %}
-
 
     {% endif %}
 

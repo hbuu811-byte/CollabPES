@@ -56,7 +56,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.11"
+APP_VERSION = "V1.13.12"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -5836,8 +5836,42 @@ def inject_admin_feature_context():
 @admin_required
 @admin_permission_required("system_features_manage")
 def admin_update_system_features():
+    previous_features = get_system_features()
     features = {key: request.form.get(key) == "1" for key in SYSTEM_FEATURE_DEFAULTS}
-    execute_query(db.table("system_settings").upsert({"setting_key":"admin_system_features", "setting_value":features, "updated_at":now_iso()}, on_conflict="setting_key"), "update_system_features")
+    execute_query(
+        db.table("system_settings").upsert(
+            {
+                "setting_key": "admin_system_features",
+                "setting_value": features,
+                "updated_at": now_iso(),
+            },
+            on_conflict="setting_key",
+        ),
+        "update_system_features",
+    )
+
+    # Khi Admin vừa tắt Giao hữu, đưa các phòng giao hữu đang mở về trạng thái
+    # chờ sẵn sàng để người chơi không bị kẹt trong một tính năng đã khóa.
+    if previous_features.get("friendly_enabled", True) and not features.get("friendly_enabled", False):
+        execute_query(
+            db.table("match_rooms").update({
+                "status": "waiting_ready",
+                "match_mode": "ranked",
+                "host_team": None,
+                "guest_team": None,
+                "host_team_overall": None,
+                "guest_team_overall": None,
+                "host_team_logo_url": None,
+                "guest_team_logo_url": None,
+                "host_team_league": None,
+                "guest_team_league": None,
+                "note": "Giao hữu đã được Admin tắt. Phòng đã trở về trạng thái chờ.",
+                "updated_at": now_iso(),
+            }).eq("status", "friendly_playing"),
+            "disable_active_friendly_rooms",
+            attempts=2,
+        )
+
     log_admin_action("Cập nhật công tắc hệ thống", "system", details=features)
     flash("Đã cập nhật các tính năng hệ thống.", "success")
     return redirect_admin("system")

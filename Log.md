@@ -1,3 +1,22 @@
+# V1.13.3 — Tinh gọn Admin và sửa giao diện quản lý trận
+
+- Bỏ giao diện và chặn route của Chuyển giao quyền sở hữu.
+- Bỏ giao diện và chặn route của Tạo trận thủ công.
+- Bỏ tab Tranh chấp và chặn các route xử lý tranh chấp cũ.
+- Đội ngũ quản trị chuyển sang bố cục dạng cột so le, thẻ gọn và không còn khoảng trống lớn.
+- Quản lý trận đấu: mỗi trận chỉ còn một hàng; Lưu – Hủy – Xóa nằm cùng hàng; thời gian được định dạng dễ đọc.
+- Bổ sung hướng dẫn trực tiếp cho câu xác nhận `SAO LUU DU LIEU`.
+
+## File đã sửa
+
+| File | Nội dung |
+|---|---|
+| `app.py` | Tăng V1.13.3; bỏ quyền tạo trận/tranh chấp khỏi ma trận; chặn route tính năng đã bỏ |
+| `templates/admin.html` | Bỏ 3 phần; bố trí lại bảng trận; thêm hướng dẫn Backup |
+| `static/style.css` | Giao diện Admin gọn, dạng cột so le; bảng trận cùng một hàng |
+
+---
+
 # V1.13.2 — Backup dữ liệu, mật khẩu Test và chuyển giao quyền sở hữu
 
 ## Thay đổi chính

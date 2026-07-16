@@ -3806,3 +3806,29 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
 .profile-admin-match-edit summary{cursor:pointer;font-weight:700}
 .profile-admin-match-edit form{margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .profile-admin-match-edit input[name="note"]{min-width:220px;flex:1}
+
+
+/* PES Arena v1.13.3 - compact admin teams and match manager */
+.admin-team-grid{display:block;columns:2;column-gap:14px}
+.admin-team-card{display:inline-block;width:100%;margin:0 0 14px;break-inside:avoid;vertical-align:top;padding:12px}
+.admin-team-card details[open]{margin-top:4px}
+.admin-team-card .admin-permission-grid{gap:8px;margin:8px 0}
+.admin-team-card .admin-permission-grid fieldset{padding:8px}
+.admin-team-panel>.admin-section-heading{margin-bottom:10px}
+.admin-matches-panel{width:100%;max-width:none}
+.admin-match-scroll{max-height:620px;border:1px solid rgba(255,255,255,.08);border-radius:12px}
+.admin-match-table{min-width:1240px;border-collapse:separate;border-spacing:0}
+.admin-match-table th,.admin-match-table td{padding:10px 12px;vertical-align:middle}
+.admin-match-table tbody tr:nth-child(even){background:rgba(255,255,255,.018)}
+.admin-match-table tbody tr:hover{background:rgba(79,138,255,.055)}
+.admin-match-table thead th{top:0}
+.match-time-cell{min-width:155px;white-space:nowrap;font-size:13px}
+.match-player-cell{min-width:125px;white-space:nowrap}
+.match-note-input{width:175px;min-width:175px}
+.match-actions{display:flex;align-items:center;gap:7px;flex-wrap:nowrap}
+.match-actions form{margin:0}
+.match-actions .btn{min-width:56px;padding:9px 12px}
+.rp-positive{color:#58e18b}.rp-negative{color:#ff7f8a}
+.backup-howto{margin:14px 0;padding:14px 16px;border:1px solid rgba(238,190,74,.28);border-radius:12px;background:rgba(238,190,74,.06)}
+.backup-howto ol{margin:8px 0 8px 20px;padding:0}.backup-howto li{margin:5px 0}
+@media(max-width:900px){.admin-team-grid{columns:1}.admin-match-table{min-width:1160px}}

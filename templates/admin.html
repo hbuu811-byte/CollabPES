@@ -23,7 +23,7 @@
         <div class="metric-icon">🚪</div><div><span>Phòng đang mở</span><strong>{{ rooms|length }}</strong><small>{{ invites|length }} lời mời đang chờ</small></div>
     </article>
     <article class="admin-metric-card metric-orange">
-        <div class="metric-icon">⚠</div><div><span>Cần xử lý</span><strong>{{ (pending_disputes|length) + (password_reset_requests|length) }}</strong><small>Tranh chấp và quên mật khẩu</small></div>
+        <div class="metric-icon">🔑</div><div><span>Cần xử lý</span><strong>{{ password_reset_requests|length }}</strong><small>Yêu cầu quên mật khẩu</small></div>
     </article>
 </section>
 
@@ -31,10 +31,8 @@
     <button class="admin-tab-button" type="button" data-admin-tab="overview">📌 Tổng quan</button>
     <button class="admin-tab-button" type="button" data-admin-tab="users">👥 Quản lý danh sách user{% if duplicate_ip_groups %} · ⚠️ {{ duplicate_ip_groups|length }} IP trùng{% endif %}</button>
     <button class="admin-tab-button" type="button" data-admin-tab="passwords">🔑 Quên mật khẩu{% if password_reset_requests %} ({{ password_reset_requests|length }}){% endif %}</button>
-    <button class="admin-tab-button" type="button" data-admin-tab="disputes">⚠️ Tranh chấp{% if pending_disputes %} ({{ pending_disputes|length }}){% endif %}</button>
     <button class="admin-tab-button" type="button" data-admin-tab="rooms">🚪 Phòng & lời mời</button>
     {% if can_admin('matches_view') %}<button class="admin-tab-button" type="button" data-admin-tab="matches">🎮 Trận đấu</button>{% endif %}
-    {% if can_admin('matches_create') %}<button class="admin-tab-button" type="button" data-admin-tab="create-match">➕ Tạo trận</button>{% endif %}
 {% if can_create_test_account or can_import_accounts_csv %}<button class="admin-tab-button" type="button" data-admin-tab="test-data">🧪 Tài khoản test & Import</button>{% endif %}
     <button class="admin-tab-button" type="button" data-admin-tab="system">⚙️ Hệ thống</button>
     {% if can_admin('backup_manage') %}<button class="admin-tab-button" type="button" data-admin-tab="backup">💾 Backup dữ liệu</button>{% endif %}
@@ -116,18 +114,6 @@
             </article>
         {% endfor %}
         </div>
-        {% if current_user.admin_level == 'owner' %}
-        <div class="panel ownership-transfer-panel" id="ownership-transfer">
-            <h3>🔐 Chuyển giao quyền sở hữu</h3>
-            <p class="notice warning">Sau khi chuyển giao, tài khoản nhận sẽ có quyền sở hữu. Tài khoản hiện tại trở thành Admin và hệ thống sẽ đăng xuất ngay.</p>
-            <form method="post" action="{{ url_for('admin_transfer_ownership') }}" class="grid-form" onsubmit="return confirm('Bạn chắc chắn muốn chuyển giao quyền sở hữu?');">
-                <div><label>Tài khoản nhận chuyển giao</label><select name="target_user_id" required><option value="">-- Chọn tài khoản --</option>{% for p in admin_users if p.id != current_user.id and p.account_status == 'approved' %}<option value="{{ p.id }}">{{ p.username }} — {{ p.display_name or p.username }}</option>{% endfor %}</select></div>
-                <div><label>Mật khẩu hiện tại của bạn</label><input type="password" name="current_password" minlength="{{ minimum_password_length }}" required autocomplete="current-password"></div>
-                <div><label>Nhập CHUYEN GIAO</label><input name="confirm_text" required autocomplete="off" placeholder="CHUYEN GIAO"></div>
-                <button class="btn red" type="submit">Chuyển giao quyền sở hữu</button>
-            </form>
-        </div>
-        {% endif %}
     </div>
 </section>
 
@@ -324,86 +310,6 @@
     </div>
 </section>
 
-<section class="admin-tab-panel" data-admin-panel="disputes">
-    <div class="panel">
-        <div class="admin-section-heading">
-            <div>
-                <h2>⚠️ Trung tâm xử lý tranh chấp</h2>
-                <p class="small">Trận chưa được tính điểm cho đến khi Admin công nhận, sửa tỷ số hoặc hủy trận.</p>
-            </div>
-            <span class="admin-count">{{ pending_disputes|length }}</span>
-        </div>
-
-        <div class="admin-dispute-list">
-            {% for d in pending_disputes %}
-            <article class="admin-dispute-card">
-                <div class="admin-dispute-header">
-                    <div>
-                        <span class="badge disputed">Đang chờ xử lý</span>
-                        <h3>{{ d.player1_name }} {{ d.submitted_score1 }} - {{ d.submitted_score2 }} {{ d.player2_name }}</h3>
-                        <p class="small">{{ format_vn_datetime(d.created_at) }} • Người gửi: <strong>{{ d.raised_by_name }}</strong></p>
-                    </div>
-                    <a class="btn" href="{{ url_for('room_detail', room_id=d.room_id) }}">Xem phòng</a>
-                </div>
-
-                <div class="admin-dispute-summary">
-                    <div><span>Player 1</span><strong>{{ d.player1_username }}</strong><small>{{ d.player1_points }} điểm</small></div>
-                    <div><span>Đội</span><strong>{{ d.match.team1 or '-' }}</strong></div>
-                    <div><span>Lý do</span><strong>{{ d.reason_label }}</strong></div>
-                    <div><span>Player 2</span><strong>{{ d.player2_username }}</strong><small>{{ d.player2_points }} điểm</small></div>
-                    <div><span>Đội</span><strong>{{ d.match.team2 or '-' }}</strong></div>
-                    <div><span>Ghi chú</span><strong>{{ d.details or 'Không có ghi chú' }}</strong></div>
-                </div>
-
-                {% if d.evidence_url %}
-                <div class="admin-dispute-evidence">
-                    <strong>📷 Ảnh bằng chứng:</strong>
-                    <a href="{{ d.evidence_url }}" target="_blank" rel="noopener">
-                        <img src="{{ d.evidence_url }}" alt="Ảnh bằng chứng tranh chấp" loading="lazy">
-                        <span>Mở ảnh đầy đủ</span>
-                    </a>
-                </div>
-                {% else %}
-                <p class="small">Không có ảnh bằng chứng đính kèm.</p>
-                {% endif %}
-
-                <div class="admin-dispute-h2h">
-                    <strong>Đối đầu gần đây:</strong>
-                    {% if d.head_to_head %}
-                        {% for h in d.head_to_head %}
-                        <span>{{ h.player1_name }} {{ h.score1 }}-{{ h.score2 }} {{ h.player2_name }}</span>
-                        {% endfor %}
-                    {% else %}
-                        <span>Chưa có trận đã xác nhận trước đó.</span>
-                    {% endif %}
-                </div>
-
-                <div class="admin-dispute-actions">
-                    <form method="post" action="{{ url_for('admin_dispute_accept', dispute_id=d.id) }}" onsubmit="return confirm('Công nhận tỷ số ban đầu và tính điểm?');">
-                        <input name="resolution_note" maxlength="500" placeholder="Ghi chú xử lý (không bắt buộc)">
-                        <button class="btn green" type="submit">Công nhận kết quả</button>
-                    </form>
-                    <form method="post" action="{{ url_for('admin_dispute_edit', dispute_id=d.id) }}" onsubmit="return confirm('Sửa tỷ số này và tính lại điểm?');">
-                        <div class="admin-dispute-score-edit">
-                            <input type="number" min="0" name="score1" value="{{ d.submitted_score1 }}" required>
-                            <span>-</span>
-                            <input type="number" min="0" name="score2" value="{{ d.submitted_score2 }}" required>
-                        </div>
-                        <input name="resolution_note" maxlength="500" placeholder="Lý do sửa tỷ số" required>
-                        <button class="btn gold" type="submit">Sửa tỷ số & xác nhận</button>
-                    </form>
-                    <form method="post" action="{{ url_for('admin_dispute_cancel', dispute_id=d.id) }}" onsubmit="return confirm('Hủy trận này và không tính điểm cho cả hai?');">
-                        <input name="resolution_note" maxlength="500" placeholder="Lý do hủy trận" required>
-                        <button class="btn red" type="submit">Hủy trận, không tính điểm</button>
-                    </form>
-                </div>
-            </article>
-            {% else %}
-            <div class="admin-no-duplicate">✅ Không có tranh chấp nào đang chờ xử lý.</div>
-            {% endfor %}
-        </div>
-    </div>
-</section>
 
 <section class="admin-tab-panel" data-admin-panel="rooms">
     <div class="panel">
@@ -449,45 +355,43 @@
 </section>
 
 <section class="admin-tab-panel" data-admin-panel="matches">
-    <div class="panel">
-        <h2>🎮 Quản lý trận đấu gần đây</h2>
-        <p class="small">Sửa tỉ số sẽ xác nhận trận và tính lại bảng xếp hạng.</p>
+    <div class="panel admin-matches-panel">
+        <div class="admin-section-heading">
+            <div>
+                <h2>🎮 Quản lý trận đấu gần đây</h2>
+                <p class="small">Sửa tỷ số, ghi chú hoặc trạng thái. Các nút Lưu – Hủy – Xóa luôn nằm cùng một hàng.</p>
+            </div>
+            <span class="admin-count">{{ all_matches|length }}</span>
+        </div>
         <div class="table-wrap admin-table-wrap admin-match-scroll">
             <table class="admin-match-table">
                 <thead><tr><th>Thời gian</th><th>Người chơi 1</th><th>RP 1</th><th>Tỷ số</th><th>Người chơi 2</th><th>RP 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
                 <tbody>
                 {% for m in all_matches %}
+                {% set form_id = 'match-edit-' ~ m.id %}
                 <tr>
-                    <form method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}">
-                        <td>{{ m.created_at_display or m.created_at }}</td><td>{{ m.player1_name }}</td><td class="rp-cell">{{ '%+d'|format(m.delta1 or 0) }}</td>
-                        <td><div class="score-pair"><input class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}"><span>–</span><input class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}"></div></td>
-                        <td>{{ m.player2_name }}</td><td class="rp-cell">{{ '%+d'|format(m.delta2 or 0) }}</td><td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
-                        <td><input class="match-note-input" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td><td><div class="match-actions"><button class="btn green" type="submit">Lưu</button></div></td>
-                    </form>
+                    <td class="match-time-cell">{{ format_vn_datetime(m.created_at) }}</td>
+                    <td class="match-player-cell"><strong>{{ m.player1_name }}</strong></td>
+                    <td class="rp-cell {{ 'rp-negative' if (m.delta1 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta1 or 0) }}</td>
+                    <td><div class="score-pair"><input form="{{ form_id }}" class="score-input" type="number" name="score1" min="0" value="{{ m.score1 if m.score1 is not none else 0 }}"><span>–</span><input form="{{ form_id }}" class="score-input" type="number" name="score2" min="0" value="{{ m.score2 if m.score2 is not none else 0 }}"></div></td>
+                    <td class="match-player-cell"><strong>{{ m.player2_name }}</strong></td>
+                    <td class="rp-cell {{ 'rp-negative' if (m.delta2 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta2 or 0) }}</td>
+                    <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
+                    <td><input form="{{ form_id }}" class="match-note-input" name="note" value="{{ m.note or '' }}" placeholder="Ghi chú"></td>
+                    <td>
+                        <div class="match-actions">
+                            <form id="{{ form_id }}" method="post" action="{{ url_for('admin_update_match_result', match_id=m.id) }}"><button class="btn green" type="submit">Lưu</button></form>
+                            <form method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy</button></form>
+                            <form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('XÓA trận này và tính lại BXH?')"><button class="btn red" type="submit">Xóa</button></form>
+                        </div>
+                    </td>
                 </tr>
-                <tr><td colspan="9">
-                    {% if m.status == 'disputed' %}<form class="inline-form" method="post" action="{{ url_for('admin_confirm_disputed', match_id=m.id) }}"><button class="btn green" type="submit">Xác nhận tranh chấp</button></form>{% endif %}
-                    <form class="inline-form" method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy trận</button></form>
-                    <form class="inline-form" method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('XÓA trận này và tính lại BXH?')"><button class="btn red" type="submit">Xóa trận</button></form>
-                </td></tr>
                 {% else %}<tr><td colspan="9">Chưa có trận đấu.</td></tr>{% endfor %}
                 </tbody>
             </table>
         </div>
     </div>
 </section>
-
-
-{% if can_admin('matches_create') %}
-<section class="admin-tab-panel" data-admin-panel="create-match"><div class="panel"><h2>➕ Tạo trận thủ công</h2>
-<form method="post" action="{{ url_for('admin_create_manual_match') }}" class="grid-form admin-manual-match-form">
-<label>Người chơi 1<select name="player1_id" required><option value="">Chọn người chơi</option>{% for p in players %}<option value="{{ p.id }}">{{ p.display_name or p.username }}</option>{% endfor %}</select></label>
-<label>Người chơi 2<select name="player2_id" required><option value="">Chọn người chơi</option>{% for p in players %}<option value="{{ p.id }}">{{ p.display_name or p.username }}</option>{% endfor %}</select></label>
-<label>Tỷ số người chơi 1<input type="number" name="score1" min="0" value="0" required></label><label>Tỷ số người chơi 2<input type="number" name="score2" min="0" value="0" required></label>
-<label>Chủ phòng<select name="host_user_id"><option value="">Mặc định người chơi 1</option>{% for p in players %}<option value="{{ p.id }}">{{ p.display_name or p.username }}</option>{% endfor %}</select></label>
-<label>Thời gian trận<input type="datetime-local" name="match_time"></label><label class="span-2">Ghi chú<input name="note" maxlength="500" placeholder="Không bắt buộc"></label>
-<button class="btn green" type="submit">Tạo trận và tính RP</button></form></div></section>
-{% endif %}
 
 {% if can_create_test_account or can_import_accounts_csv %}
 <section class="admin-tab-panel" data-admin-panel="test-data">
@@ -565,8 +469,17 @@
         <h2>💾 Backup dữ liệu hệ thống</h2>
         <p>Tải một file ZIP chứa dữ liệu JSON của người dùng, trận đấu, phòng, lời mời, cấu hình, nhật ký và các bảng quan trọng.</p>
         <p class="notice warning">File backup có thể chứa dữ liệu tài khoản và lịch sử hoạt động. Hãy giữ kín, không đưa lên GitHub hoặc gửi công khai.</p>
+        <div class="backup-howto">
+            <strong>Cách sử dụng</strong>
+            <ol>
+                <li>Trên hệ thống thật, nhập chính xác cụm <code>SAO LUU DU LIEU</code> vào ô xác nhận.</li>
+                <li>Bấm <strong>Tạo và tải Backup ZIP</strong>.</li>
+                <li>Chờ trình duyệt tải file ZIP xuống máy và cất file ở nơi riêng tư.</li>
+            </ol>
+            <p class="small"><code>SAO LUU DU LIEU</code> chỉ là câu xác nhận an toàn, không phải mật khẩu và không làm thay đổi dữ liệu.</p>
+        </div>
         <form method="post" action="{{ url_for('admin_download_backup') }}" onsubmit="return confirm('Tạo và tải bản backup dữ liệu ngay bây giờ?');">
-            {% if not is_test_mode %}<label>Production: nhập <strong>SAO LUU DU LIEU</strong></label><input name="confirm_text" autocomplete="off" placeholder="SAO LUU DU LIEU" required>{% endif %}
+            {% if not is_test_mode %}<label>Nhập câu xác nhận</label><input name="confirm_text" autocomplete="off" placeholder="SAO LUU DU LIEU" required>{% endif %}
             <button class="btn gold" type="submit">⬇️ Tạo và tải Backup ZIP</button>
         </form>
         <p class="small">Backup chỉ đọc dữ liệu, không sửa hoặc xóa dữ liệu trong Supabase.</p>

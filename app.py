@@ -54,7 +54,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.2"
+APP_VERSION = "V1.13.3"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -551,8 +551,8 @@ def is_owner_user(user) -> bool:
 
 ADMIN_PERMISSION_GROUPS = {
     "users": ["users_view", "users_approve", "users_edit", "users_delete", "password_reset", "accounts_import"],
-    "matches": ["matches_view", "matches_create", "matches_edit", "matches_confirm", "matches_cancel", "matches_delete"],
-    "operations": ["rooms_manage", "invites_manage", "disputes_manage", "announcements_manage"],
+    "matches": ["matches_view", "matches_edit", "matches_confirm", "matches_cancel", "matches_delete"],
+    "operations": ["rooms_manage", "invites_manage", "announcements_manage"],
     "system": ["system_features_manage", "backup_manage", "chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
     "rp": ["rp_view", "rp_simulate", "rp_edit_match", "rp_recalculate_all"],
     "permissions": ["permissions_manage"],
@@ -560,9 +560,9 @@ ADMIN_PERMISSION_GROUPS = {
 ADMIN_PERMISSION_LABELS = {
     "users_view":"Xem người dùng", "users_approve":"Duyệt tài khoản", "users_edit":"Sửa tài khoản",
     "users_delete":"Xóa tài khoản", "password_reset":"Xử lý quên mật khẩu", "accounts_import":"Import CSV",
-    "matches_view":"Xem trận", "matches_create":"Tạo trận", "matches_edit":"Sửa tỷ số",
+    "matches_view":"Xem trận", "matches_edit":"Sửa tỷ số",
     "matches_confirm":"Xác nhận trận", "matches_cancel":"Hủy trận", "matches_delete":"Xóa trận",
-    "rooms_manage":"Quản lý phòng", "invites_manage":"Quản lý lời mời", "disputes_manage":"Xử lý tranh chấp",
+    "rooms_manage":"Quản lý phòng", "invites_manage":"Quản lý lời mời",
     "announcements_manage":"Quản lý thông báo", "system_features_manage":"Bật/tắt tính năng hệ thống", "backup_manage":"Sao lưu dữ liệu", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
     "registration_codes_manage":"Quản lý mã đăng ký", "admin_logs_view":"Xem nhật ký Admin",
     "rp_view":"Xem công thức RP", "rp_simulate":"Tính thử RP", "rp_edit_match":"Sửa RP trận",
@@ -5837,6 +5837,7 @@ def admin_recalculate_rp():
 @admin_required
 @admin_permission_required("matches_create")
 def admin_create_manual_match():
+    abort(404)
     p1=request.form.get("player1_id"); p2=request.form.get("player2_id")
     if not p1 or not p2 or p1==p2:
         flash("Hãy chọn hai người chơi khác nhau.","danger"); return redirect_admin("create-match")
@@ -5930,6 +5931,7 @@ def admin_download_backup():
 @login_required
 @owner_required
 def admin_transfer_ownership():
+    abort(404)
     actor = current_user()
     target_id = (request.form.get("target_user_id") or "").strip()
     current_password = request.form.get("current_password", "").strip()
@@ -6594,6 +6596,7 @@ def admin_demote_user(user_id):
 @admin_required
 @admin_permission_required("disputes_manage")
 def admin_dispute_accept(dispute_id):
+    abort(404)
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
         flash("Tranh chấp không còn hiệu lực.", "warning")
@@ -6621,6 +6624,7 @@ def admin_dispute_accept(dispute_id):
 @admin_required
 @admin_permission_required("disputes_manage")
 def admin_dispute_edit(dispute_id):
+    abort(404)
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
         flash("Tranh chấp không còn hiệu lực.", "warning")
@@ -6650,6 +6654,7 @@ def admin_dispute_edit(dispute_id):
 @admin_required
 @admin_permission_required("disputes_manage")
 def admin_dispute_cancel(dispute_id):
+    abort(404)
     dispute = get_match_dispute(dispute_id)
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
         flash("Tranh chấp không còn hiệu lực.", "warning")

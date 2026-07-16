@@ -57,7 +57,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.8"
+APP_VERSION = "V1.13.8-Branch-From-V1.13.7-Room-Control"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -105,10 +105,10 @@ INVITE_TIMEOUT_SECONDS = 60
 ROOM_READY_TIMEOUT_SECONDS = 30 * 60
 RESULT_CONFIRM_TIMEOUT_SECONDS = 60 * 60
 REMATCH_TIMEOUT_SECONDS = 60
-ROOM_EMPTY_INACTIVITY_TIMEOUT_SECONDS = 30 * 60
-ROOM_MATCH_INACTIVITY_TIMEOUT_SECONDS = 60 * 60
-ROOM_ABANDON_PENALTY = 20
-ROOM_TIMEOUT_PENALTY_RANGE = (22, 25)
+ROOM_INACTIVITY_TIMEOUT_SECONDS = 60 * 60
+ROOM_WAITING_INACTIVITY_TIMEOUT_SECONDS = 30 * 60
+ROOM_ABANDON_PENALTY_MIN = 22
+ROOM_ABANDON_PENALTY_MAX = 25
 
 RANK_K_FACTOR = 32
 RANK_SCALE = 400
@@ -2192,7 +2192,8 @@ def room_state_expiry_dt(room):
     status = room.get("status")
     note = room.get("note") or ""
     if status == "waiting_ready":
-        # Phòng chưa bắt đầu được xử lý bằng bộ đếm không hoạt động 30 phút.
+        # Kể cả đã có người trong phòng, mọi phòng chờ đều dùng chung mốc
+        # 60 phút không hoạt động thay vì tự hủy sớm sau vài phút.
         return None
     if status == "waiting_result_confirm":
         return updated + timedelta(seconds=RESULT_CONFIRM_TIMEOUT_SECONDS)
@@ -2202,7 +2203,7 @@ def room_state_expiry_dt(room):
 
 
 def room_inactivity_expiry_dt(room):
-    """Đóng phòng chờ sau 30 phút, phòng đã bắt đầu sau 60 phút không hoạt động."""
+    """Đóng phòng chờ sau 30 phút; trận đã quay đội/chờ xác nhận sau 60 phút."""
     active_statuses = {"waiting_ready", "playing", "friendly_playing", "waiting_result_confirm"}
     status = room.get("status")
     note = room.get("note") or ""
@@ -2217,9 +2218,9 @@ def room_inactivity_expiry_dt(room):
     if not last_activity:
         return None
     timeout_seconds = (
-        ROOM_EMPTY_INACTIVITY_TIMEOUT_SECONDS
+        ROOM_WAITING_INACTIVITY_TIMEOUT_SECONDS
         if status == "waiting_ready"
-        else ROOM_MATCH_INACTIVITY_TIMEOUT_SECONDS
+        else ROOM_INACTIVITY_TIMEOUT_SECONDS
     )
     return last_activity + timedelta(seconds=timeout_seconds)
 
@@ -2231,14 +2232,19 @@ def room_expiry_dt(room):
     return min(candidates) if candidates else None
 
 
-def apply_room_abandon_penalty(user_id, amount=ROOM_ABANDON_PENALTY):
+def random_room_abandon_penalty():
+    """Mức phạt bỏ trận ngẫu nhiên từ 22 đến 25 RP."""
+    return random.randint(ROOM_ABANDON_PENALTY_MIN, ROOM_ABANDON_PENALTY_MAX)
+
+
+def apply_room_abandon_penalty(user_id, amount=None):
     """Trừ RP và tính một trận thua do bỏ trận, không cộng thắng cho đối thủ."""
     if not user_id:
         return None
     player = get_user(user_id)
     if not player:
         return None
-    penalty = max(0, int(amount or 0))
+    penalty = random_room_abandon_penalty() if amount is None else max(0, int(amount or 0))
     old_points = int(player.get("rank_points", 0) or 0)
     new_points = max(0, old_points - penalty)
     execute_query(
@@ -2254,7 +2260,7 @@ def apply_room_abandon_penalty(user_id, amount=ROOM_ABANDON_PENALTY):
 
 
 def close_room_with_timeout_penalty(room, offender_role, reason):
-    """Đóng phòng và phạt ngẫu nhiên 22–25 RP đúng một lần."""
+    """Đóng phòng và áp dụng phạt đúng một lần cho trận Xếp hạng bỏ dở."""
     room_id = room.get("id")
     original_status = room.get("status")
     offender_id = room.get("host_user_id") if offender_role == "host" else room.get("guest_user_id")
@@ -2273,7 +2279,7 @@ def close_room_with_timeout_penalty(room, offender_role, reason):
         return False
 
     room.update(update_data)
-    penalty_amount = random.SystemRandom().randint(*ROOM_TIMEOUT_PENALTY_RANGE)
+    penalty_amount = random_room_abandon_penalty()
     penalty_delta = apply_room_abandon_penalty(offender_id, penalty_amount)
     match_id = room.get("match_id")
     if match_id:
@@ -2296,7 +2302,7 @@ def close_room_with_timeout_penalty(room, offender_role, reason):
     create_user_notification(
         offender_id,
         "⏱️ Trận bị tính là bỏ trận",
-        f"Bạn bị trừ {abs(int(penalty_delta or -penalty_amount))} RP vì {reason.lower()}",
+        f"Bạn bị trừ {penalty_amount} RP vì {reason.lower()}",
         "/matches",
         "room_timeout_penalty",
     )
@@ -2356,11 +2362,7 @@ def expire_room_if_needed(room):
         if inactivity_expired or status == "waiting_ready":
             update_data = {
                 "status": "cancelled",
-                "note": (
-                    "Phòng tự đóng sau 30 phút không hoạt động."
-                    if status == "waiting_ready"
-                    else "Phòng tự đóng sau 60 phút không hoạt động."
-                ),
+                "note": "Phòng tự đóng sau 30 phút không hoạt động khi chưa bắt đầu trận đấu.",
                 "state_expires_at": None,
                 "updated_at": now_iso(),
             }
@@ -2374,11 +2376,7 @@ def expire_room_if_needed(room):
                     execute_query(
                         db.table("matches").update({
                             "status": "cancelled",
-                            "note": (
-                                "Phòng tự đóng sau 30 phút không hoạt động; không áp dụng phạt RP."
-                                if status == "waiting_ready"
-                                else "Phòng tự đóng sau 60 phút không hoạt động; không áp dụng phạt RP."
-                            ),
+                            "note": "Phòng tự đóng do không hoạt động; không áp dụng phạt RP.",
                             "updated_at": now_iso(),
                         }).eq("id", room.get("match_id")),
                         "cancel_inactive_room_match",
@@ -3011,6 +3009,24 @@ def before_request():
             if user and user.get("must_change_password") and request.endpoint not in allowed:
                 flash("Bạn đang dùng mật khẩu tạm thời. Hãy đổi mật khẩu mới để tiếp tục.", "warning")
                 return redirect(url_for("change_password"))
+
+
+            # Khi phòng đã đủ 2 người và trận chưa hoàn tất, mọi trang GET khác
+            # đều đưa người chơi trở lại phòng để hoàn thành quay đội/tỷ số/xác nhận.
+            room_redirect_excluded = {
+                "room_detail", "logout", "static", "heartbeat",
+                "api_active_room", "api_room_state", "api_room_chat",
+                "api_user_notifications", "api_online_count",
+            }
+            if (
+                user
+                and request.method == "GET"
+                and request.endpoint not in room_redirect_excluded
+                and not str(request.path or "").startswith("/api/")
+            ):
+                active_room = active_room_for_user(user.get("id"))
+                if active_room and active_room.get("guest_user_id"):
+                    return redirect(url_for("room_detail", room_id=active_room.get("id")))
     except Exception as exc:
         # Lỗi cập nhật online không được phép làm hỏng route chính.
         print(f"Before request warning: {exc}")
@@ -3176,10 +3192,9 @@ def api_active_room():
     is_guest = room.get("guest_user_id") == user["id"]
     has_opponent = bool(room.get("guest_user_id"))
 
-    # Chỉ ép quay lại khi trận đã bắt đầu hoặc đang chờ xác nhận.
-    # Phòng trống/chờ sẵn sàng vẫn cho phép người dùng xem các trang khác.
-    must_finish_statuses = {"playing", "friendly_playing", "waiting_result_confirm"}
-    auto_redirect = bool(room.get("status") in must_finish_statuses and has_opponent)
+    # Phòng trống do chủ phòng tạo để mời người khác không được ép chuyển trang.
+    # Chỉ tự động vào phòng khi đối thủ đã tham gia hoặc người dùng là khách.
+    auto_redirect = bool(has_opponent or is_guest)
 
     return jsonify({
         "ok": True,
@@ -4428,7 +4443,47 @@ def room_detail(room_id):
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 
-    return render_template("room_detail.html", room=room, friendly_tiers=get_available_team_tiers())
+    room_h2h = {"total": 0, "host_wins": 0, "draws": 0, "guest_wins": 0, "matches": []}
+    if room.get("host_user_id") and room.get("guest_user_id"):
+        room_opened_at = aware_utc(parse_dt(room.get("created_at")))
+        relevant = []
+        for match in list_matches():
+            if match.get("status") != "confirmed":
+                continue
+            if {match.get("player1_id"), match.get("player2_id")} != {room.get("host_user_id"), room.get("guest_user_id")}:
+                continue
+            match_created_at = aware_utc(parse_dt(match.get("created_at")))
+            if room_opened_at and match_created_at and match_created_at < room_opened_at:
+                continue
+            relevant.append(match)
+
+        for match in relevant:
+            score1 = int(match.get("score1", 0) or 0)
+            score2 = int(match.get("score2", 0) or 0)
+            host_is_player1 = match.get("player1_id") == room.get("host_user_id")
+            host_score = score1 if host_is_player1 else score2
+            guest_score = score2 if host_is_player1 else score1
+            if host_score > guest_score:
+                room_h2h["host_wins"] += 1
+            elif guest_score > host_score:
+                room_h2h["guest_wins"] += 1
+            else:
+                room_h2h["draws"] += 1
+            room_h2h["matches"].append({
+                "host_score": host_score,
+                "guest_score": guest_score,
+                "host_team": match.get("team1") if host_is_player1 else match.get("team2"),
+                "guest_team": match.get("team2") if host_is_player1 else match.get("team1"),
+                "created_at_display": format_vn_datetime(match.get("created_at")),
+            })
+        room_h2h["total"] = len(room_h2h["matches"])
+
+    return render_template(
+        "room_detail.html",
+        room=room,
+        room_h2h=room_h2h,
+        friendly_tiers=get_available_team_tiers(),
+    )
 
 
 @app.route("/room/<room_id>/leave", methods=["POST"])
@@ -4509,7 +4564,8 @@ def room_guest_forfeit(room_id):
         return redirect(url_for("room_detail", room_id=room_id))
 
     original_status = room.get("status")
-    reason = f'{user["display_name"]} đã chủ động bỏ cuộc và bị trừ {ROOM_ABANDON_PENALTY} RP.'
+    penalty_amount = random_room_abandon_penalty()
+    reason = f'{user["display_name"]} đã chủ động bỏ cuộc và bị trừ {penalty_amount} RP.'
     result = execute_query(
         db.table("match_rooms").update({
             "status": "cancelled",
@@ -4526,13 +4582,13 @@ def room_guest_forfeit(room_id):
         flash("Phòng đã được xử lý trước đó. Bạn không bị trừ điểm thêm.", "warning")
         return redirect(url_for("dashboard"))
 
-    penalty_delta = apply_room_abandon_penalty(user["id"])
+    penalty_delta = apply_room_abandon_penalty(user["id"], penalty_amount)
     if room.get("match_id"):
         execute_query(
             db.table("matches").update({
                 "status": "cancelled",
                 "delta1": 0,
-                "delta2": penalty_delta if penalty_delta is not None else -ROOM_ABANDON_PENALTY,
+                "delta2": penalty_delta if penalty_delta is not None else -penalty_amount,
                 "note": reason,
                 "updated_at": now_iso(),
             }).eq("id", room.get("match_id")),
@@ -4542,18 +4598,18 @@ def room_guest_forfeit(room_id):
     create_user_notification(
         room.get("host_user_id"),
         "🚪 Đối thủ đã bỏ cuộc",
-        f'{user["display_name"]} đã thoát phòng và bị trừ {ROOM_ABANDON_PENALTY} RP. Bạn không bị cộng hoặc trừ RP.',
+        f'{user["display_name"]} đã thoát phòng và bị trừ {penalty_amount} RP. Bạn không bị cộng hoặc trừ RP.',
         "/matches",
         "guest_forfeit",
     )
     create_user_notification(
         user["id"],
         "⚠️ Bạn đã bỏ cuộc",
-        f"Bạn bị trừ {ROOM_ABANDON_PENALTY} RP và được tính một trận thua.",
+        f"Bạn bị trừ {penalty_amount} RP và được tính một trận thua.",
         "/matches",
         "room_forfeit_penalty",
     )
-    flash(f"Bạn đã bỏ cuộc và bị trừ {ROOM_ABANDON_PENALTY} RP.", "danger")
+    flash(f"Bạn đã bỏ cuộc và bị trừ {penalty_amount} RP.", "danger")
     return redirect(url_for("dashboard"))
 
 
@@ -4814,7 +4870,7 @@ def room_random_teams(room_id):
                 "team2_league": result.get("league_b") or None,
                 "host_xp_factor": HOST_XP_FACTOR,
                 "status": "playing",
-                "note": "",
+                "note": None,
                 "updated_at": now_iso(),
             }),
             "room_random_create_match",

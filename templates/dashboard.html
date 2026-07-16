@@ -42,6 +42,9 @@
             <div><span>⚠</span><small>Tranh chấp</small><strong>{{ attention.disputed }}</strong></div>
             <div><span>◆</span><small>Rank hiện tại</small><strong>{{ my_rank_info.name }}</strong></div>
         </div>
+        {% if active_room %}
+        <a class="btn gold wide dashboard-return-room" href="{{ url_for('room_detail', room_id=active_room.id) }}">🎮 Trở Lại Phòng Đấu</a>
+        {% endif %}
     </article>
 </section>
 

@@ -3835,3 +3835,16 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
 
 /* V1.13.5 - Bộ Công Cụ RP */
 .admin-rp-tool-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin-top:14px}.admin-rp-tool-card{border:1px solid rgba(148,163,184,.22);border-radius:14px;padding:16px;background:rgba(15,23,42,.48)}.admin-rp-tool-card h3{margin-top:0}.admin-rp-tool-card form{display:grid;gap:9px}.admin-rp-recalculate-card{grid-column:1/-1}@media(max-width:900px){.admin-rp-tool-grid{grid-template-columns:1fr}.admin-rp-recalculate-card{grid-column:auto}}
+
+/* V1.13.8 Branch From V1.13.7 - Room Control */
+.dashboard-return-room{margin-top:12px;min-height:44px;display:flex;align-items:center;justify-content:center;font-weight:900}
+.room-h2h-panel{margin:0 0 18px;padding:16px;border:1px solid rgba(245,185,40,.24);border-radius:12px;background:rgba(8,18,29,.72)}
+.room-h2h-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;margin-bottom:14px}
+.room-h2h-heading h3{margin:0 0 4px;font-size:17px}.room-h2h-heading p{margin:0;color:#8f9aa6;font-size:12px}
+.room-h2h-heading>strong{padding:6px 10px;border-radius:999px;background:rgba(245,185,40,.12);color:#ffd866;font-size:12px}
+.room-h2h-scoreboard{display:grid;grid-template-columns:1fr .7fr 1fr;gap:8px;margin-bottom:12px}
+.room-h2h-scoreboard>div{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:78px;padding:8px;border:1px solid #202d38;border-radius:10px;background:#0b1723;text-align:center}
+.room-h2h-scoreboard span{font-size:11px;color:#aab4bf}.room-h2h-scoreboard strong{font-size:24px;color:#f5c94a}.room-h2h-scoreboard small{font-size:10px;color:#74808c}
+.room-h2h-list{display:grid;gap:7px}.room-h2h-list article{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border-radius:8px;background:#0a1520;border:1px solid #1c2935}
+.room-h2h-list article>div{display:flex;flex-direction:column;gap:3px}.room-h2h-list article strong{font-size:12px}.room-h2h-list article small,.room-h2h-list article>span{font-size:10px;color:#87939f}.room-h2h-empty{margin:0;padding:12px;text-align:center;color:#8f9aa6}
+@media(max-width:650px){.room-h2h-list article{align-items:flex-start;flex-direction:column}.room-h2h-scoreboard{grid-template-columns:1fr 1fr 1fr}.room-h2h-heading{align-items:center}}

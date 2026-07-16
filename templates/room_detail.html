@@ -248,6 +248,35 @@
     <div class="panel room-extra-controls">
     <h2 class="room-control-title">Điều khiển phòng</h2>
 
+    {% if room.has_guest %}
+    <section class="room-h2h-panel">
+        <div class="room-h2h-heading">
+            <div>
+                <h3>Lịch sử đối đầu trong phòng</h3>
+                <p>Tính từ thời điểm phòng đấu này được mở.</p>
+            </div>
+            <strong>{{ room_h2h.total }} trận</strong>
+        </div>
+        <div class="room-h2h-scoreboard">
+            <div><span>{{ room.host_name }}</span><strong>{{ room_h2h.host_wins }}</strong><small>Thắng</small></div>
+            <div><span>Hòa</span><strong>{{ room_h2h.draws }}</strong><small>Trận</small></div>
+            <div><span>{{ room.guest_name }}</span><strong>{{ room_h2h.guest_wins }}</strong><small>Thắng</small></div>
+        </div>
+        {% if room_h2h.matches %}
+        <div class="room-h2h-list">
+            {% for match in room_h2h.matches[:10] %}
+            <article>
+                <div><strong>{{ room.host_name }} {{ match.host_score }} - {{ match.guest_score }} {{ room.guest_name }}</strong><small>{{ match.created_at_display }}</small></div>
+                <span>{{ match.host_team or '—' }} · {{ match.guest_team or '—' }}</span>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <p class="room-h2h-empty">Chưa có trận nào được xác nhận kể từ khi mở phòng.</p>
+        {% endif %}
+    </section>
+    {% endif %}
+
     {% if room.status == "waiting_ready" %}
 
         {% if current_user.id == room.host_user_id or current_user.role == "admin" %}
@@ -290,10 +319,10 @@
         <p class="small">Chờ chủ phòng kết thúc giao hữu để quay trận tiếp theo.</p>
         {% endif %}
         {% if current_user.id == room.guest_user_id %}
-        <form class="inline-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn xác nhận Bỏ Cuộc và - 20 RP?');">
+        <form class="inline-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn xác nhận Bỏ Cuộc? Hệ thống sẽ trừ ngẫu nhiên 22–25 RP.');">
             <button class="btn red" type="submit">🚪 Thoát Phòng</button>
         </form>
-        <p class="small danger-text">Đã quay đội. Thoát phòng lúc này bị tính là bỏ cuộc và trừ 20 RP.</p>
+        <p class="small danger-text">Đã quay đội. Thoát phòng lúc này bị tính là bỏ cuộc và trừ ngẫu nhiên 22–25 RP.</p>
         {% elif current_user.id == room.host_user_id %}
         <form class="inline-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}">
             <button class="btn red" type="submit">🚪 Thoát phòng</button>
@@ -304,10 +333,10 @@
 
     {% if room.status == "playing" and current_user.id == room.guest_user_id %}
     <div class="guest-forfeit-box">
-        <form class="inline-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn xác nhận Bỏ Cuộc và - 20 RP?');">
+        <form class="inline-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn xác nhận Bỏ Cuộc? Hệ thống sẽ trừ ngẫu nhiên 22–25 RP.');">
             <button class="btn red" type="submit">🚪 Thoát Phòng</button>
         </form>
-        <p class="small danger-text">Thoát phòng sau khi đã quay đội được tính là bỏ cuộc và bị trừ 20 RP.</p>
+        <p class="small danger-text">Thoát phòng sau khi đã quay đội được tính là bỏ cuộc và bị trừ ngẫu nhiên 22–25 RP.</p>
     </div>
     {% endif %}
 

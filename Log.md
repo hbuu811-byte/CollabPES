@@ -1,3 +1,24 @@
+# PES Arena V1.13.4 — Khôi phục dữ liệu Supabase
+
+## Nâng cấp chính
+
+- Thêm kiểm tra file Backup ZIP/JSON và xem số bản ghi trước khi khôi phục.
+- Thêm chế độ Gộp/cập nhật bằng upsert.
+- Thêm chế độ Thay thế toàn bộ theo thứ tự xóa/nạp phụ thuộc dữ liệu.
+- Production yêu cầu tài khoản sở hữu, mật khẩu hiện tại và cụm `KHOI PHUC DU LIEU`.
+- Giới hạn file 20 MB, JSON giải nén 100 MB và 100.000 bản ghi.
+- Chỉ cho phép các bảng nằm trong danh sách Backup của PES Arena.
+- Ghi nhật ký thành công/thất bại của thao tác khôi phục.
+
+## File thay đổi
+
+- `app.py`: phiên bản, đọc/kiểm tra Backup, xem trước, khôi phục Supabase, xóa và upsert theo lô.
+- `templates/admin.html`: giao diện kiểm tra và khôi phục.
+- `templates/backup_preview.html`: trang xem trước số bản ghi.
+- `docs/HUONG_DAN_KHOI_PHUC_SUPABASE_V1.13.4.md`: hướng dẫn vận hành.
+
+---
+
 # V1.13.3 — Tinh gọn Admin và sửa giao diện quản lý trận
 
 - Bỏ giao diện và chặn route của Chuyển giao quyền sở hữu.

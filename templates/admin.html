@@ -483,6 +483,38 @@
             <button class="btn gold" type="submit">⬇️ Tạo và tải Backup ZIP</button>
         </form>
         <p class="small">Backup chỉ đọc dữ liệu, không sửa hoặc xóa dữ liệu trong Supabase.</p>
+
+        <hr>
+        <h3>♻️ Khôi phục dữ liệu vào Supabase</h3>
+        <p>Tải lên file ZIP/JSON đã tạo ở phía trên. Hệ thống kiểm tra cấu trúc rồi khôi phục theo chế độ bạn chọn.</p>
+        <div class="notice warning">
+            <strong>Gộp/cập nhật:</strong> bản ghi trùng ID được cập nhật, bản ghi mới được thêm; dữ liệu hiện có không nằm trong Backup vẫn được giữ.<br>
+            <strong>Thay thế toàn bộ:</strong> xóa dữ liệu trong các bảng có mặt trong Backup rồi nạp lại. Chỉ dùng khi cần quay hệ thống về đúng thời điểm đã sao lưu.
+        </div>
+        <form method="post" action="{{ url_for('admin_preview_backup') }}" enctype="multipart/form-data" class="backup-preview-form">
+            <label>Kiểm tra file trước khi khôi phục</label>
+            <input type="file" name="backup_file" accept=".zip,.json,application/zip,application/json" required>
+            <button class="btn secondary" type="submit">🔎 Kiểm tra và xem số bản ghi</button>
+        </form>
+        <p class="small">Sau khi kiểm tra, quay lại đây và chọn lại file để thực hiện khôi phục.</p>
+
+        <form method="post" action="{{ url_for('admin_restore_backup') }}" enctype="multipart/form-data" onsubmit="return confirm('Bạn chắc chắn muốn khôi phục dữ liệu vào Supabase? Hãy dừng tạo và xác nhận trận trước khi tiếp tục.');">
+            <label>File Backup ZIP hoặc JSON</label>
+            <input type="file" name="backup_file" accept=".zip,.json,application/zip,application/json" required>
+            <label>Chế độ khôi phục</label>
+            <select name="restore_mode" required>
+                <option value="merge">Gộp/cập nhật — an toàn hơn</option>
+                <option value="replace">Thay thế toàn bộ dữ liệu trong Backup</option>
+            </select>
+            {% if not is_test_mode %}
+            <label>Mật khẩu hiện tại của tài khoản sở hữu</label>
+            <input type="password" name="current_password" autocomplete="current-password" required>
+            {% endif %}
+            <label>Nhập câu xác nhận</label>
+            <input name="confirm_text" autocomplete="off" placeholder="KHOI PHUC DU LIEU" {% if not is_test_mode %}required{% endif %}>
+            <button class="btn danger" type="submit">♻️ Khôi phục vào Supabase</button>
+        </form>
+        <p class="small">Giới hạn: file tải lên 20 MB, dữ liệu giải nén 100 MB và tối đa 100.000 bản ghi. Không đóng trang trong lúc đang xử lý.</p>
     </div>
 </section>
 {% endif %}

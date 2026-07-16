@@ -54,7 +54,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.3"
+APP_VERSION = "V1.13.4"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -5925,6 +5925,176 @@ def admin_download_backup():
     output.seek(0)
     log_admin_action("Sao lưu dữ liệu", "backup", details={"tables": {k: len(v) for k, v in backup["tables"].items()}, "warnings": backup["warnings"]})
     return send_file(output, mimetype="application/zip", as_attachment=True, download_name=zip_name)
+
+
+RESTORE_INSERT_ORDER = [
+    "teams", "system_settings", "users", "registration_invite_codes",
+    "matches", "match_rooms", "match_invites", "match_disputes",
+    "password_reset_requests", "chat_messages", "user_notifications",
+    "user_achievements", "admin_activity_logs",
+]
+RESTORE_DELETE_ORDER = list(reversed(RESTORE_INSERT_ORDER))
+BACKUP_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
+BACKUP_JSON_MAX_BYTES = 100 * 1024 * 1024
+BACKUP_MAX_ROWS = 100000
+
+
+def _read_backup_upload(upload):
+    """Validate and parse a PES Arena ZIP/JSON backup without writing it to disk."""
+    if not upload or not upload.filename:
+        raise ValueError("Hãy chọn file Backup ZIP hoặc JSON.")
+    raw = upload.read(BACKUP_UPLOAD_MAX_BYTES + 1)
+    if len(raw) > BACKUP_UPLOAD_MAX_BYTES:
+        raise ValueError("File Backup vượt quá giới hạn 20 MB.")
+    filename = upload.filename.lower().strip()
+    json_bytes = None
+    if filename.endswith(".zip"):
+        try:
+            with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+                candidates = [i for i in archive.infolist() if i.filename.lower().endswith(".json") and not i.is_dir()]
+                if len(candidates) != 1:
+                    raise ValueError("Backup ZIP phải chứa đúng một file JSON.")
+                info = candidates[0]
+                if info.file_size > BACKUP_JSON_MAX_BYTES:
+                    raise ValueError("Dữ liệu JSON trong Backup vượt quá giới hạn 100 MB.")
+                json_bytes = archive.read(info)
+        except zipfile.BadZipFile as exc:
+            raise ValueError("File ZIP không hợp lệ hoặc đã bị hỏng.") from exc
+    elif filename.endswith(".json"):
+        json_bytes = raw
+    else:
+        raise ValueError("Chỉ chấp nhận file .zip hoặc .json do PES Arena tạo ra.")
+
+    try:
+        payload = json.loads(json_bytes.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("Không đọc được JSON trong file Backup.") from exc
+    if not isinstance(payload, dict) or not isinstance(payload.get("tables"), dict):
+        raise ValueError("File không đúng cấu trúc Backup PES Arena.")
+    metadata = payload.get("metadata") or {}
+    if metadata.get("app_name") != APP_NAME:
+        raise ValueError("File Backup không thuộc dự án PES Arena này.")
+    tables = payload["tables"]
+    unknown = sorted(set(tables) - set(BACKUP_TABLES))
+    if unknown:
+        raise ValueError("Backup chứa bảng không được phép: " + ", ".join(unknown))
+    total_rows = 0
+    for table_name, rows in tables.items():
+        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+            raise ValueError(f"Dữ liệu bảng {table_name} không hợp lệ.")
+        total_rows += len(rows)
+    if total_rows > BACKUP_MAX_ROWS:
+        raise ValueError(f"Backup có {total_rows} bản ghi, vượt giới hạn {BACKUP_MAX_ROWS}.")
+    return payload
+
+
+def _batch_rows(rows, size=200):
+    for start in range(0, len(rows), size):
+        yield rows[start:start + size]
+
+
+def _delete_all_table_rows(table_name):
+    """Delete a table in ID batches; avoids an unsafe unfiltered delete request."""
+    while True:
+        result = execute_query(db.table(table_name).select("id").limit(500), f"restore_list_{table_name}", attempts=2)
+        ids = [row.get("id") for row in (result.data or []) if row.get("id") is not None]
+        if not ids:
+            break
+        execute_query(db.table(table_name).delete().in_("id", ids), f"restore_delete_{table_name}", attempts=2)
+
+
+def _restore_backup_payload(payload, mode):
+    tables = payload.get("tables") or {}
+    report = {"mode": mode, "restored": {}, "skipped": {}, "warnings": []}
+    if mode == "replace":
+        for table_name in RESTORE_DELETE_ORDER:
+            if table_name not in tables:
+                continue
+            try:
+                _delete_all_table_rows(table_name)
+            except Exception as exc:
+                raise RuntimeError(f"Không thể làm sạch bảng {table_name}: {exc}") from exc
+
+    for table_name in RESTORE_INSERT_ORDER:
+        rows = tables.get(table_name)
+        if rows is None:
+            report["skipped"][table_name] = "Không có trong file Backup"
+            continue
+        restored = 0
+        try:
+            for batch in _batch_rows(rows):
+                if not batch:
+                    continue
+                execute_query(db.table(table_name).upsert(batch), f"restore_upsert_{table_name}", attempts=2)
+                restored += len(batch)
+            report["restored"][table_name] = restored
+        except Exception as exc:
+            raise RuntimeError(f"Khôi phục bảng {table_name} thất bại sau {restored} bản ghi: {exc}") from exc
+    return report
+
+
+@app.route("/admin/backup/preview", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("backup_manage")
+def admin_preview_backup():
+    try:
+        payload = _read_backup_upload(request.files.get("backup_file"))
+        counts = {name: len(rows) for name, rows in payload.get("tables", {}).items()}
+        return render_template(
+            "backup_preview.html",
+            metadata=payload.get("metadata") or {},
+            counts=counts,
+            total_rows=sum(counts.values()),
+            warnings=payload.get("warnings") or [],
+        )
+    except Exception as exc:
+        flash(f"Không thể kiểm tra file Backup: {exc}", "danger")
+        return redirect_admin("backup")
+
+
+@app.route("/admin/backup/restore", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("backup_manage")
+def admin_restore_backup():
+    actor = current_user()
+    mode = (request.form.get("restore_mode") or "merge").strip().lower()
+    if mode not in {"merge", "replace"}:
+        flash("Chế độ khôi phục không hợp lệ.", "danger")
+        return redirect_admin("backup")
+
+    # Production restore is owner-only and requires both password and a deliberate phrase.
+    if not is_test_mode():
+        if not is_owner_user(actor):
+            flash("Chỉ tài khoản sở hữu được khôi phục dữ liệu trên Production.", "danger")
+            return redirect_admin("backup")
+        if actor.get("password_hash") != hash_password(request.form.get("current_password", "")):
+            flash("Mật khẩu hiện tại không đúng.", "danger")
+            return redirect_admin("backup")
+        if request.form.get("confirm_text", "").strip() != "KHOI PHUC DU LIEU":
+            flash("Hãy nhập đúng: KHOI PHUC DU LIEU", "danger")
+            return redirect_admin("backup")
+    elif mode == "replace" and request.form.get("confirm_text", "").strip() != "KHOI PHUC DU LIEU":
+        flash("Chế độ Thay thế toàn bộ yêu cầu nhập: KHOI PHUC DU LIEU", "danger")
+        return redirect_admin("backup")
+
+    try:
+        payload = _read_backup_upload(request.files.get("backup_file"))
+        counts = {name: len(rows) for name, rows in payload.get("tables", {}).items()}
+        report = _restore_backup_payload(payload, mode)
+        cache_delete("all_users")
+        ttl_cache_delete("system_features")
+        log_admin_action(
+            "Khôi phục dữ liệu", "backup",
+            details={"mode": mode, "source": payload.get("metadata", {}), "counts": counts, "report": report},
+        )
+        restored_total = sum(report["restored"].values())
+        flash(f"Khôi phục hoàn tất: {restored_total} bản ghi, chế độ {'Thay thế toàn bộ' if mode == 'replace' else 'Gộp/cập nhật'}.", "success")
+    except Exception as exc:
+        log_admin_action("Khôi phục dữ liệu thất bại", "backup", details={"mode": mode, "error": str(exc)[:500]})
+        flash(f"Không thể khôi phục dữ liệu: {exc}", "danger")
+    return redirect_admin("backup")
 
 
 @app.route("/admin/ownership/transfer", methods=["POST"])

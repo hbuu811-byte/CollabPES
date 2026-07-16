@@ -54,7 +54,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.4"
+APP_VERSION = "V1.13.5"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -553,8 +553,8 @@ ADMIN_PERMISSION_GROUPS = {
     "users": ["users_view", "users_approve", "users_edit", "users_delete", "password_reset", "accounts_import"],
     "matches": ["matches_view", "matches_edit", "matches_confirm", "matches_cancel", "matches_delete"],
     "operations": ["rooms_manage", "invites_manage", "announcements_manage"],
-    "system": ["system_features_manage", "backup_manage", "chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
-    "rp": ["rp_view", "rp_simulate", "rp_edit_match", "rp_recalculate_all"],
+    "system": ["system_features_manage", "chat_manage", "friendly_manage", "registration_codes_manage", "admin_logs_view"],
+    "rp": ["rp_view", "rp_simulate", "rp_edit_match", "rp_recalculate_all", "rp_backup_restore"],
     "permissions": ["permissions_manage"],
 }
 ADMIN_PERMISSION_LABELS = {
@@ -563,10 +563,10 @@ ADMIN_PERMISSION_LABELS = {
     "matches_view":"Xem trận", "matches_edit":"Sửa tỷ số",
     "matches_confirm":"Xác nhận trận", "matches_cancel":"Hủy trận", "matches_delete":"Xóa trận",
     "rooms_manage":"Quản lý phòng", "invites_manage":"Quản lý lời mời",
-    "announcements_manage":"Quản lý thông báo", "system_features_manage":"Bật/tắt tính năng hệ thống", "backup_manage":"Sao lưu dữ liệu", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
+    "announcements_manage":"Quản lý thông báo", "system_features_manage":"Bật/tắt tính năng hệ thống", "chat_manage":"Quản lý Chat", "friendly_manage":"Quản lý Giao hữu",
     "registration_codes_manage":"Quản lý mã đăng ký", "admin_logs_view":"Xem nhật ký Admin",
     "rp_view":"Xem công thức RP", "rp_simulate":"Tính thử RP", "rp_edit_match":"Sửa RP trận",
-    "rp_recalculate_all":"Tính lại toàn hệ thống", "permissions_manage":"Cấp/thu hồi quyền Admin",
+    "rp_recalculate_all":"Tính lại toàn hệ thống", "rp_backup_restore":"Backup/Khôi phục RP", "permissions_manage":"Cấp/thu hồi quyền Admin",
 }
 LEGACY_ADMIN_PERMISSION_FIELDS = {
     "create_test_account": "admin_can_create_test_account",
@@ -804,7 +804,8 @@ def get_current_loss_streak(user_id):
 
 
 def calculate_deltas(player_a, player_b, score_a: int, score_b: int, team_a=None, team_b=None,
-                     team_overall_a=None, team_overall_b=None, team_tier_a=None, team_tier_b=None):
+                     team_overall_a=None, team_overall_b=None, team_tier_a=None, team_tier_b=None,
+                     rng=None):
     """Lớp tương thích: route cũ gọi như trước, công thức nằm trong rp_engine."""
     player_a_for_rp = dict(player_a or {})
     player_b_for_rp = dict(player_b or {})
@@ -814,6 +815,7 @@ def calculate_deltas(player_a, player_b, score_a: int, score_b: int, team_a=None
         player_a_for_rp, player_b_for_rp, score_a, score_b, get_rank_level=get_rank_level,
         team_a=team_a, team_b=team_b, team_overall_a=team_overall_a,
         team_overall_b=team_overall_b, team_tier_a=team_tier_a, team_tier_b=team_tier_b,
+        rng=rng,
     )
 
 TEAM_LOGO_BUCKET = "team-logos"
@@ -5385,6 +5387,7 @@ def apply_match_result(match):
             match.get("team1"), match.get("team2"),
             match.get("team1_overall"), match.get("team2_overall"),
             match.get("team1_tier"), match.get("team2_tier"),
+            rng=random.Random(f"PES_ARENA_RP_V1|{match.get('id')}"),
         )
         delta1, delta2 = _safe_int(delta1), _safe_int(delta2)
 
@@ -5789,11 +5792,16 @@ def recalculate_rank_history(from_created_at=None):
                 "streak": 0, "loss_streak": 0,
             }).eq("id", user["id"]), "reset_user_for_recalc")
 
+        # Đưa toàn bộ lịch sử hợp lệ về trạng thái chờ trước khi xử lý trận đầu tiên.
+        # Nhờ đó truy vấn chuỗi thắng/thua chỉ nhìn thấy các trận đã được tính lại
+        # trước thời điểm hiện tại, không vô tình đọc các trận tương lai còn confirmed.
         for match in matches_snapshot:
             execute_query(db.table("matches").update({
                 "status": "waiting_confirm", "delta1": None, "delta2": None,
                 "updated_at": now_iso(),
             }).eq("id", match["id"]), "prepare_match_recalc")
+
+        for match in matches_snapshot:
             fresh = get_match(match["id"])
             apply_match_result(fresh)
 
@@ -5860,241 +5868,197 @@ def admin_create_manual_match():
     return redirect_admin("matches")
 
 
-BACKUP_TABLES = [
-    "users", "matches", "match_rooms", "match_invites", "match_disputes",
-    "password_reset_requests", "registration_invite_codes", "system_settings",
-    "admin_activity_logs", "chat_messages", "user_notifications",
-    "user_achievements", "teams",
-]
+RP_USER_FIELDS = (
+    "id", "rank_points", "wins", "draws", "losses", "total_matches",
+    "goals_for", "goals_against", "streak", "loss_streak",
+)
+RP_MATCH_FIELDS = (
+    "id", "delta1", "delta2", "rp_formula_version", "rp_details",
+)
+RP_BACKUP_UPLOAD_MAX_BYTES = 10 * 1024 * 1024
+RP_BACKUP_MAX_ROWS = 100000
 
 
-def _backup_table_rows(table_name, page_size=1000):
+def _select_all_rows(table_name, columns="*", page_size=1000):
     rows = []
     start = 0
     while True:
         result = execute_query(
-            db.table(table_name).select("*").range(start, start + page_size - 1),
-            f"backup_{table_name}_{start}",
-            attempts=2,
+            db.table(table_name).select(columns).range(start, start + page_size - 1),
+            f"rp_backup_{table_name}_{start}", attempts=2,
         )
         batch = result.data or []
         rows.extend(batch)
         if len(batch) < page_size:
-            break
+            return rows
         start += page_size
-    return rows
 
 
-@app.route("/admin/backup/download", methods=["POST"])
-@login_required
-@admin_required
-@admin_permission_required("backup_manage")
-def admin_download_backup():
-    actor = current_user()
-    if not is_test_mode() and request.form.get("confirm_text", "").strip() != "SAO LUU DU LIEU":
-        flash("Trên Production, hãy nhập đúng: SAO LUU DU LIEU", "danger")
-        return redirect_admin("backup")
-
-    backup = {
+def _build_rp_backup_payload(actor):
+    users = _select_all_rows("users", ",".join(RP_USER_FIELDS))
+    matches = _select_all_rows("matches", ",".join(RP_MATCH_FIELDS))
+    return {
         "metadata": {
             "app_name": APP_NAME,
             "app_version": APP_VERSION,
+            "backup_type": "rp_only",
+            "format_version": 1,
             "created_at": now_iso(),
             "created_by_user_id": actor.get("id"),
             "created_by_username": actor.get("username"),
             "environment": APP_ENV,
-            "test_mode": is_test_mode(),
-            "format_version": 1,
         },
-        "tables": {},
-        "warnings": [],
+        "users": users,
+        "matches": matches,
     }
-    for table_name in BACKUP_TABLES:
-        try:
-            backup["tables"][table_name] = _backup_table_rows(table_name)
-        except Exception as exc:
-            backup["warnings"].append({"table": table_name, "error": str(exc)[:300]})
-
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    json_name = f"PES_Arena_Backup_{timestamp}.json"
-    zip_name = f"PES_Arena_Backup_{timestamp}.zip"
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr(json_name, json.dumps(backup, ensure_ascii=False, indent=2, default=str))
-        archive.writestr("README.txt", "PES Arena database backup. Keep this file private because it may contain account and activity data.\n")
-    output.seek(0)
-    log_admin_action("Sao lưu dữ liệu", "backup", details={"tables": {k: len(v) for k, v in backup["tables"].items()}, "warnings": backup["warnings"]})
-    return send_file(output, mimetype="application/zip", as_attachment=True, download_name=zip_name)
 
 
-RESTORE_INSERT_ORDER = [
-    "teams", "system_settings", "users", "registration_invite_codes",
-    "matches", "match_rooms", "match_invites", "match_disputes",
-    "password_reset_requests", "chat_messages", "user_notifications",
-    "user_achievements", "admin_activity_logs",
-]
-RESTORE_DELETE_ORDER = list(reversed(RESTORE_INSERT_ORDER))
-BACKUP_UPLOAD_MAX_BYTES = 20 * 1024 * 1024
-BACKUP_JSON_MAX_BYTES = 100 * 1024 * 1024
-BACKUP_MAX_ROWS = 100000
-
-
-def _read_backup_upload(upload):
-    """Validate and parse a PES Arena ZIP/JSON backup without writing it to disk."""
-    if not upload or not upload.filename:
-        raise ValueError("Hãy chọn file Backup ZIP hoặc JSON.")
-    raw = upload.read(BACKUP_UPLOAD_MAX_BYTES + 1)
-    if len(raw) > BACKUP_UPLOAD_MAX_BYTES:
-        raise ValueError("File Backup vượt quá giới hạn 20 MB.")
-    filename = upload.filename.lower().strip()
-    json_bytes = None
-    if filename.endswith(".zip"):
-        try:
-            with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
-                candidates = [i for i in archive.infolist() if i.filename.lower().endswith(".json") and not i.is_dir()]
-                if len(candidates) != 1:
-                    raise ValueError("Backup ZIP phải chứa đúng một file JSON.")
-                info = candidates[0]
-                if info.file_size > BACKUP_JSON_MAX_BYTES:
-                    raise ValueError("Dữ liệu JSON trong Backup vượt quá giới hạn 100 MB.")
-                json_bytes = archive.read(info)
-        except zipfile.BadZipFile as exc:
-            raise ValueError("File ZIP không hợp lệ hoặc đã bị hỏng.") from exc
-    elif filename.endswith(".json"):
-        json_bytes = raw
-    else:
-        raise ValueError("Chỉ chấp nhận file .zip hoặc .json do PES Arena tạo ra.")
-
+@app.route("/admin/rp/backup/download", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("rp_backup_restore")
+def admin_download_rp_backup():
+    actor = current_user()
+    if not is_test_mode() and request.form.get("confirm_text", "").strip() != "SAO LUU RP":
+        flash("Trên Production, hãy nhập đúng: SAO LUU RP", "danger")
+        return redirect_admin("rp-tools")
     try:
-        payload = json.loads(json_bytes.decode("utf-8-sig"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("Không đọc được JSON trong file Backup.") from exc
-    if not isinstance(payload, dict) or not isinstance(payload.get("tables"), dict):
-        raise ValueError("File không đúng cấu trúc Backup PES Arena.")
+        payload = _build_rp_backup_payload(actor)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        json_name = f"PES_Arena_RP_Backup_{timestamp}.json"
+        zip_name = f"PES_Arena_RP_Backup_{timestamp}.zip"
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr(json_name, json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+            archive.writestr(
+                "README.txt",
+                "PES Arena RP-only backup. Restores RP/statistics/streaks and stored match deltas only.\n",
+            )
+        output.seek(0)
+        log_admin_action("Sao lưu RP toàn hệ thống", "rp", details={
+            "users": len(payload["users"]), "matches": len(payload["matches"]),
+        })
+        return send_file(output, mimetype="application/zip", as_attachment=True, download_name=zip_name)
+    except Exception as exc:
+        app.logger.exception("RP backup failed")
+        flash(f"Không thể sao lưu RP: {exc}", "danger")
+        return redirect_admin("rp-tools")
+
+
+def _read_rp_backup_upload(upload):
+    if not upload or not upload.filename:
+        raise ValueError("Hãy chọn file PES Arena RP Backup ZIP hoặc JSON.")
+    raw = upload.read(RP_BACKUP_UPLOAD_MAX_BYTES + 1)
+    if len(raw) > RP_BACKUP_UPLOAD_MAX_BYTES:
+        raise ValueError("File RP Backup vượt quá giới hạn 10 MB.")
+    filename = upload.filename.lower().strip()
+    if filename.endswith(".zip"):
+        with zipfile.ZipFile(io.BytesIO(raw), "r") as archive:
+            candidates = [i for i in archive.infolist() if i.filename.lower().endswith(".json") and not i.is_dir()]
+            if len(candidates) != 1:
+                raise ValueError("ZIP phải chứa đúng một file JSON RP Backup.")
+            if candidates[0].file_size > RP_BACKUP_UPLOAD_MAX_BYTES * 5:
+                raise ValueError("JSON giải nén quá lớn.")
+            raw = archive.read(candidates[0])
+    elif not filename.endswith(".json"):
+        raise ValueError("Chỉ chấp nhận file .zip hoặc .json.")
+    try:
+        payload = json.loads(raw.decode("utf-8-sig"))
+    except Exception as exc:
+        raise ValueError("Không đọc được JSON trong file RP Backup.") from exc
     metadata = payload.get("metadata") or {}
-    if metadata.get("app_name") != APP_NAME:
-        raise ValueError("File Backup không thuộc dự án PES Arena này.")
-    tables = payload["tables"]
-    unknown = sorted(set(tables) - set(BACKUP_TABLES))
-    if unknown:
-        raise ValueError("Backup chứa bảng không được phép: " + ", ".join(unknown))
-    total_rows = 0
-    for table_name, rows in tables.items():
-        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-            raise ValueError(f"Dữ liệu bảng {table_name} không hợp lệ.")
-        total_rows += len(rows)
-    if total_rows > BACKUP_MAX_ROWS:
-        raise ValueError(f"Backup có {total_rows} bản ghi, vượt giới hạn {BACKUP_MAX_ROWS}.")
+    if metadata.get("app_name") != APP_NAME or metadata.get("backup_type") != "rp_only":
+        raise ValueError("Đây không phải file PES Arena RP Backup hợp lệ.")
+    users = payload.get("users")
+    matches = payload.get("matches")
+    if not isinstance(users, list) or not isinstance(matches, list):
+        raise ValueError("File thiếu danh sách users hoặc matches.")
+    if len(users) + len(matches) > RP_BACKUP_MAX_ROWS:
+        raise ValueError("File RP Backup vượt quá 100.000 bản ghi.")
     return payload
 
 
-def _batch_rows(rows, size=200):
-    for start in range(0, len(rows), size):
-        yield rows[start:start + size]
-
-
-def _delete_all_table_rows(table_name):
-    """Delete a table in ID batches; avoids an unsafe unfiltered delete request."""
-    while True:
-        result = execute_query(db.table(table_name).select("id").limit(500), f"restore_list_{table_name}", attempts=2)
-        ids = [row.get("id") for row in (result.data or []) if row.get("id") is not None]
-        if not ids:
-            break
-        execute_query(db.table(table_name).delete().in_("id", ids), f"restore_delete_{table_name}", attempts=2)
-
-
-def _restore_backup_payload(payload, mode):
-    tables = payload.get("tables") or {}
-    report = {"mode": mode, "restored": {}, "skipped": {}, "warnings": []}
-    if mode == "replace":
-        for table_name in RESTORE_DELETE_ORDER:
-            if table_name not in tables:
-                continue
-            try:
-                _delete_all_table_rows(table_name)
-            except Exception as exc:
-                raise RuntimeError(f"Không thể làm sạch bảng {table_name}: {exc}") from exc
-
-    for table_name in RESTORE_INSERT_ORDER:
-        rows = tables.get(table_name)
-        if rows is None:
-            report["skipped"][table_name] = "Không có trong file Backup"
+def _restore_rp_backup_payload(payload):
+    user_count = 0
+    match_count = 0
+    missing_users = 0
+    missing_matches = 0
+    for row in payload.get("users", []):
+        user_id = row.get("id")
+        if not user_id:
             continue
-        restored = 0
-        try:
-            for batch in _batch_rows(rows):
-                if not batch:
-                    continue
-                execute_query(db.table(table_name).upsert(batch), f"restore_upsert_{table_name}", attempts=2)
-                restored += len(batch)
-            report["restored"][table_name] = restored
-        except Exception as exc:
-            raise RuntimeError(f"Khôi phục bảng {table_name} thất bại sau {restored} bản ghi: {exc}") from exc
-    return report
+        values = {key: row.get(key) for key in RP_USER_FIELDS if key != "id"}
+        result = execute_query(
+            db.table("users").update(values).eq("id", user_id),
+            "restore_rp_user", attempts=2,
+        )
+        if result.data:
+            user_count += 1
+        else:
+            missing_users += 1
+    for row in payload.get("matches", []):
+        match_id = row.get("id")
+        if not match_id:
+            continue
+        values = {key: row.get(key) for key in RP_MATCH_FIELDS if key != "id"}
+        result = execute_query(
+            db.table("matches").update(values).eq("id", match_id),
+            "restore_rp_match", attempts=2,
+        )
+        if result.data:
+            match_count += 1
+        else:
+            missing_matches += 1
+    ttl_cache_delete("players_raw", "rooms_raw", "achievement_map")
+    cache_delete("all_users")
+    return {
+        "users": user_count, "matches": match_count,
+        "missing_users": missing_users, "missing_matches": missing_matches,
+    }
 
 
-@app.route("/admin/backup/preview", methods=["POST"])
+@app.route("/admin/rp/backup/restore", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("backup_manage")
-def admin_preview_backup():
+@admin_permission_required("rp_backup_restore")
+def admin_restore_rp_backup():
+    actor = current_user()
+    if not is_test_mode():
+        if not is_owner_user(actor):
+            flash("Chỉ tài khoản sở hữu được khôi phục RP trên Production.", "danger")
+            return redirect_admin("rp-tools")
+        if actor.get("password_hash") != hash_password(request.form.get("current_password", "")):
+            flash("Mật khẩu hiện tại không đúng.", "danger")
+            return redirect_admin("rp-tools")
+        if request.form.get("confirm_text", "").strip() != "KHOI PHUC RP":
+            flash("Hãy nhập đúng: KHOI PHUC RP", "danger")
+            return redirect_admin("rp-tools")
     try:
-        payload = _read_backup_upload(request.files.get("backup_file"))
-        counts = {name: len(rows) for name, rows in payload.get("tables", {}).items()}
-        return render_template(
-            "backup_preview.html",
-            metadata=payload.get("metadata") or {},
-            counts=counts,
-            total_rows=sum(counts.values()),
-            warnings=payload.get("warnings") or [],
+        payload = _read_rp_backup_upload(request.files.get("backup_file"))
+        report = _restore_rp_backup_payload(payload)
+        log_admin_action("Khôi phục RP toàn hệ thống", "rp", details={
+            "source": payload.get("metadata", {}), "report": report,
+        })
+        flash(
+            f"Đã khôi phục RP cho {report['users']} tài khoản và delta của {report['matches']} trận. "
+            f"Không tìm thấy: {report['missing_users']} tài khoản, {report['missing_matches']} trận.",
+            "success",
         )
     except Exception as exc:
-        flash(f"Không thể kiểm tra file Backup: {exc}", "danger")
-        return redirect_admin("backup")
+        app.logger.exception("RP restore failed")
+        log_admin_action("Khôi phục RP thất bại", "rp", details={"error": str(exc)[:500]})
+        flash(f"Không thể khôi phục RP: {exc}", "danger")
+    return redirect_admin("rp-tools")
 
 
+# Các route Backup toàn bộ dữ liệu từ V1.13.4 đã ngừng sử dụng.
+@app.route("/admin/backup/download", methods=["POST"])
+@app.route("/admin/backup/preview", methods=["POST"])
 @app.route("/admin/backup/restore", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("backup_manage")
-def admin_restore_backup():
-    actor = current_user()
-    mode = (request.form.get("restore_mode") or "merge").strip().lower()
-    if mode not in {"merge", "replace"}:
-        flash("Chế độ khôi phục không hợp lệ.", "danger")
-        return redirect_admin("backup")
-
-    # Production restore is owner-only and requires both password and a deliberate phrase.
-    if not is_test_mode():
-        if not is_owner_user(actor):
-            flash("Chỉ tài khoản sở hữu được khôi phục dữ liệu trên Production.", "danger")
-            return redirect_admin("backup")
-        if actor.get("password_hash") != hash_password(request.form.get("current_password", "")):
-            flash("Mật khẩu hiện tại không đúng.", "danger")
-            return redirect_admin("backup")
-        if request.form.get("confirm_text", "").strip() != "KHOI PHUC DU LIEU":
-            flash("Hãy nhập đúng: KHOI PHUC DU LIEU", "danger")
-            return redirect_admin("backup")
-    elif mode == "replace" and request.form.get("confirm_text", "").strip() != "KHOI PHUC DU LIEU":
-        flash("Chế độ Thay thế toàn bộ yêu cầu nhập: KHOI PHUC DU LIEU", "danger")
-        return redirect_admin("backup")
-
-    try:
-        payload = _read_backup_upload(request.files.get("backup_file"))
-        counts = {name: len(rows) for name, rows in payload.get("tables", {}).items()}
-        report = _restore_backup_payload(payload, mode)
-        cache_delete("all_users")
-        ttl_cache_delete("system_features")
-        log_admin_action(
-            "Khôi phục dữ liệu", "backup",
-            details={"mode": mode, "source": payload.get("metadata", {}), "counts": counts, "report": report},
-        )
-        restored_total = sum(report["restored"].values())
-        flash(f"Khôi phục hoàn tất: {restored_total} bản ghi, chế độ {'Thay thế toàn bộ' if mode == 'replace' else 'Gộp/cập nhật'}.", "success")
-    except Exception as exc:
-        log_admin_action("Khôi phục dữ liệu thất bại", "backup", details={"mode": mode, "error": str(exc)[:500]})
-        flash(f"Không thể khôi phục dữ liệu: {exc}", "danger")
-    return redirect_admin("backup")
+def retired_full_database_backup_routes():
+    abort(404)
 
 
 @app.route("/admin/ownership/transfer", methods=["POST"])

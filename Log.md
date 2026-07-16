@@ -1,3 +1,30 @@
+# PES Arena V1.13.5 – Bộ Công Cụ Tính RP
+
+## Thay đổi lớn
+
+- Bỏ tab Backup/Restore toàn bộ Supabase.
+- Gộp Backup RP, Restore RP và Tính lại RP vào tab `📈 Bộ Công Cụ Tính RP`.
+- RP Backup chỉ lưu các trường RP, thống kê, chuỗi và delta trận.
+- Restore RP không xóa hoặc tạo tài khoản/trận; không sửa tỷ số.
+- Tính lại RP dùng ID trận làm hạt ngẫu nhiên cố định để kết quả ổn định khi chạy lại.
+- Sửa lỗi tính lại RP đọc nhầm các trận tương lai khi tính chuỗi thua: toàn bộ trận hợp lệ được chuyển khỏi `confirmed` trước khi chạy tuần tự.
+- Thêm quyền `rp_backup_restore`; bỏ `backup_manage` khỏi nhóm Hệ thống.
+
+## File và vị trí sửa
+
+- `app.py` dòng gần 57: phiên bản V1.13.5.
+- `app.py` vùng `ADMIN_PERMISSION_GROUPS`: quyền `rp_backup_restore`.
+- `app.py` hàm `calculate_deltas` và `apply_match_result`: hạt ngẫu nhiên cố định theo ID trận.
+- `app.py` hàm `recalculate_rank_history`: chuẩn bị toàn bộ lịch sử rồi mới tính tuần tự.
+- `app.py` vùng route `/admin/rp/backup/*`: Backup và Restore RP.
+- `templates/admin.html` tab Công cụ RP: giao diện ba công cụ.
+- `static/style.css` cuối file: bố cục Bộ Công Cụ RP.
+- `docs/HUONG_DAN_BO_CONG_CU_RP_V1.13.5.md`: hướng dẫn và công thức.
+
+## Cài đặt
+
+Không cần chạy SQL mới. Chép đè code, commit/push và redeploy. Trước lần tính lại đầu tiên trên Production, hãy tải một file Backup RP.
+
 # PES Arena V1.13.4 — Khôi phục dữ liệu Supabase
 
 ## Nâng cấp chính

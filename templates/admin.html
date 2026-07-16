@@ -35,7 +35,6 @@
     {% if can_admin('matches_view') %}<button class="admin-tab-button" type="button" data-admin-tab="matches">🎮 Trận đấu</button>{% endif %}
 {% if can_create_test_account or can_import_accounts_csv %}<button class="admin-tab-button" type="button" data-admin-tab="test-data">🧪 Tài khoản test & Import</button>{% endif %}
     <button class="admin-tab-button" type="button" data-admin-tab="system">⚙️ Hệ thống</button>
-    {% if can_admin('backup_manage') %}<button class="admin-tab-button" type="button" data-admin-tab="backup">💾 Backup dữ liệu</button>{% endif %}
     {% if can_admin('rp_view') %}<button class="admin-tab-button" type="button" data-admin-tab="rp-tools">📈 Công cụ RP</button>{% endif %}
     {% if can_admin('admin_logs_view') %}<button class="admin-tab-button" type="button" data-admin-tab="logs">🧾 Nhật ký</button>{% endif %}
 </div>
@@ -463,64 +462,68 @@
 
 </section>
 
-{% if can_admin('backup_manage') %}
-<section class="admin-tab-panel" data-admin-panel="backup">
+{% if current_user.admin_level == 'owner' %}
+<section class="admin-tab-panel" data-admin-panel="rp-tools">
     <div class="panel">
-        <h2>💾 Backup dữ liệu hệ thống</h2>
-        <p>Tải một file ZIP chứa dữ liệu JSON của người dùng, trận đấu, phòng, lời mời, cấu hình, nhật ký và các bảng quan trọng.</p>
-        <p class="notice warning">File backup có thể chứa dữ liệu tài khoản và lịch sử hoạt động. Hãy giữ kín, không đưa lên GitHub hoặc gửi công khai.</p>
-        <div class="backup-howto">
-            <strong>Cách sử dụng</strong>
-            <ol>
-                <li>Trên hệ thống thật, nhập chính xác cụm <code>SAO LUU DU LIEU</code> vào ô xác nhận.</li>
-                <li>Bấm <strong>Tạo và tải Backup ZIP</strong>.</li>
-                <li>Chờ trình duyệt tải file ZIP xuống máy và cất file ở nơi riêng tư.</li>
-            </ol>
-            <p class="small"><code>SAO LUU DU LIEU</code> chỉ là câu xác nhận an toàn, không phải mật khẩu và không làm thay đổi dữ liệu.</p>
-        </div>
-        <form method="post" action="{{ url_for('admin_download_backup') }}" onsubmit="return confirm('Tạo và tải bản backup dữ liệu ngay bây giờ?');">
-            {% if not is_test_mode %}<label>Nhập câu xác nhận</label><input name="confirm_text" autocomplete="off" placeholder="SAO LUU DU LIEU" required>{% endif %}
-            <button class="btn gold" type="submit">⬇️ Tạo và tải Backup ZIP</button>
-        </form>
-        <p class="small">Backup chỉ đọc dữ liệu, không sửa hoặc xóa dữ liệu trong Supabase.</p>
+        <h2>📈 Bộ Công Cụ Tính RP</h2>
+        <p>Lịch sử các trận có trạng thái <strong>confirmed</strong> là nguồn chuẩn để tính RP, thống kê và chuỗi.</p>
+        {% if is_test_mode %}
+        <p class="notice success">🧪 TEST MODE đang bật — hãy bảo đảm dự án đang dùng Supabase Test.</p>
+        {% else %}
+        <p class="notice warning">⚠ Production: hãy dừng xác nhận trận và sao lưu RP trước khi tính lại.</p>
+        {% endif %}
 
-        <hr>
-        <h3>♻️ Khôi phục dữ liệu vào Supabase</h3>
-        <p>Tải lên file ZIP/JSON đã tạo ở phía trên. Hệ thống kiểm tra cấu trúc rồi khôi phục theo chế độ bạn chọn.</p>
-        <div class="notice warning">
-            <strong>Gộp/cập nhật:</strong> bản ghi trùng ID được cập nhật, bản ghi mới được thêm; dữ liệu hiện có không nằm trong Backup vẫn được giữ.<br>
-            <strong>Thay thế toàn bộ:</strong> xóa dữ liệu trong các bảng có mặt trong Backup rồi nạp lại. Chỉ dùng khi cần quay hệ thống về đúng thời điểm đã sao lưu.
-        </div>
-        <form method="post" action="{{ url_for('admin_preview_backup') }}" enctype="multipart/form-data" class="backup-preview-form">
-            <label>Kiểm tra file trước khi khôi phục</label>
-            <input type="file" name="backup_file" accept=".zip,.json,application/zip,application/json" required>
-            <button class="btn secondary" type="submit">🔎 Kiểm tra và xem số bản ghi</button>
-        </form>
-        <p class="small">Sau khi kiểm tra, quay lại đây và chọn lại file để thực hiện khôi phục.</p>
+        <div class="admin-rp-tool-grid">
+            {% if can_admin('rp_backup_restore') %}
+            <div class="admin-rp-tool-card">
+                <h3>⬇️ Backup RP toàn hệ thống</h3>
+                <p>Chỉ lưu RP, thắng–hòa–thua, số trận, bàn thắng/bàn thua, chuỗi thắng/thua và delta RP của từng trận. Không lưu mật khẩu, Chat, phòng hoặc dữ liệu tài khoản khác.</p>
+                <form method="post" action="{{ url_for('admin_download_rp_backup') }}" onsubmit="return confirm('Tạo file sao lưu RP hiện tại?');">
+                    {% if not is_test_mode %}
+                    <label>Nhập <strong>SAO LUU RP</strong></label>
+                    <input name="confirm_text" autocomplete="off" placeholder="SAO LUU RP" required>
+                    {% endif %}
+                    <button class="btn gold" type="submit">⬇️ Tải Backup RP</button>
+                </form>
+            </div>
 
-        <form method="post" action="{{ url_for('admin_restore_backup') }}" enctype="multipart/form-data" onsubmit="return confirm('Bạn chắc chắn muốn khôi phục dữ liệu vào Supabase? Hãy dừng tạo và xác nhận trận trước khi tiếp tục.');">
-            <label>File Backup ZIP hoặc JSON</label>
-            <input type="file" name="backup_file" accept=".zip,.json,application/zip,application/json" required>
-            <label>Chế độ khôi phục</label>
-            <select name="restore_mode" required>
-                <option value="merge">Gộp/cập nhật — an toàn hơn</option>
-                <option value="replace">Thay thế toàn bộ dữ liệu trong Backup</option>
-            </select>
-            {% if not is_test_mode %}
-            <label>Mật khẩu hiện tại của tài khoản sở hữu</label>
-            <input type="password" name="current_password" autocomplete="current-password" required>
+            <div class="admin-rp-tool-card">
+                <h3>♻️ Restore RP toàn hệ thống</h3>
+                <p>Đưa RP và thống kê trở về đúng trạng thái trong file Backup. Không xóa tài khoản, không sửa tỷ số và không tạo lại trận.</p>
+                <form method="post" action="{{ url_for('admin_restore_rp_backup') }}" enctype="multipart/form-data" onsubmit="return confirm('Khôi phục RP sẽ ghi đè RP và thống kê hiện tại. Bạn chắc chắn tiếp tục?');">
+                    <label>File RP Backup ZIP hoặc JSON</label>
+                    <input type="file" name="backup_file" accept=".zip,.json,application/zip,application/json" required>
+                    {% if not is_test_mode %}
+                    <label>Mật khẩu hiện tại của tài khoản sở hữu</label>
+                    <input type="password" name="current_password" autocomplete="current-password" required>
+                    <label>Nhập <strong>KHOI PHUC RP</strong></label>
+                    <input name="confirm_text" autocomplete="off" placeholder="KHOI PHUC RP" required>
+                    {% endif %}
+                    <button class="btn red" type="submit">♻️ Khôi phục RP</button>
+                </form>
+            </div>
+
+            {% if can_admin('rp_recalculate_all') %}
+            <div class="admin-rp-tool-card admin-rp-recalculate-card">
+                <h3>🧮 Tính lại RP từ lịch sử trận</h3>
+                <p>Đặt người chơi về 1.000 RP và thống kê về 0, sau đó xử lý lại từng trận confirmed theo thứ tự thời gian từ cũ đến mới.</p>
+                <form method="post" action="{{ url_for('admin_recalculate_rp') }}" onsubmit="return confirm('Tính lại RP của toàn bộ hệ thống từ lịch sử trận?');">
+                    {% if not is_test_mode %}
+                    <label>Nhập <strong>TINH LAI RP</strong></label>
+                    <input name="confirm_text" autocomplete="off" placeholder="TINH LAI RP" required>
+                    {% endif %}
+                    <button class="btn green" type="submit">🧮 Tính lại toàn hệ thống</button>
+                </form>
+            </div>
             {% endif %}
-            <label>Nhập câu xác nhận</label>
-            <input name="confirm_text" autocomplete="off" placeholder="KHOI PHUC DU LIEU" {% if not is_test_mode %}required{% endif %}>
-            <button class="btn danger" type="submit">♻️ Khôi phục vào Supabase</button>
-        </form>
-        <p class="small">Giới hạn: file tải lên 20 MB, dữ liệu giải nén 100 MB và tối đa 100.000 bản ghi. Không đóng trang trong lúc đang xử lý.</p>
+            {% endif %}
+        </div>
+
+        <div class="notice">
+            <strong>Cơ chế tính lại:</strong> chỉ lấy trận <code>confirmed</code>, sắp xếp theo <code>created_at</code> tăng dần; trận hủy hoặc chưa xác nhận không được tính. Mỗi trận dùng ID trận làm hạt ngẫu nhiên cố định, nên chạy lại nhiều lần cho cùng một lịch sử sẽ cho cùng kết quả.
+        </div>
     </div>
 </section>
-{% endif %}
-
-{% if current_user.admin_level == 'owner' %}
-<section class="admin-tab-panel" data-admin-panel="rp-tools"><div class="panel"><h2>📈 Công cụ RP</h2><p>Lịch sử trận là nguồn dữ liệu chuẩn cho RP, thống kê, chuỗi và huy hiệu.</p>{% if is_test_mode %}<p class="notice success">🧪 TEST MODE đang bật — dữ liệu phải trỏ sang Supabase thử nghiệm.</p>{% else %}<p class="notice warning">⚠ Production: chỉ chạy khi đã dừng xác nhận trận và có bản sao lưu.</p>{% endif %}{% if can_admin('rp_recalculate_all') %}<form method="post" action="{{ url_for('admin_recalculate_rp') }}" onsubmit="return confirm('Tính lại RP của toàn bộ hệ thống từ lịch sử trận?')"><label>Nhập <strong>TINH LAI RP</strong> khi chạy trên Production</label><input name="confirm_text" autocomplete="off" placeholder="TINH LAI RP"><button class="btn gold" type="submit">Tính lại toàn hệ thống</button></form>{% endif %}</div></section>
 
 <section class="admin-tab-panel" data-admin-panel="logs">
     <div class="panel">

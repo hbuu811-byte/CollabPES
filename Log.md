@@ -1,3 +1,18 @@
+# PES Arena V1.13.10 – Trở Lại Phòng & Lịch Sử Đối Đầu Theo Phiên
+
+## Nâng cấp
+- Thêm nút **🎮 Trở Lại Phòng Đấu** tại `templates/profile.html`, trong tab Điều khiển hồ sơ. Nút chỉ hiện khi người dùng đang có phòng hoạt động.
+- Thêm `build_room_head_to_head()` trong `app.py` để lọc các trận `confirmed` của đúng hai người chơi có `created_at` từ thời điểm phòng hiện tại được mở.
+- Phần **Điều khiển phòng** hiển thị tổng số trận, số thắng mỗi bên, số hòa, tổng bàn và danh sách từng trận cùng RP.
+- Không lấy các trận đối đầu trước thời điểm mở phòng. Không tính trận hủy hoặc chưa xác nhận.
+- Nâng phiên bản ứng dụng lên `V1.13.10`.
+
+## File sửa
+- `app.py`: version, helper đối đầu theo phiên, truyền dữ liệu cho Profile và phòng đấu.
+- `templates/profile.html`: nút Trở Lại Phòng Đấu.
+- `templates/room_detail.html`: khối lịch sử đối đầu trong Điều khiển phòng.
+- `static/style.css`: giao diện desktop/mobile.
+
 # PES Arena V1.13.9 – Tinh gọn quản lý trận & RP
 
 ## Thay đổi

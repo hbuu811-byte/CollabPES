@@ -56,7 +56,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.9"
+APP_VERSION = "V1.13.10"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -2756,6 +2756,61 @@ def active_room_for_user(user_id, exclude_room_id=None):
     return None
 
 
+def build_room_head_to_head(room):
+    """Thống kê đối đầu của hai người chơi kể từ lúc phòng hiện tại được tạo."""
+    host_id = room.get("host_user_id")
+    guest_id = room.get("guest_user_id")
+    room_opened_at = parse_dt(room.get("created_at"))
+
+    empty = {
+        "available": bool(host_id and guest_id),
+        "total": 0,
+        "host_wins": 0,
+        "guest_wins": 0,
+        "draws": 0,
+        "host_goals": 0,
+        "guest_goals": 0,
+        "matches": [],
+        "since": format_vn_datetime(room.get("created_at")),
+    }
+    if not host_id or not guest_id:
+        return empty
+
+    pair = {str(host_id), str(guest_id)}
+    selected = []
+    for match in list_matches("confirmed"):
+        if {str(match.get("player1_id")), str(match.get("player2_id"))} != pair:
+            continue
+        match_time = parse_dt(match.get("created_at"))
+        if room_opened_at and match_time and match_time < room_opened_at:
+            continue
+
+        item = decorate_match_for_view(match)
+        score1 = int(match.get("score1") or 0)
+        score2 = int(match.get("score2") or 0)
+        host_is_player1 = str(match.get("player1_id")) == str(host_id)
+        host_score = score1 if host_is_player1 else score2
+        guest_score = score2 if host_is_player1 else score1
+        item["host_score"] = host_score
+        item["guest_score"] = guest_score
+        item["host_delta"] = int((match.get("delta1") if host_is_player1 else match.get("delta2")) or 0)
+        item["guest_delta"] = int((match.get("delta2") if host_is_player1 else match.get("delta1")) or 0)
+        selected.append(item)
+
+        empty["host_goals"] += host_score
+        empty["guest_goals"] += guest_score
+        if host_score > guest_score:
+            empty["host_wins"] += 1
+        elif guest_score > host_score:
+            empty["guest_wins"] += 1
+        else:
+            empty["draws"] += 1
+
+    empty["total"] = len(selected)
+    empty["matches"] = selected
+    return empty
+
+
 def active_match_for_user(user_id):
     active_statuses = {"playing", "waiting_confirm"}
     for match in list_matches():
@@ -4114,6 +4169,8 @@ def profile(user_id):
         and not activity
     )
 
+    profile_active_room = active_room_for_user(viewer.get("id")) if viewer.get("id") == user_id else None
+
     return render_template(
         "profile.html",
         player=user,
@@ -4122,6 +4179,7 @@ def profile(user_id):
         h2h=h2h,
         can_invite=can_invite,
         activity=activity,
+        profile_active_room=profile_active_room,
     )
 
 
@@ -4427,7 +4485,13 @@ def room_detail(room_id):
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 
-    return render_template("room_detail.html", room=room, friendly_tiers=get_available_team_tiers())
+    room_head_to_head = build_room_head_to_head(room)
+    return render_template(
+        "room_detail.html",
+        room=room,
+        friendly_tiers=get_available_team_tiers(),
+        room_head_to_head=room_head_to_head,
+    )
 
 
 @app.route("/room/<room_id>/leave", methods=["POST"])

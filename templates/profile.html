@@ -72,8 +72,15 @@
     {% if current_user.id == player.id %}
     <section class="panel account-controls-panel" id="account-controls">
         <span class="eyebrow">ĐIỀU KHIỂN HỒ SƠ</span>
-        <h2>Đổi mật khẩu đăng nhập</h2>
-        <p>Chỉ cần nhập đúng mật khẩu hiện tại và mật khẩu mới.</p>
+        <div class="account-controls-heading-row">
+            <div>
+                <h2>Đổi mật khẩu đăng nhập</h2>
+                <p>Chỉ cần nhập đúng mật khẩu hiện tại và mật khẩu mới.</p>
+            </div>
+            {% if profile_active_room %}
+            <a class="btn green return-room-button" href="{{ url_for('room_detail', room_id=profile_active_room.id) }}">🎮 Trở Lại Phòng Đấu</a>
+            {% endif %}
+        </div>
         {% if simple_test_passwords_enabled %}
         <p class="notice warning">🧪 Test Mode: được phép dùng mật khẩu đơn giản như <code>1</code>. Không dùng cấu hình này cho Production.</p>
         {% else %}

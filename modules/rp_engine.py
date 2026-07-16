@@ -1,46 +1,130 @@
-"""Bộ máy tính RP xếp hạng.
+"""Bộ máy tính RP xếp hạng PES 2026 - V1.11.0.
 
-Không truy cập Flask/Supabase. Hàm nhận callback xác định cấp Rank để có thể
-kiểm thử riêng và thay công thức mà không sửa route phòng đấu.
+Module thuần Python, không truy cập Flask/Supabase. Dữ liệu chuỗi thua hiện tại
+được app.py truyền vào qua khóa ``loss_streak`` của từng người chơi.
 """
+from __future__ import annotations
+
+import random
+from typing import Callable, Mapping, MutableMapping, Tuple
+
+# Giữ các tên hằng cũ để app.py và module bên ngoài không bị lỗi import.
 BASE_WIN_POINTS = 21
 BASE_LOSS_POINTS = -20
 PLACEMENT_MATCHES = 10
-PLACEMENT_WIN_MULTIPLIER = 1.10
-MIN_RANK_ADJUSTED_WIN_POINTS = 19
-MAX_RANK_ADJUSTED_WIN_POINTS = 24
-MAX_POSITIVE_POINTS_PER_MATCH = 35
-WIN_STREAK_BONUSES = {3: 5, 5: 10, 8: 15, 10: 20}
+PLACEMENT_WIN_MULTIPLIER = 1.0
+MIN_RANK_ADJUSTED_WIN_POINTS = 21
+MAX_RANK_ADJUSTED_WIN_POINTS = 23
+MAX_POSITIVE_POINTS_PER_MATCH = 50
 
-def get_win_streak_bonus(player, won):
+WIN_BASE_RANGE = (21, 23)
+WIN_VARIATION_RANGE = (-1, 3)
+PLACEMENT_WIN_BONUS_RANGE = (1, 4)
+PLACEMENT_WIN_TOTAL_RANGE = (22, 29)
+PLACEMENT_LOSS_RANGE = (14, 19)
+REGULAR_LOSS_BASE_RANGE = (19, 23)
+REGULAR_LOSS_VARIATIONS = (-1, 0, 1)
+LOSS_STREAK_START = 4
+LOSS_STREAK_MAX_DEDUCTION = 30
+
+# Chỉ thưởng đúng trận chạm mốc. Từ mốc 10 trở đi, cứ thêm 5 trận thắng liên tiếp +15 RP.
+WIN_STREAK_BONUSES = {3: 5, 5: 10, 10: 15}
+
+
+def get_win_streak_bonus(player: Mapping, won: bool) -> int:
+    """Trả thưởng chuỗi thắng của trận sắp được ghi nhận."""
     if not won:
         return 0
     next_streak = int(player.get("streak", 0) or 0) + 1
-    return WIN_STREAK_BONUSES.get(next_streak, 0)
+    if next_streak == 3:
+        return 5
+    if next_streak == 5:
+        return 10
+    if next_streak >= 10 and next_streak % 5 == 0:
+        return 15
+    return 0
 
-def rank_adjusted_win_points(winner, loser, get_rank_level):
-    winner_level = get_rank_level(winner.get("rank_points", 0))
-    loser_level = get_rank_level(loser.get("rank_points", 0))
-    rank_advantage = loser_level - winner_level
-    return max(MIN_RANK_ADJUSTED_WIN_POINTS,
-               min(MAX_RANK_ADJUSTED_WIN_POINTS, BASE_WIN_POINTS + rank_advantage))
 
-def calculate_deltas(player_a, player_b, score_a, score_b, get_rank_level, **_unused):
+def rank_adjusted_win_points(winner: Mapping, loser: Mapping, get_rank_level: Callable) -> int:
+    """Tên hàm tương thích cũ; V1.11.0 không cộng/trừ RP thắng theo chênh Rank."""
+    del winner, loser, get_rank_level
+    return BASE_WIN_POINTS
+
+
+def _randint(rng, minimum: int, maximum: int) -> int:
+    return int(rng.randint(minimum, maximum))
+
+
+def _winner_points(winner: Mapping, rng) -> int:
+    matches = int(winner.get("total_matches", 0) or 0)
+    points = _randint(rng, *WIN_BASE_RANGE)
+    points += _randint(rng, *WIN_VARIATION_RANGE)
+
+    if matches < PLACEMENT_MATCHES:
+        points += _randint(rng, *PLACEMENT_WIN_BONUS_RANGE)
+
+    points += get_win_streak_bonus(winner, True)
+    if matches < PLACEMENT_MATCHES:
+        # Tổng RP thắng trong 10 trận đầu, kể cả thưởng chuỗi, luôn nằm trong 22-29.
+        points = max(PLACEMENT_WIN_TOTAL_RANGE[0], min(PLACEMENT_WIN_TOTAL_RANGE[1], points))
+    return max(1, min(MAX_POSITIVE_POINTS_PER_MATCH, int(points)))
+
+
+def _progressive_loss_streak_range(next_loss_streak: int) -> Tuple[int, int]:
+    """Khoảng trừ tăng dần: trận 4: 26-27, 5: 27-28, 6: 28-29, 7+: 29-30."""
+    step = max(0, min(3, int(next_loss_streak) - LOSS_STREAK_START))
+    minimum = 26 + step
+    maximum = min(LOSS_STREAK_MAX_DEDUCTION, minimum + 1)
+    return minimum, maximum
+
+
+def _loser_points(loser: Mapping, rng) -> int:
+    matches = int(loser.get("total_matches", 0) or 0)
+    current_loss_streak = int(loser.get("loss_streak", 0) or 0)
+    next_loss_streak = current_loss_streak + 1
+
+    if matches < PLACEMENT_MATCHES:
+        deduction = _randint(rng, *PLACEMENT_LOSS_RANGE)
+    else:
+        deduction = _randint(rng, *REGULAR_LOSS_BASE_RANGE)
+        deduction += int(rng.choice(REGULAR_LOSS_VARIATIONS))
+
+    if next_loss_streak >= LOSS_STREAK_START:
+        deduction = _randint(rng, *_progressive_loss_streak_range(next_loss_streak))
+
+    return -max(1, int(deduction))
+
+
+def _draw_points(player_a: Mapping, player_b: Mapping, get_rank_level: Callable) -> Tuple[int, int]:
+    level_a = int(get_rank_level(player_a.get("rank_points", 0)))
+    level_b = int(get_rank_level(player_b.get("rank_points", 0)))
+    if level_a < level_b:
+        return 5, 0
+    if level_b < level_a:
+        return 0, 5
+    return 0, 0
+
+
+def calculate_deltas(
+    player_a: MutableMapping,
+    player_b: MutableMapping,
+    score_a: int,
+    score_b: int,
+    get_rank_level: Callable,
+    rng=None,
+    **_unused,
+) -> Tuple[int, int]:
+    """Tính delta RP cho hai người chơi theo cơ chế V1.11.0."""
+    rng = rng or random
     score_a = int(score_a)
     score_b = int(score_b)
+
     if score_a == score_b:
-        return 0, 0
+        return _draw_points(player_a, player_b, get_rank_level)
+
     a_won = score_a > score_b
     winner = player_a if a_won else player_b
     loser = player_b if a_won else player_a
-    winner_matches = int(winner.get("total_matches", 0) or 0)
-    loser_matches = int(loser.get("total_matches", 0) or 0)
-    if winner_matches < PLACEMENT_MATCHES or loser_matches < PLACEMENT_MATCHES:
-        win_points = BASE_WIN_POINTS
-    else:
-        win_points = rank_adjusted_win_points(winner, loser, get_rank_level)
-    if winner_matches < PLACEMENT_MATCHES:
-        win_points = round(BASE_WIN_POINTS * PLACEMENT_WIN_MULTIPLIER)
-    win_points += get_win_streak_bonus(winner, True)
-    win_points = min(MAX_POSITIVE_POINTS_PER_MATCH, max(1, int(win_points)))
-    return (win_points, BASE_LOSS_POINTS) if a_won else (BASE_LOSS_POINTS, win_points)
+    win_points = _winner_points(winner, rng)
+    loss_points = _loser_points(loser, rng)
+    return (win_points, loss_points) if a_won else (loss_points, win_points)

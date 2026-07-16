@@ -52,7 +52,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES 2026"
-APP_VERSION = "V1.10.12"
+APP_VERSION = "V1.11.0"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -699,11 +699,48 @@ def get_difficulty_factor(difficulty, won):
     return 1.00
 
 
+def get_current_loss_streak(user_id):
+    """Đếm số trận thua liên tiếp gần nhất từ lịch sử đã xác nhận."""
+    if not user_id or db is None:
+        return 0
+    try:
+        result = execute_query(
+            db.table("matches")
+            .select("player1_id,player2_id,score1,score2,status,created_at")
+            .or_(f"player1_id.eq.{user_id},player2_id.eq.{user_id}")
+            .eq("status", "confirmed")
+            .order("created_at", desc=True)
+            .limit(30),
+            f"get_loss_streak:{user_id}",
+            attempts=2,
+        )
+    except Exception as exc:
+        print(f"get_current_loss_streak warning user={user_id}: {type(exc).__name__}: {exc}")
+        return 0
+
+    streak = 0
+    for match in result.data or []:
+        score1 = _safe_int(match.get("score1"), -1)
+        score2 = _safe_int(match.get("score2"), -1)
+        if score1 < 0 or score2 < 0 or score1 == score2:
+            break
+        is_player1 = str(match.get("player1_id")) == str(user_id)
+        lost = (is_player1 and score1 < score2) or ((not is_player1) and score2 < score1)
+        if not lost:
+            break
+        streak += 1
+    return streak
+
+
 def calculate_deltas(player_a, player_b, score_a: int, score_b: int, team_a=None, team_b=None,
                      team_overall_a=None, team_overall_b=None, team_tier_a=None, team_tier_b=None):
     """Lớp tương thích: route cũ gọi như trước, công thức nằm trong rp_engine."""
+    player_a_for_rp = dict(player_a or {})
+    player_b_for_rp = dict(player_b or {})
+    player_a_for_rp["loss_streak"] = get_current_loss_streak(player_a_for_rp.get("id"))
+    player_b_for_rp["loss_streak"] = get_current_loss_streak(player_b_for_rp.get("id"))
     return calculate_ranked_deltas(
-        player_a, player_b, score_a, score_b, get_rank_level=get_rank_level,
+        player_a_for_rp, player_b_for_rp, score_a, score_b, get_rank_level=get_rank_level,
         team_a=team_a, team_b=team_b, team_overall_a=team_overall_a,
         team_overall_b=team_overall_b, team_tier_a=team_tier_a, team_tier_b=team_tier_b,
     )
@@ -5270,8 +5307,7 @@ def apply_match_result(match):
         )
         delta1, delta2 = _safe_int(delta1), _safe_int(delta2)
 
-        # Bảo vệ quy tắc RP: trận có thắng/thua luôn phải có đúng một delta âm.
-        # Điều này sửa trường hợp dữ liệu/công thức cũ làm người thua không bị trừ RP.
+        # Bảo vệ dấu RP cho trận thắng/thua. Trận hòa giữ nguyên +5/0 theo chênh Rank.
         if score1 > score2:
             delta1 = max(1, abs(delta1))
             delta2 = -max(1, abs(delta2 or BASE_LOSS_POINTS))
@@ -5279,7 +5315,8 @@ def apply_match_result(match):
             delta1 = -max(1, abs(delta1 or BASE_LOSS_POINTS))
             delta2 = max(1, abs(delta2))
         else:
-            delta1 = delta2 = 0
+            delta1 = max(0, delta1)
+            delta2 = max(0, delta2)
 
         # The 0.95 coefficient belongs to the actual room host, not implicitly player1.
         host_user_id = match.get("host_user_id")
@@ -5293,10 +5330,14 @@ def apply_match_result(match):
                 host_user_id = (room_row.data or [{}])[0].get("host_user_id")
             except Exception as exc:
                 print(f"get_result_host warning match={match.get('id')}: {type(exc).__name__}: {exc}")
-        if str(host_user_id or "") == str(player1_id):
+        if str(host_user_id or "") == str(player1_id) and score1 > score2:
             delta1 = _safe_int(apply_host_xp_factor(delta1, match.get("host_xp_factor", HOST_XP_FACTOR)))
-        elif str(host_user_id or "") == str(player2_id):
+            if _safe_int(player1.get("total_matches")) < PLACEMENT_MATCHES:
+                delta1 = max(22, min(29, delta1))
+        elif str(host_user_id or "") == str(player2_id) and score2 > score1:
             delta2 = _safe_int(apply_host_xp_factor(delta2, match.get("host_xp_factor", HOST_XP_FACTOR)))
+            if _safe_int(player2.get("total_matches")) < PLACEMENT_MATCHES:
+                delta2 = max(22, min(29, delta2))
 
         update_player_after_match(player1, delta1, score1, score2)
         update_player_after_match(player2, delta2, score2, score1)

@@ -1,3 +1,24 @@
+# PES Arena V1.13.7 – Tách Công Thức RP & Loại Bỏ Fallback -20
+
+## Thay đổi chính
+- Tạo `modules/rp_formula.py`: nơi duy nhất chứa phiên bản và toàn bộ thông số công thức RP.
+- `modules/rp_engine.py` chỉ còn logic tính toán; không chứa số cấu hình rải rác.
+- Loại bỏ hoàn toàn fallback `BASE_LOSS_POINTS = -20` trong luồng xác nhận trận.
+- Nếu engine trả RP thua bằng 0/sai dấu, hệ thống dừng và báo lỗi; không tự biến thành -20.
+- Mỗi trận lưu `rp_formula_version = RP_V1.12.0` và `rp_details` gồm nguồn, công thức, seed và delta.
+- Seed ngẫu nhiên gắn với cả phiên bản công thức và `match_id`, bảo đảm tính lại ổn định.
+
+## File sửa
+- `modules/rp_formula.py`: file mới, toàn bộ cấu hình công thức.
+- `modules/rp_engine.py`: logic tính và `validate_deltas`.
+- `app.py`: dùng version/seed mới, bỏ fallback -20, lưu chi tiết RP.
+- `test_rp_engine.py`: kiểm thử delta thua bằng 0 phải bị từ chối.
+
+## Cài đặt
+Không cần chạy SQL. Chép đè toàn bộ file, Commit, Push và Redeploy.
+
+---
+
 # PES Arena V1.13.6 – Sửa lỗi NOT NULL delta khi sửa và tính lại trận
 
 ## Lỗi đã sửa

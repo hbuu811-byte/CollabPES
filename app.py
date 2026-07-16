@@ -38,11 +38,14 @@ from modules.cache_utils import (
 from modules.datetime_utils import (
     now_dt, now_iso, future_iso, aware_utc, seconds_until, parse_dt, format_vn_datetime,
 )
+from modules.rp_formula import (
+    BASE_WIN_POINTS, PLACEMENT_MATCHES, PLACEMENT_WIN_MULTIPLIER,
+    MIN_RANK_ADJUSTED_WIN_POINTS, MAX_RANK_ADJUSTED_WIN_POINTS,
+    MAX_POSITIVE_POINTS_PER_MATCH, WIN_STREAK_BONUSES, HOST_WIN_FACTOR,
+    RP_FORMULA_VERSION, RP_RANDOM_SEED_NAMESPACE, formula_summary,
+)
 from modules.rp_engine import (
-    BASE_WIN_POINTS, BASE_LOSS_POINTS, PLACEMENT_MATCHES,
-    PLACEMENT_WIN_MULTIPLIER, MIN_RANK_ADJUSTED_WIN_POINTS,
-    MAX_RANK_ADJUSTED_WIN_POINTS, MAX_POSITIVE_POINTS_PER_MATCH,
-    WIN_STREAK_BONUSES, calculate_deltas as calculate_ranked_deltas,
+    calculate_deltas as calculate_ranked_deltas, validate_deltas as validate_ranked_deltas,
 )
 from modules.win_streaks import (
     WIN_STREAK_TITLES, WIN_STREAK_EVENT_PREFIX, get_win_streak_title,
@@ -54,7 +57,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.6"
+APP_VERSION = "V1.13.7"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -110,7 +113,7 @@ RANK_SCALE = 400
 TEAM_OVR_BASE = 79
 TEAM_OVR_WEIGHT = 20
 
-# Công thức RP nằm trong modules/rp_engine.py
+# Cấu hình công thức: modules/rp_formula.py; logic tính: modules/rp_engine.py
 
 # Rank/Tier difficulty system (V1.8.1)
 SMART_RANDOM_CORRECT_WEIGHT = 0.70
@@ -5387,20 +5390,12 @@ def apply_match_result(match):
             match.get("team1"), match.get("team2"),
             match.get("team1_overall"), match.get("team2_overall"),
             match.get("team1_tier"), match.get("team2_tier"),
-            rng=random.Random(f"PES_ARENA_RP_V1|{match.get('id')}"),
+            rng=random.Random(f"{RP_RANDOM_SEED_NAMESPACE}|{match.get('id')}"),
         )
         delta1, delta2 = _safe_int(delta1), _safe_int(delta2)
-
-        # Bảo vệ dấu RP cho trận thắng/thua. Trận hòa giữ nguyên +5/0 theo chênh Rank.
-        if score1 > score2:
-            delta1 = max(1, abs(delta1))
-            delta2 = -max(1, abs(delta2 or BASE_LOSS_POINTS))
-        elif score2 > score1:
-            delta1 = -max(1, abs(delta1 or BASE_LOSS_POINTS))
-            delta2 = max(1, abs(delta2))
-        else:
-            delta1 = max(0, delta1)
-            delta2 = max(0, delta2)
+        # Không còn fallback -20. Nếu engine trả delta sai dấu/0 cho trận thắng-thua,
+        # dừng xử lý và ghi lỗi thay vì âm thầm che lỗi bằng một giá trị hợp lệ giả.
+        delta1, delta2 = validate_ranked_deltas(score1, score2, delta1, delta2)
 
         # The 0.95 coefficient belongs to the actual room host, not implicitly player1.
         host_user_id = match.get("host_user_id")
@@ -5415,11 +5410,11 @@ def apply_match_result(match):
             except Exception as exc:
                 print(f"get_result_host warning match={match.get('id')}: {type(exc).__name__}: {exc}")
         if str(host_user_id or "") == str(player1_id) and score1 > score2:
-            delta1 = _safe_int(apply_host_xp_factor(delta1, match.get("host_xp_factor", HOST_XP_FACTOR)))
+            delta1 = _safe_int(apply_host_xp_factor(delta1, match.get("host_xp_factor", HOST_WIN_FACTOR)))
             if _safe_int(player1.get("total_matches")) < PLACEMENT_MATCHES:
                 delta1 = max(22, min(29, delta1))
         elif str(host_user_id or "") == str(player2_id) and score2 > score1:
-            delta2 = _safe_int(apply_host_xp_factor(delta2, match.get("host_xp_factor", HOST_XP_FACTOR)))
+            delta2 = _safe_int(apply_host_xp_factor(delta2, match.get("host_xp_factor", HOST_WIN_FACTOR)))
             if _safe_int(player2.get("total_matches")) < PLACEMENT_MATCHES:
                 delta2 = max(22, min(29, delta2))
 
@@ -5430,6 +5425,14 @@ def apply_match_result(match):
             db.table("matches").update({
                 "delta1": int(delta1),
                 "delta2": int(delta2),
+                "rp_formula_version": RP_FORMULA_VERSION,
+                "rp_details": {
+                    "source": "modules/rp_formula.py",
+                    "formula": formula_summary(),
+                    "seed": f"{RP_RANDOM_SEED_NAMESPACE}|{match.get('id')}",
+                    "delta1": int(delta1),
+                    "delta2": int(delta2),
+                },
                 "status": "confirmed",
                 "note": "Đã xác nhận.",
                 "updated_at": now_iso(),
@@ -5859,10 +5862,10 @@ def admin_create_manual_match():
     match_id=str(uuid.uuid4())
     winner=p1 if score1>score2 else p2 if score2>score1 else None
     loser=p2 if score1>score2 else p1 if score2>score1 else None
-    payload={"id":match_id,"player1_id":p1,"player2_id":p2,"score1":score1,"score2":score2,"winner_id":winner,"loser_id":loser,"host_user_id":host,"status":"waiting_confirm","note":note,"created_at":created_at,"updated_at":now_iso(),"created_by":current_user().get("id"),"rp_formula_version":APP_VERSION}
+    payload={"id":match_id,"player1_id":p1,"player2_id":p2,"score1":score1,"score2":score2,"winner_id":winner,"loser_id":loser,"host_user_id":host,"status":"waiting_confirm","note":note,"created_at":created_at,"updated_at":now_iso(),"created_by":current_user().get("id"),"rp_formula_version":RP_FORMULA_VERSION}
     execute_query(db.table("matches").insert(payload),"create_manual_match")
     delta1,delta2=apply_match_result(get_match(match_id))
-    execute_query(db.table("matches").update({"note":note,"rp_formula_version":APP_VERSION,"rp_details":{"source":"admin_manual","delta1":delta1,"delta2":delta2}}).eq("id",match_id),"finish_manual_match")
+    execute_query(db.table("matches").update({"note":note,"rp_formula_version":RP_FORMULA_VERSION,"rp_details":{"source":"admin_manual","delta1":delta1,"delta2":delta2}}).eq("id",match_id),"finish_manual_match")
     log_admin_action("Tạo trận thủ công","match",match_id,details=f"{score1}-{score2}; RP {delta1:+d}/{delta2:+d}")
     flash(f"Đã tạo trận và tính RP {delta1:+d}/{delta2:+d}.","success")
     return redirect_admin("matches")

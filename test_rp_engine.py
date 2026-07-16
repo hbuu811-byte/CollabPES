@@ -1,6 +1,7 @@
-"""Kiểm thử nhanh công thức RP V1.11.1. Chạy: python test_rp_engine.py"""
+"""Kiểm thử nhanh công thức RP RP_V1.12.0. Chạy: python test_rp_engine.py"""
 import random
-from modules.rp_engine import calculate_deltas
+from modules.rp_engine import calculate_deltas, validate_deltas
+from modules.rp_formula import RP_FORMULA_VERSION
 
 
 def rank_level(points):
@@ -41,7 +42,13 @@ def run():
 
     assert calculate({"rank_points": 900}, {"rank_points": 1200}, 0, 0) == (5, 0)
     assert calculate({"rank_points": 1200}, {"rank_points": 900}, 0, 0) == (0, 5)
-    print("OK - RP Engine V1.11.1")
+    try:
+        validate_deltas(1, 0, 22, 0)
+        raise AssertionError("Delta thua bằng 0 phải bị từ chối")
+    except ValueError:
+        pass
+    assert RP_FORMULA_VERSION == "RP_V1.12.0"
+    print("OK - RP Engine RP_V1.12.0")
 
 
 if __name__ == "__main__":

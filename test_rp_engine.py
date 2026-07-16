@@ -1,4 +1,4 @@
-"""Kiểm thử nhanh công thức RP V1.11.0. Chạy: python test_rp_engine.py"""
+"""Kiểm thử nhanh công thức RP V1.11.1. Chạy: python test_rp_engine.py"""
 import random
 from modules.rp_engine import calculate_deltas
 
@@ -19,15 +19,29 @@ def run():
     assert 22 <= min(win for win, _ in placement) <= max(win for win, _ in placement) <= 29
     assert 14 <= min(-loss for _, loss in placement) <= max(-loss for _, loss in placement) <= 19
 
-    for current, minimum, maximum in [(3, 26, 27), (4, 27, 28), (5, 28, 29), (6, 29, 30)]:
+    regular_losses = [calculate(regular, regular, 1, 0, seed) for seed in range(2000)]
+    regular_deductions = [-loss for _, loss in regular_losses]
+    assert min(regular_deductions) == 19
+    assert max(regular_deductions) == 23
+    assert set(regular_deductions) == {19, 20, 21, 22, 23}
+
+    for current, minimum, maximum in [
+        (3, 22, 24),
+        (4, 23, 26),
+        (5, 25, 27),
+        (6, 25, 30),
+        (10, 25, 30),
+    ]:
         loser = dict(regular, loss_streak=current)
-        results = [calculate(regular, loser, 1, 0, seed) for seed in range(500)]
+        results = [calculate(regular, loser, 1, 0, seed) for seed in range(2000)]
         deductions = [-loss for _, loss in results]
-        assert minimum <= min(deductions) <= max(deductions) <= maximum
+        assert min(deductions) == minimum
+        assert max(deductions) == maximum
+
 
     assert calculate({"rank_points": 900}, {"rank_points": 1200}, 0, 0) == (5, 0)
     assert calculate({"rank_points": 1200}, {"rank_points": 900}, 0, 0) == (0, 5)
-    print("OK - RP Engine V1.11.0")
+    print("OK - RP Engine V1.11.1")
 
 
 if __name__ == "__main__":

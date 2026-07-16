@@ -1,30 +1,32 @@
-# PES 2026 WEB V1.11.0 – RP Engine 2026
+# PES 2026 WEB V1.11.1 – Điều chỉnh RP thua
 
 ## Thay đổi chính
 
-- Nâng phiên bản từ V1.10.12 lên V1.11.0.
-- Tách và thay toàn bộ công thức RP trong `modules/rp_engine.py`.
-- RP thắng cơ bản ngẫu nhiên 21–23.
-- Biến thiên thắng ngẫu nhiên từ -1 đến +3.
-- 10 trận đầu của người thắng cộng thêm 1–4; tổng trước thưởng chuỗi được giới hạn 22–29.
-- Chủ phòng chỉ bị áp dụng hệ số 0,95 khi thắng; trong 10 trận đầu kết quả sau hệ số vẫn được giữ 22–29.
-- Người thua trong 10 trận đầu bị trừ 14–19.
-- Từ trận 11, người thua bị trừ nền 19–23 và thêm biến thiên -1, 0 hoặc +1.
-- Chuỗi thua tăng dần từ trận thứ 4: trận 4 trừ 26–27, trận 5 trừ 27–28, trận 6 trừ 28–29, từ trận 7 trừ 29–30.
-- Trận hòa: cùng cấp Rank nhận 0/0; khác cấp Rank thì người Rank thấp hơn +5, người Rank cao hơn +0.
-- Thưởng chuỗi thắng chỉ đúng mốc: 3 trận +5, 5 trận +10, 10 trận +15, sau đó 15/20/25/... đều +15.
-- Không còn thưởng RP theo chênh Rank trong trận thắng.
+- Nâng phiên bản từ V1.11.0 lên V1.11.1.
+- Giữ nguyên toàn bộ công thức RP thắng, hòa, hệ số chủ phòng và thưởng chuỗi thắng.
+- Người thua trong 10 trận đầu tiếp tục bị trừ ngẫu nhiên 14–19 RP.
+- Người thua từ trận thứ 11 trở đi bị trừ trực tiếp ngẫu nhiên 19–23 RP.
+- Bỏ biến thiên phụ `-1/0/+1` ở thua thường để giảm hiện tượng nhiều kết quả cùng hội tụ về -20 RP.
+- Chuỗi thua áp dụng khoảng mới:
+  - Trận thua liên tiếp thứ 4: trừ 22–24 RP.
+  - Trận thứ 5: trừ 23–26 RP.
+  - Trận thứ 6: trừ 25–27 RP.
+  - Từ trận thứ 7 trở đi: trừ 25–30 RP.
 
 ## File đã sửa
 
-- `modules/rp_engine.py`: toàn bộ bộ máy RP mới.
-- `app.py`: cập nhật version, đọc chuỗi thua từ lịch sử, giữ RP hòa +5/0 và áp dụng hệ số chủ phòng đúng điều kiện.
+- `modules/rp_engine.py`: thay công thức RP thua thường và các khoảng chuỗi thua.
+- `app.py`: cập nhật phiên bản ứng dụng thành V1.11.1.
+- `test_rp_engine.py`: cập nhật kiểm thử các khoảng 14–19, 19–23, 22–24, 23–26, 25–27 và 25–30.
 
-## Cài đặt
+## Hướng dẫn cài đặt
 
-1. Sao lưu dự án và dữ liệu hiện tại.
-2. Giải nén ZIP; các file nằm ngay ở thư mục gốc.
-3. Chép đè toàn bộ file vào repository hiện tại.
-4. Commit với tên gợi ý: `V1.11.0 - RP Engine 2026`.
-5. Push lên nhánh thử nghiệm và deploy Vercel.
-6. Test tối thiểu: thắng/thua trong 10 trận đầu, trận thứ 11, chuỗi thua 4–7, hòa lệch Rank, chủ phòng thắng và các mốc chuỗi 3/5/10/15.
+1. Tạo branch thử nghiệm, ví dụ `test-v1.11.1-loss-rp`.
+2. Sao lưu repository hiện tại.
+3. Giải nén ZIP và chép toàn bộ file bên trong vào thư mục gốc repository.
+4. Chọn ghi đè các file trùng tên.
+5. Chạy `python test_rp_engine.py`.
+6. Commit gợi ý: `V1.11.1 - Dieu chinh RP thua`.
+7. Push branch và deploy Vercel để kiểm tra trước khi merge vào `main`.
+
+Không cần chạy SQL và không cần thay đổi cấu trúc Supabase.

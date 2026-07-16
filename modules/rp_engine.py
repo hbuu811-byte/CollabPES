@@ -1,4 +1,4 @@
-"""Bộ máy tính RP xếp hạng PES 2026 - V1.11.0.
+"""Bộ máy tính RP xếp hạng PES 2026 - V1.11.1.
 
 Module thuần Python, không truy cập Flask/Supabase. Dữ liệu chuỗi thua hiện tại
 được app.py truyền vào qua khóa ``loss_streak`` của từng người chơi.
@@ -23,9 +23,15 @@ PLACEMENT_WIN_BONUS_RANGE = (1, 4)
 PLACEMENT_WIN_TOTAL_RANGE = (22, 29)
 PLACEMENT_LOSS_RANGE = (14, 19)
 REGULAR_LOSS_BASE_RANGE = (19, 23)
-REGULAR_LOSS_VARIATIONS = (-1, 0, 1)
 LOSS_STREAK_START = 4
 LOSS_STREAK_MAX_DEDUCTION = 30
+
+LOSS_STREAK_RANGES = {
+    4: (22, 24),
+    5: (23, 26),
+    6: (25, 27),
+}
+LOSS_STREAK_SEVEN_PLUS_RANGE = (25, 30)
 
 # Chỉ thưởng đúng trận chạm mốc. Từ mốc 10 trở đi, cứ thêm 5 trận thắng liên tiếp +15 RP.
 WIN_STREAK_BONUSES = {3: 5, 5: 10, 10: 15}
@@ -46,7 +52,7 @@ def get_win_streak_bonus(player: Mapping, won: bool) -> int:
 
 
 def rank_adjusted_win_points(winner: Mapping, loser: Mapping, get_rank_level: Callable) -> int:
-    """Tên hàm tương thích cũ; V1.11.0 không cộng/trừ RP thắng theo chênh Rank."""
+    """Tên hàm tương thích cũ; V1.11.1 không cộng/trừ RP thắng theo chênh Rank."""
     del winner, loser, get_rank_level
     return BASE_WIN_POINTS
 
@@ -71,11 +77,11 @@ def _winner_points(winner: Mapping, rng) -> int:
 
 
 def _progressive_loss_streak_range(next_loss_streak: int) -> Tuple[int, int]:
-    """Khoảng trừ tăng dần: trận 4: 26-27, 5: 27-28, 6: 28-29, 7+: 29-30."""
-    step = max(0, min(3, int(next_loss_streak) - LOSS_STREAK_START))
-    minimum = 26 + step
-    maximum = min(LOSS_STREAK_MAX_DEDUCTION, minimum + 1)
-    return minimum, maximum
+    """Trả khoảng trừ theo đúng mốc chuỗi thua của V1.11.1."""
+    streak = int(next_loss_streak)
+    if streak >= 7:
+        return LOSS_STREAK_SEVEN_PLUS_RANGE
+    return LOSS_STREAK_RANGES.get(streak, REGULAR_LOSS_BASE_RANGE)
 
 
 def _loser_points(loser: Mapping, rng) -> int:
@@ -86,8 +92,9 @@ def _loser_points(loser: Mapping, rng) -> int:
     if matches < PLACEMENT_MATCHES:
         deduction = _randint(rng, *PLACEMENT_LOSS_RANGE)
     else:
+        # Sau 10 trận đầu: lấy trực tiếp một giá trị ngẫu nhiên 19-23.
+        # Không cộng biến thiên phụ để tránh nhiều tổ hợp cùng dồn về -20 RP.
         deduction = _randint(rng, *REGULAR_LOSS_BASE_RANGE)
-        deduction += int(rng.choice(REGULAR_LOSS_VARIATIONS))
 
     if next_loss_streak >= LOSS_STREAK_START:
         deduction = _randint(rng, *_progressive_loss_streak_range(next_loss_streak))
@@ -114,7 +121,7 @@ def calculate_deltas(
     rng=None,
     **_unused,
 ) -> Tuple[int, int]:
-    """Tính delta RP cho hai người chơi theo cơ chế V1.11.0."""
+    """Tính delta RP cho hai người chơi theo cơ chế V1.11.1."""
     rng = rng or random
     score_a = int(score_a)
     score_b = int(score_b)

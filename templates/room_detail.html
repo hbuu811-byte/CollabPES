@@ -447,7 +447,8 @@ function roomHasActiveInput() {
 }
 
 function checkRoomState() {
-    fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
+    if (document.hidden || roomHasActiveInput()) return Promise.resolve();
+    return fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -474,14 +475,24 @@ function checkRoomState() {
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
-        if (data.state_key !== currentRoomStateKey && !roomHasActiveInput()) {
+        if (data.state_key !== currentRoomStateKey) {
+            currentRoomStateKey = data.state_key;
             window.location.reload();
         }
     })
     .catch(function () {});
 }
 
-setInterval(checkRoomState, 4000);
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return checkRoomState();
+    PESNet.createPoller({
+        task: checkRoomState,
+        visibleInterval: 5000,
+        hiddenInterval: 30000,
+        immediate: true,
+        jitter: 500
+    });
+});
 </script>
 
 <script>
@@ -522,7 +533,8 @@ function renderRoomChat(messages) {
 }
 
 function loadRoomChat() {
-    fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderRoomChat(data.messages);
@@ -530,8 +542,16 @@ function loadRoomChat() {
         .catch(function () {});
 }
 
-loadRoomChat();
-setInterval(loadRoomChat, 5000);
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return loadRoomChat();
+    PESNet.createPoller({
+        task: loadRoomChat,
+        visibleInterval: 12000,
+        hiddenInterval: 60000,
+        immediate: true,
+        jitter: 1000
+    });
+});
 </script>
 
 <script>

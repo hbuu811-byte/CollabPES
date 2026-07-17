@@ -80,7 +80,8 @@
 
 <script>
 function checkActiveRoomFromInvitesPage() {
-    fetch("{{ url_for('api_active_room') }}", {
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -92,8 +93,10 @@ function checkActiveRoomFromInvitesPage() {
     .catch(function () {});
 }
 
-setTimeout(checkActiveRoomFromInvitesPage, 1500);
-setInterval(checkActiveRoomFromInvitesPage, 5000);
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return checkActiveRoomFromInvitesPage();
+    PESNet.createPoller({task: checkActiveRoomFromInvitesPage, visibleInterval: 10000, hiddenInterval: 60000, immediate: true, jitter: 1000});
+});
 </script>
 
 {% endblock %}

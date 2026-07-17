@@ -6,7 +6,8 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.12.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.13.13">
+    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v=1.13.13" defer></script>
 
 <script>
 (function initTheme(){
@@ -197,7 +198,7 @@ function toggleTheme(){
 
 <script>
 function postHeartbeat() {
-    fetch("{{ url_for('heartbeat') }}", {
+    return fetch("{{ url_for('heartbeat') }}", {
         method: "POST",
         credentials: "same-origin"
     }).catch(function () {});
@@ -253,9 +254,9 @@ function renderInvitePopup(invite) {
 let lastKnownActiveRoomId = null;
 
 function checkActiveRoom() {
-    if (document.hidden) return;
+    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
 
-    fetch("{{ url_for('api_active_room') }}", {
+    return fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -289,8 +290,8 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkPendingInvites() {
-    if (document.hidden) return;
-    fetch("{{ url_for('api_pending_invites') }}", {
+    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
         credentials: "same-origin"
     })
@@ -444,22 +445,22 @@ function toggleLobbyChat() {
 }
 
 function loadBottomChatSmart() {
-    if (document.hidden || !isLobbyChatOpen) return;
-    loadBottomChat();
+    if (document.hidden || !isLobbyChatOpen) return Promise.resolve();
+    return loadBottomChat();
 }
 
 function checkAnnouncementSmart() {
-    if (document.hidden) return;
-    checkAnnouncement();
+    if (document.hidden) return Promise.resolve();
+    return checkAnnouncement();
 }
 
 function updateOnlineFloatingCountSmart() {
-    if (document.hidden) return;
-    updateOnlineFloatingCount();
+    if (document.hidden) return Promise.resolve();
+    return updateOnlineFloatingCount();
 }
 
 function loadBottomChat() {
-    fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -470,9 +471,9 @@ function loadBottomChat() {
 }
 
 function checkLobbyChatUnread() {
-    if (document.hidden || isLobbyChatOpen) return;
+    if (document.hidden || isLobbyChatOpen) return Promise.resolve();
 
-    fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
+    return fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok || !Array.isArray(data.messages)) return;
@@ -638,7 +639,7 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkAnnouncement() {
-    fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
+    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderAnnouncement(data.announcement);
@@ -685,16 +686,16 @@ function sendAdminAnnouncement() {
 postHeartbeat();
 checkAnnouncement();
 
-setInterval(postHeartbeat, 60000);
-checkPendingInvites();
-setInterval(checkPendingInvites, 3000);
-setInterval(checkActiveRoom, 5000);
-setInterval(loadBottomChatSmart, 45000);
-setInterval(checkLobbyChatUnread, 45000);
-setInterval(checkAnnouncementSmart, 90000);
-setTimeout(checkPendingInvites, 1500);
-setTimeout(checkActiveRoom, 2500);
-setTimeout(checkLobbyChatUnread, 2000);
+// V1.13.13: bộ lập lịch thông minh, không tạo request chồng nhau và dừng khi tab ẩn.
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return;
+    PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: true, immediate: false, jitter: 5000});
+    PESNet.createPoller({task: checkPendingInvites, visibleInterval: 10000, hiddenInterval: 60000, immediate: true, jitter: 1200});
+    PESNet.createPoller({task: checkActiveRoom, visibleInterval: 12000, hiddenInterval: 60000, immediate: true, jitter: 1500});
+    PESNet.createPoller({task: loadBottomChatSmart, visibleInterval: 15000, hiddenInterval: 60000, immediate: false, jitter: 1500});
+    PESNet.createPoller({task: checkLobbyChatUnread, visibleInterval: 60000, hiddenInterval: 180000, immediate: true, jitter: 4000});
+    PESNet.createPoller({task: checkAnnouncementSmart, visibleInterval: 180000, hiddenInterval: 300000, immediate: false, jitter: 5000});
+});
 
 document.addEventListener("visibilitychange", function () {
     if (document.hidden) return;
@@ -708,7 +709,7 @@ document.addEventListener("visibilitychange", function () {
 {% if current_user and not (auth_only|default(false)) %}
 <script>
 function updateOnlineFloatingCount() {
-    fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
+    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -718,8 +719,10 @@ function updateOnlineFloatingCount() {
         .catch(function () {});
 }
 
-updateOnlineFloatingCount();
-setInterval(updateOnlineFloatingCountSmart, 90000);
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return updateOnlineFloatingCount();
+    PESNet.createPoller({task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, immediate: true, jitter: 5000});
+});
 </script>
 {% endif %}
 

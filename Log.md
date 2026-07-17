@@ -1,3 +1,57 @@
+# PES Arena V1.13.13 – Tối ưu Realtime giả lập và giảm tải Vercel
+
+## Mục tiêu
+
+- Giảm mạnh số lần gọi Serverless Function khi người dùng chỉ mở web hoặc đang thi đấu PES.
+- Ngăn các request lặp bị chạy chồng lên nhau khi mạng chậm.
+- Tạm dừng các kiểm tra không cần thiết khi tab trình duyệt bị ẩn.
+- Giữ thao tác phòng đấu phản hồi nhanh bằng cách kiểm tra ngay khi người dùng quay lại tab.
+
+## File đã sửa
+
+- `app.py`
+  - Nâng phiên bản từ `V1.13.12` lên `V1.13.13`.
+
+- `static/js/pes_polling.js` *(module mới)*
+  - Bộ lập lịch request dùng `setTimeout` tuần tự thay vì nhiều `setInterval` độc lập.
+  - Không cho cùng một tác vụ gửi request mới khi request trước chưa hoàn thành.
+  - Tự dừng/giảm tần suất khi tab ẩn, mất mạng hoặc rời trang.
+  - Thêm độ lệch thời gian nhỏ để nhiều máy không đồng loạt gọi server cùng một giây.
+
+- `templates/base.html`
+  - Lời mời: từ 3 giây lên 10 giây và kiểm tra ngay khi quay lại tab.
+  - Phòng đang hoạt động: từ 5 giây lên 12 giây; không gọi API này khi đang ở chính trang phòng.
+  - Heartbeat: từ 60 giây lên 120 giây.
+  - Chat sảnh, số online và thông báo được giảm tần suất; chat chỉ tải nội dung khi bảng chat đang mở.
+  - Loại bỏ các lần gọi trùng lúc trang vừa mở.
+
+- `templates/room_detail.html`
+  - Trạng thái phòng vẫn kiểm tra nhanh mỗi khoảng 5 giây khi đang xem phòng.
+  - Khi tab ẩn, không gọi trạng thái phòng liên tục; quay lại tab sẽ kiểm tra ngay.
+  - Chat phòng giảm từ 5 giây xuống một lần mỗi 12 giây.
+  - Đồng hồ vẫn chạy hoàn toàn ở trình duyệt, không gọi server mỗi giây.
+
+- `templates/chat.html`
+  - Chat toàn màn hình giảm tải và dừng khi tab ẩn.
+
+- `templates/invites.html`
+  - Kiểm tra phòng sau khi nhận lời mời bằng bộ lập lịch tuần tự, tránh request chồng nhau.
+
+## Tác động dự kiến
+
+- Ở các trang thông thường, số request nền giảm khoảng 60–80% so với V1.13.12.
+- Ở trang phòng đấu, không còn API `active-room` chạy thừa song song với API trạng thái phòng.
+- Trong 10–15 phút người chơi chuyển sang PES 2021, phần lớn request nền được tạm dừng.
+- Không cần thay đổi cấu trúc bảng Supabase và không cần chạy SQL.
+
+## Kiểm tra
+
+- Python compile thành công.
+- Toàn bộ template Jinja parse thành công.
+- Test RP Engine đạt.
+- ZIP không bọc thư mục cha; các file nằm ngay cấp gốc.
+
+---
 # PES Arena V1.13.12 – Sửa công tắc Giao hữu & làm rõ lịch sử đối đầu
 
 ## File đã sửa

@@ -59,7 +59,8 @@ function renderGlobalChat(messages) {
 }
 
 function loadGlobalChat() {
-    fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (data.ok) renderGlobalChat(data.messages);
@@ -67,7 +68,10 @@ function loadGlobalChat() {
         .catch(function () {});
 }
 
-setInterval(loadGlobalChat, 5000);
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return loadGlobalChat();
+    PESNet.createPoller({task: loadGlobalChat, visibleInterval: 10000, hiddenInterval: 60000, immediate: true, jitter: 800});
+});
 setTimeout(function () {
     const box = document.getElementById("globalChatBox");
     if (box) box.scrollTop = box.scrollHeight;

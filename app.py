@@ -1827,13 +1827,10 @@ def decorate_match_for_view(match, viewer_id=None):
     item["status_label"] = match_status_label(item.get("status"))
     item["created_at_display"] = format_vn_datetime(item.get("created_at"))
     item["is_cancelled"] = item.get("status") == "cancelled"
-    # Tỷ số mặc định theo thứ tự dữ liệu gốc player1 - player2.
-    # Khi biết người đang được xem, phần dưới sẽ đổi lại thành
-    # tỷ số của người đó - tỷ số đối thủ để khớp với bố cục Profile.
     item["score_display"] = (
         "Không tính"
         if item["is_cancelled"]
-        else f'{item.get("score1") if item.get("score1") is not None else "-"} - {item.get("score2") if item.get("score2") is not None else "-"}'
+        else f'{item.get("score1")} - {item.get("score2")}'
     )
 
     item["is_mine"] = bool(
@@ -1856,13 +1853,6 @@ def decorate_match_for_view(match, viewer_id=None):
         as_player1 = item.get("player1_id") == viewer_id
         my_score = item.get("score1") if as_player1 else item.get("score2")
         opponent_score = item.get("score2") if as_player1 else item.get("score1")
-
-        # Profile luôn đặt người đang được xem ở bên trái. Vì vậy tỷ số cũng
-        # phải hiển thị theo cùng góc nhìn, kể cả khi người đó là player2.
-        if not item["is_cancelled"]:
-            my_score_display = my_score if my_score is not None else "-"
-            opponent_score_display = opponent_score if opponent_score is not None else "-"
-            item["score_display"] = f"{my_score_display} - {opponent_score_display}"
         item["my_delta"] = int((item.get("delta1") if as_player1 else item.get("delta2")) or 0)
         item["opponent_id"] = item.get("player2_id") if as_player1 else item.get("player1_id")
         item["opponent_name"] = item.get("player2_name") if as_player1 else item.get("player1_name")

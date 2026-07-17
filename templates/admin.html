@@ -1,3 +1,4 @@
+{# PES_ARENA_V1.13.13_V4.5_FIX_ADMIN_APPROVAL_PERMISSION #}
 {% extends "base.html" %}
 {% block content %}
 <div class="admin-dashboard-heading">
@@ -14,7 +15,7 @@
 
 <section class="admin-metric-grid" aria-label="Thống kê nhanh">
     <article class="admin-metric-card metric-purple">
-        <div class="metric-icon">👥</div><div><span>Tổng người chơi</span><strong>{{ players|length }}</strong><small>{{ pending_users|length }} tài khoản chờ duyệt</small></div>
+        <div class="metric-icon">👥</div><div><span>Tổng người chơi</span><strong>{{ players|length }}</strong><small>{% if can_admin('users_approve') %}{{ pending_users|length }} tài khoản chờ duyệt{% else %}Không có quyền duyệt tài khoản{% endif %}</small></div>
     </article>
     <article class="admin-metric-card metric-blue">
         <div class="metric-icon">🎮</div><div><span>Trận đang diễn ra</span><strong>{{ playing|length }}</strong><small>{{ all_matches|length }} trận gần nhất đã tải</small></div>
@@ -50,7 +51,8 @@
         <a class="btn red" href="#users">Kiểm tra danh sách IP trùng</a>
     </div>
     {% endif %}
-    <div class="panel admin-highlight">
+    {% if can_admin('users_approve') %}
+<div class="panel admin-highlight">
         <div class="admin-section-heading">
             <div>
                 <h2>⏳ Tài khoản đang chờ duyệt</h2>
@@ -90,8 +92,9 @@
             </table>
         </div>
     </div>
+{% endif %}
 
-    <div class="panel admin-team-panel">
+<div class="panel admin-team-panel">
         <div class="admin-section-heading"><div><h2>🛡️ Đội ngũ quản trị</h2><p class="small">Trên giao diện, mọi tài khoản quản trị đều hiển thị chung là <strong>Admin</strong>.</p></div><span class="admin-count">{{ admins|length }}</span></div>
         <div class="admin-team-grid">
         {% for a in admins %}

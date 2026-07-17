@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block auth %}
+<div class="auth-body">
+    <div class="auth-card">
+        <div class="auth-emblem">PES</div><div class="logo">PES <span>eFootball 2026</span></div>
+        <div class="subtitle">PES eFootball 2026 • Championship Ranking</div>
+
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="alert {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+        <form method="post" id="loginForm">
+            <div class="form-group"><input id="loginUsername" name="username" placeholder="Username" autocomplete="username" required></div>
+            <div class="form-group password-field">
+                <input id="loginPassword" name="password" type="password" placeholder="Password" autocomplete="current-password" required>
+                <button id="passwordVisibilityButton" class="password-eye" type="button" aria-label="Hiện mật khẩu" title="Hiện mật khẩu">👁</button>
+            </div>
+            <label class="remember-account-row">
+                <input id="rememberAccount" type="checkbox">
+                <span>Remember this account</span>
+            </label>
+            <button class="btn full" type="submit">Đăng nhập</button>
+        </form>
+
+        <p class="small auth-links"><a href="{{ url_for('forgot_password') }}">Quên mật khẩu?</a></p>
+        <p class="small">Tài khoản mới cần Admin duyệt trước khi sử dụng.</p>
+        <p class="small">Chưa có tài khoản? <a href="{{ url_for('register') }}">Đăng ký tài khoản</a></p>
+    </div>
+</div>
+<script>
+(function(){
+    const usernameInput = document.getElementById('loginUsername');
+    const passwordInput = document.getElementById('loginPassword');
+    const eyeButton = document.getElementById('passwordVisibilityButton');
+    const rememberBox = document.getElementById('rememberAccount');
+    const form = document.getElementById('loginForm');
+    const storageKey = 'pes2026-remembered-account';
+
+    try {
+        const remembered = localStorage.getItem(storageKey);
+        if (remembered) {
+            usernameInput.value = remembered;
+            rememberBox.checked = true;
+        }
+    } catch (error) {}
+
+    eyeButton.addEventListener('click', function(){
+        const show = passwordInput.type === 'password';
+        passwordInput.type = show ? 'text' : 'password';
+        eyeButton.textContent = show ? '🙈' : '👁';
+        eyeButton.setAttribute('aria-label', show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+        eyeButton.title = show ? 'Ẩn mật khẩu' : 'Hiện mật khẩu';
+        passwordInput.focus();
+    });
+
+    form.addEventListener('submit', function(){
+        try {
+            if (rememberBox.checked) localStorage.setItem(storageKey, usernameInput.value.trim());
+            else localStorage.removeItem(storageKey);
+        } catch (error) {}
+    });
+})();
+</script>
+{% endblock %}

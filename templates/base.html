@@ -33,12 +33,12 @@ function toggleTheme(){
         </div>
 
         <nav class="nav player-nav">
-            <a class="{{ 'active' if request.endpoint == 'dashboard' else '' }}" href="{{ url_for('dashboard') }}"><span>🏠</span> Dashboard</a>
             <a class="{{ 'active' if request.endpoint == 'ranking' else '' }}" href="{{ url_for('ranking') }}"><span>🏆</span> BXH</a>
-            <a class="{{ 'active' if request.endpoint == 'players' else '' }}" href="{{ url_for('players') }}"><span>👤</span> Players</a>
-            <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📘</span> Hướng dẫn</a>
+            <form class="nav-room-create-form" method="post" action="{{ url_for('create_open_room') }}">
+                <button class="nav-room-create-button {{ 'active' if request.endpoint in ['rooms', 'room_detail'] else '' }}" type="submit"><span>🎮</span> Phòng đấu</button>
+            </form>
             <a class="{{ 'active' if request.endpoint == 'matches' else '' }}" href="{{ url_for('matches') }}"><span>📜</span> Lịch sử</a>
-            <a class="{{ 'active' if request.endpoint == 'profile' else '' }}" href="{{ url_for('profile', user_id=current_user.id) }}"><span>🪪</span> Hồ sơ cá nhân</a>
+            <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📖</span> Hướng dẫn</a>
             {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> Admin</a>{% endif %}
             <a class="logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
         </nav>
@@ -111,9 +111,11 @@ function toggleTheme(){
                 <a class="topbar-profile" href="{{ url_for('profile', user_id=current_user.id) }}">{{ player_avatar(current_user, size='sm') }}<span><strong>{{ current_user.display_name }}</strong><small><i></i> Online</small></span><em>⌄</em></a>
             </div>
         </header>
+        {% if request.endpoint == 'players' %}
         <div class="app-status-row">
             <div class="online-floating-badge" title="Người đang online"><span class="online-floating-dot"></span><span id="onlineFloatingCount">0</span><span class="online-floating-text">online</span></div>
         </div>
+        {% endif %}
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% for category, message in messages %}
                 <div class="alert {{ category }}">{{ message }}</div>
@@ -290,7 +292,9 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkPendingInvites() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    // Lời mời phải được kiểm tra ở cả BXH, Lịch sử, Profile và Phòng đấu.
+    // Chỉ dừng khi tab bị ẩn để tránh request nền không cần thiết.
+    if (document.hidden) return Promise.resolve();
     return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
         credentials: "same-origin"
@@ -683,18 +687,34 @@ function sendAdminAnnouncement() {
     });
 }
 
-postHeartbeat();
-checkAnnouncement();
-
-// V1.13.13: bộ lập lịch thông minh, không tạo request chồng nhau và dừng khi tab ẩn.
+// V4.4 FIX4: polling theo trang, nhưng lời mời là tín hiệu hệ thống bắt buộc
+// nên được kiểm tra nhẹ trên mọi trang đã đăng nhập. Tab ẩn sẽ dừng hoàn toàn.
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return;
-    PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: true, immediate: false, jitter: 5000});
-    PESNet.createPoller({task: checkPendingInvites, visibleInterval: 10000, hiddenInterval: 60000, immediate: true, jitter: 1200});
-    PESNet.createPoller({task: checkActiveRoom, visibleInterval: 12000, hiddenInterval: 60000, immediate: true, jitter: 1500});
-    PESNet.createPoller({task: loadBottomChatSmart, visibleInterval: 15000, hiddenInterval: 60000, immediate: false, jitter: 1500});
-    PESNet.createPoller({task: checkLobbyChatUnread, visibleInterval: 60000, hiddenInterval: 180000, immediate: true, jitter: 4000});
-    PESNet.createPoller({task: checkAnnouncementSmart, visibleInterval: 180000, hiddenInterval: 300000, immediate: false, jitter: 5000});
+    const page = {{ request.endpoint|tojson }};
+    const hasLoggedInUser = {{ (current_user is not none)|tojson }};
+
+    if (hasLoggedInUser) {
+        PESNet.createPoller({
+            task: checkPendingInvites,
+            visibleInterval: 7000,
+            hiddenInterval: 60000,
+            runWhenHidden: false,
+            immediate: true,
+            jitter: 900
+        });
+    }
+
+    if (page === "players") {
+        PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: false, immediate: false, jitter: 5000});
+        PESNet.createPoller({task: checkActiveRoom, visibleInterval: 12000, hiddenInterval: 60000, runWhenHidden: false, immediate: true, jitter: 1500});
+    } else if (page === "rooms") {
+        PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: false, immediate: false, jitter: 5000});
+        PESNet.createPoller({task: checkActiveRoom, visibleInterval: 15000, hiddenInterval: 60000, runWhenHidden: false, immediate: true, jitter: 1500});
+    } else if (page === "room_detail") {
+        // State phòng được room_detail.html quản lý theo trạng thái; base chỉ duy trì heartbeat nhẹ.
+        PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: false, immediate: false, jitter: 5000});
+    }
 });
 
 document.addEventListener("visibilitychange", function () {
@@ -706,7 +726,7 @@ document.addEventListener("visibilitychange", function () {
 {% endif %}
 
 
-{% if current_user and not (auth_only|default(false)) %}
+{% if current_user and not (auth_only|default(false)) and request.endpoint == 'players' %}
 <script>
 function updateOnlineFloatingCount() {
     return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })

@@ -1,3 +1,4 @@
+<!-- V1.13.13-v4.1-FIX1_ACTION_COLUMN_SECOND -->
 {% extends "base.html" %}
 {% from "_rank_macros.html" import rank_badge %}
 {% from "_avatar_macros.html" import player_avatar %}
@@ -21,18 +22,19 @@
 
 <div class="table-wrap sticky-table">
 <table>
-    <thead><tr><th>Player</th><th>Rank</th><th>Điểm</th><th>W-D-L</th><th>Winrate</th><th>Trạng thái</th><th>Hoạt động gần nhất</th><th>Hành động</th></tr></thead>
+    <thead><tr><th>Player</th>
+<th>Hành động</th>
+<th>Rank</th>
+<th>Điểm</th>
+<th>W-D-L</th>
+<th>Winrate</th>
+<th>Trạng thái</th>
+<th>Hoạt động gần nhất</th></tr></thead>
     <tbody>
         {% for p in players %}
         <tr class="{{ 'current-user-row' if p.id == current_user.id else '' }}">
             <td><a class="player-link player-with-avatar" href="{{ url_for('profile', user_id=p.id) }}">{{ player_avatar(p, size='sm') }}<span class="player-name-stack"><strong>{{ p.display_name }}</strong>{% if p.username != p.display_name %}<small>@{{ p.username }}</small>{% endif %}{% set player_streak_badge = get_win_streak_badge(p.streak or 0) %}{% if player_streak_badge %}<span class="win-streak-badge compact players-win-streak-badge">🔥 <strong>{{ player_streak_badge.title }}</strong> · {{ player_streak_badge.count }}</span>{% endif %}</span></a></td>
-            <td>{{ rank_badge(p.rank_info) }}</td>
-            <td><strong>{{ p.rank_points or 0 }}</strong></td>
-            <td>{{ p.wins or 0 }}-{{ p.draws or 0 }}-{{ p.losses or 0 }}</td>
-            <td>{{ p.winrate }}%</td>
-            <td><span class="presence presence-{{ p.activity_code }}"><i></i>{{ p.activity_label }}</span></td>
-            <td class="small">{{ 'Đang hoạt động' if p.is_online else p.last_seen_display }}</td>
-            <td class="action-cell">
+<td class="action-cell">
                 <a class="btn gray small" href="{{ url_for('profile', user_id=p.id) }}">Hồ sơ</a>
                 {% if p.id != current_user.id and p.activity_code == 'ready' %}
                 <form class="inline-form" method="post" action="{{ url_for('send_invite') }}">
@@ -42,6 +44,12 @@
                 </form>
                 {% endif %}
             </td>
+<td>{{ rank_badge(p.rank_info) }}</td>
+<td><strong>{{ p.rank_points or 0 }}</strong></td>
+<td>{{ p.wins or 0 }}-{{ p.draws or 0 }}-{{ p.losses or 0 }}</td>
+<td>{{ p.winrate }}%</td>
+<td><span class="presence presence-{{ p.activity_code }}"><i></i>{{ p.activity_label }}</span></td>
+<td class="small">{{ 'Đang hoạt động' if p.is_online else p.last_seen_display }}</td>
         </tr>
         {% else %}<tr><td colspan="8" class="empty-state">Không tìm thấy player phù hợp.</td></tr>{% endfor %}
     </tbody>

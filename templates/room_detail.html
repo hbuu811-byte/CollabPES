@@ -182,6 +182,9 @@
                 {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
                 <div class="room-center-primary-actions">
                     <a class="btn gold room-center-action-btn" href="{{ url_for('players') }}">Mời Đấu</a>
+                    <form method="post" action="{{ url_for('room_leave', room_id=room.id) }}" onsubmit="return confirm('Bạn chắc chắn muốn thoát và đóng phòng?');">
+                        <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                    </form>
                 </div>
                 {% endif %}
             {% endif %}
@@ -252,8 +255,7 @@
     <section class="room-session-h2h" aria-label="Lịch sử đối đầu trong phòng">
         <div class="room-session-h2h-heading">
             <div>
-                <span class="eyebrow">ĐỐI ĐẦU TRONG PHÒNG NÀY</span>
-                <h3>Lịch sử từ khi mở phòng</h3>
+                <h3>LỊCH SỬ ĐẤU</h3>
                 <p class="small">Tính các trận đã xác nhận kể từ {{ room_head_to_head.since }}.</p>
             </div>
             <strong class="room-session-total">{{ room_head_to_head.total }} trận</strong>

@@ -56,7 +56,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.13"
+APP_VERSION = "V1.13.13-v4.4"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -578,6 +578,7 @@ LEGACY_ADMIN_PERMISSION_FIELDS = {
     "accounts_import": "admin_can_import_accounts_csv",
 }
 SYSTEM_FEATURE_DEFAULTS = {
+    "dashboard_enabled": False,
     "friendly_enabled": True, "lobby_chat_enabled": True, "room_chat_enabled": True,
     "registration_codes_enabled": True, "announcements_enabled": True,
 }
@@ -600,6 +601,11 @@ def has_admin_permission(user, permission_code: str) -> bool:
 
 
 def get_system_features():
+    # Cache ngắn để base.html không truy vấn system_settings ở mọi request.
+    cached = ttl_cache_get("admin_system_features_v44")
+    if isinstance(cached, dict):
+        return dict(cached)
+
     features = dict(SYSTEM_FEATURE_DEFAULTS)
     try:
         result = execute_query(db.table("system_settings").select("setting_value").eq("setting_key", "admin_system_features").limit(1), "get_system_features", attempts=2)
@@ -609,6 +615,8 @@ def get_system_features():
         if isinstance(raw, dict): features.update({k: bool(v) for k,v in raw.items() if k in features})
     except Exception as exc:
         print(f"get_system_features warning: {exc}")
+
+    ttl_cache_set("admin_system_features_v44", features, 30)
     return features
 
 
@@ -3774,6 +3782,10 @@ def guide():
 @app.route("/dashboard")
 @login_required
 def dashboard():
+    # Dashboard tắt: chuyển thẳng sang BXH trước khi thực hiện bất kỳ truy vấn nào.
+    if not system_feature_enabled("dashboard_enabled"):
+        return redirect(url_for("ranking"))
+
     user = current_user()
     try:
         player_rows = list_players()
@@ -3936,7 +3948,12 @@ def ranking():
     # BXH là trang công khai: khách chưa đăng nhập vẫn xem được.
     # Khi đã đăng nhập, hệ thống vẫn hiển thị thêm vị trí cá nhân như trước.
     try:
-        player_rows = list_players()
+        cached_players = ttl_cache_get("ranking_players_v44")
+        if cached_players is None:
+            cached_players = list_players()
+            ttl_cache_set("ranking_players_v44", cached_players, 30)
+        # Tạo bản sao vì route sẽ gắn thêm recent_form/winrate cho từng player.
+        player_rows = json.loads(json.dumps(cached_players))
     except Exception as exc:
         # BXH là trang công khai; nếu Supabase chập chờn thì vẫn trả trang thay vì HTTP 500.
         print(f"ranking list_players warning: {exc}")
@@ -3964,7 +3981,10 @@ def ranking():
 
     top_players = filtered[:100]
     try:
-        confirmed_matches = list_matches(status="confirmed")
+        confirmed_matches = ttl_cache_get("ranking_matches_v44")
+        if confirmed_matches is None:
+            confirmed_matches = list_matches(status="confirmed")
+            ttl_cache_set("ranking_matches_v44", confirmed_matches, 30)
     except Exception as exc:
         print(f"ranking list_matches warning: {exc}")
         confirmed_matches = []
@@ -5864,6 +5884,7 @@ def admin_update_system_features():
         ),
         "update_system_features",
     )
+    ttl_cache_set("admin_system_features_v44", features, 30)
 
     # Khi Admin vừa tắt Giao hữu, đưa các phòng giao hữu đang mở về trạng thái
     # chờ sẵn sàng để người chơi không bị kẹt trong một tính năng đã khóa.
@@ -6800,6 +6821,116 @@ def admin_dispute_cancel(dispute_id):
     log_admin_action("Hủy trận tranh chấp", "match", dispute.get("match_id"), details=note)
     flash("Đã hủy trận tranh chấp. Không ai bị cộng hoặc trừ điểm.", "success")
     return redirect_admin("disputes")
+
+
+@app.route("/admin/match/<match_id>/status", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("matches_cancel")
+def admin_update_match_status(match_id):
+    match = get_match(match_id)
+    if not match:
+        flash("Không tìm thấy trận.", "danger")
+        return redirect_admin("matches")
+
+    old_status = str(match.get("status") or "waiting_confirm")
+    new_status = str(request.form.get("status") or old_status).strip()
+    note = str(request.form.get("note") or "").strip()[:220]
+    allowed_statuses = {"waiting_confirm", "disputed", "cancelled", "confirmed"}
+
+    if new_status not in allowed_statuses:
+        flash("Trạng thái trận không hợp lệ.", "danger")
+        return redirect_admin("matches")
+
+    # Admin được phép xác nhận trận ngay tại bảng quản lý. Việc xác nhận phải đi
+    # qua apply_match_result để tính RP, cập nhật thống kê và chống cộng điểm hai lần.
+    if new_status == "confirmed" and old_status != "confirmed":
+        if old_status == "cancelled":
+            flash("Trận đã hủy không thể xác nhận trực tiếp. Hãy khôi phục trận trước khi xử lý.", "warning")
+            return redirect_admin("matches")
+        if match.get("score1") is None or match.get("score2") is None:
+            flash("Không thể xác nhận vì trận chưa có tỷ số.", "danger")
+            return redirect_admin("matches")
+        try:
+            delta1, delta2 = apply_match_result(match)
+            final_note = note or "Admin xác nhận kết quả trận đấu."
+            execute_query(
+                db.table("matches").update({
+                    "note": final_note,
+                    "updated_at": now_iso(),
+                }).eq("id", match_id).eq("status", "confirmed"),
+                "admin_confirm_match_note",
+            )
+            try:
+                db.table("match_rooms").update({
+                    "status": "confirmed",
+                    "confirmed_by_id": (current_user() or {}).get("id"),
+                    "note": final_note,
+                    "state_expires_at": None,
+                    "updated_at": now_iso(),
+                }).eq("match_id", match_id).execute()
+            except Exception as exc:
+                print(f"admin_confirm_match room warning: {exc}")
+            log_admin_action(
+                "Admin xác nhận trận",
+                "match",
+                match_id,
+                details=f"{old_status} -> confirmed; RP: {delta1}/{delta2}; ghi chú: {final_note}",
+            )
+            flash(f"Đã xác nhận trận và cập nhật RP: {delta1:+d} / {delta2:+d}.", "success")
+        except Exception as exc:
+            flash(f"Không thể xác nhận trận: {exc}", "danger")
+        return redirect_admin("matches")
+
+    # Nếu hủy một trận đã confirmed, hoàn tác đúng RP và thống kê trước khi đổi trạng thái.
+    if old_status == "confirmed" and new_status == "cancelled":
+        if not reverse_confirmed_match_result(match):
+            flash("Không thể hoàn tác RP của trận đã xác nhận; trạng thái chưa được thay đổi.", "danger")
+            return redirect_admin("matches")
+
+    # Không cho đổi confirmed sang trạng thái trung gian, tránh trận bị xác nhận lại và cộng RP lần hai.
+    if old_status == "confirmed" and new_status not in {"confirmed", "cancelled"}:
+        flash("Trận đã xác nhận chỉ có thể giữ nguyên hoặc chuyển sang Đã hủy (có hoàn tác RP).", "warning")
+        return redirect_admin("matches")
+
+    values = {
+        "status": new_status,
+        "note": note or match.get("note") or "",
+        "updated_at": now_iso(),
+    }
+    if old_status == "confirmed" and new_status == "cancelled":
+        values["delta1"] = 0
+        values["delta2"] = 0
+        values["note"] = note or "Admin đổi trạng thái sang Đã hủy và đã hoàn tác RP."
+
+    execute_query(
+        db.table("matches").update(values).eq("id", match_id),
+        "admin_update_match_status",
+    )
+
+    room_status_map = {
+        "waiting_confirm": "waiting_result_confirm",
+        "disputed": "disputed",
+        "cancelled": "cancelled",
+        "confirmed": "confirmed",
+    }
+    try:
+        db.table("match_rooms").update({
+            "status": room_status_map[new_status],
+            "note": values["note"],
+            "updated_at": now_iso(),
+        }).eq("match_id", match_id).execute()
+    except Exception as exc:
+        print(f"admin_update_match_status room warning: {exc}")
+
+    log_admin_action(
+        "Cập nhật trạng thái trận",
+        "match",
+        match_id,
+        details=f"{old_status} -> {new_status}; ghi chú: {values['note']}",
+    )
+    flash("Đã lưu trạng thái trận đấu.", "success")
+    return redirect_admin("matches")
 
 
 @app.route("/admin/cancel/<match_id>", methods=["POST"])

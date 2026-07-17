@@ -7,7 +7,7 @@
         <p class="page-subtitle">Theo dõi nhanh người chơi, phòng đấu, trận đấu và trạng thái vận hành.</p>
     </div>
     <div class="admin-heading-actions">
-        <a class="btn gray" href="{{ url_for('dashboard') }}">⌂ Trang người chơi</a>
+        <a class="btn gray" href="{{ url_for('ranking') }}">⌂ Trang người chơi</a>
         <a class="btn" href="#system">⚙ Cài đặt hệ thống</a>
     </div>
 </div>
@@ -358,7 +358,7 @@
         <div class="admin-section-heading">
             <div>
                 <h2>🎮 Quản lý trận đấu gần đây</h2>
-                <p class="small">Theo dõi RP, trạng thái và ghi chú trận đấu. Tỷ số đã xác nhận chỉ được xem, không chỉnh sửa từ Admin.</p>
+                <p class="small">Admin có thể đổi trạng thái an toàn và lưu lại. Chuyển trận đã xác nhận sang Đã hủy sẽ tự hoàn tác RP; không cho ép trận chưa xác nhận thành confirmed để tránh cộng RP sai.</p>
             </div>
             <span class="admin-count">{{ all_matches|length }}</span>
         </div>
@@ -374,11 +374,19 @@
                     <td><strong>{{ m.score1 if m.score1 is not none else 0 }} – {{ m.score2 if m.score2 is not none else 0 }}</strong></td>
                     <td class="match-player-cell"><strong>{{ m.player2_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta2 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta2 or 0) }}</td>
-                    <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
-                    <td class="match-note-cell">{{ m.note or '—' }}</td>
+                    <td>
+                        <form class="admin-match-status-form" method="post" action="{{ url_for('admin_update_match_status', match_id=m.id) }}">
+                            <select name="status" aria-label="Trạng thái trận">
+                                {% for value, label in [('waiting_confirm','Chờ xác nhận'),('disputed','Tranh chấp'),('cancelled','Đã hủy'),('confirmed','Đã xác nhận')] %}
+                                <option value="{{ value }}" {% if m.status == value %}selected{% endif %}>{{ label }}</option>
+                                {% endfor %}
+                            </select>
+                    </td>
+                    <td class="match-note-cell"><input name="note" value="{{ m.note or '' }}" maxlength="220" placeholder="Ghi chú"></td>
                     <td>
                         <div class="match-actions">
-                            <form method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy</button></form>
+                            <button class="btn green" type="submit">Lưu</button>
+                        </form>
                             <form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('Xóa trận này và hoàn tác đúng RP của trận?')"><button class="btn red" type="submit">Xóa</button></form>
                         </div>
                     </td>
@@ -444,7 +452,7 @@
 {% endif %}
 
 <section class="admin-tab-panel" data-admin-panel="system">
-    <div class="panel"><h2>🎛️ Bật/tắt tính năng hệ thống</h2><form method="post" action="{{ url_for('admin_update_system_features') }}" class="system-toggle-grid">{% for key,label in {'friendly_enabled':'Giao hữu','lobby_chat_enabled':'Chat Sảnh','room_chat_enabled':'Chat Phòng','registration_codes_enabled':'Mã đăng ký','announcements_enabled':'Thông báo'}.items() %}<label class="admin-permission-option"><span>{{ label }}</span><span class="admin-switch"><input type="checkbox" name="{{ key }}" value="1" {% if system_features.get(key) %}checked{% endif %}><span class="admin-switch-track"></span></span></label>{% endfor %}<button class="btn green" type="submit">Lưu cài đặt</button></form></div>
+    <div class="panel"><h2>🎛️ Bật/tắt tính năng hệ thống</h2><form method="post" action="{{ url_for('admin_update_system_features') }}" class="system-toggle-grid">{% for key,label in {'dashboard_enabled':'Dashboard','friendly_enabled':'Giao hữu','lobby_chat_enabled':'Chat Sảnh','room_chat_enabled':'Chat Phòng','registration_codes_enabled':'Mã đăng ký','announcements_enabled':'Thông báo'}.items() %}<label class="admin-permission-option"><span>{{ label }}</span><span class="admin-switch"><input type="checkbox" name="{{ key }}" value="1" {% if system_features.get(key) %}checked{% endif %}><span class="admin-switch-track"></span></span></label>{% endfor %}<button class="btn green" type="submit">Lưu cài đặt</button></form></div>
     <div class="panel">
         <h2>📢 Thông báo Admin chạy ngang</h2>
         {% if active_announcement %}

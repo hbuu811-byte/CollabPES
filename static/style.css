@@ -3981,3 +3981,14 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
     .room-session-draws strong { font-size: 1.85rem; }
     .room-session-match-row { gap: 5px; }
 }
+
+
+/* V1.13.13-v4.4 FIX2 */
+.player-nav .nav-room-create-form{margin:0;padding:0}
+.player-nav .nav-room-create-button{width:100%;min-height:47px;display:flex;align-items:center;gap:13px;padding:0 13px;border:1px solid transparent;border-radius:9px;background:transparent;color:var(--pes-muted);font:inherit;font-size:14px;font-weight:720;text-align:left;cursor:pointer}
+.player-nav .nav-room-create-button span{width:20px;text-align:center}
+.player-nav .nav-room-create-button:hover{background:rgba(255,255,255,.035);color:var(--pes-text);border-color:var(--pes-border-soft)}
+.player-nav .nav-room-create-button.active{background:linear-gradient(90deg,rgba(216,166,58,.14),rgba(216,166,58,.035));color:var(--pes-gold-2);border-color:rgba(216,166,58,.32);box-shadow:inset 3px 0 0 var(--pes-gold)}
+.admin-match-status-form{display:contents}
+.admin-match-status-form select,.admin-match-status-form input{min-width:135px}
+.admin-match-status-form input{width:100%;min-width:180px}

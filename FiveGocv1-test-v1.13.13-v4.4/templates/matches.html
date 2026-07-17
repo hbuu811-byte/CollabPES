@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% from "_avatar_macros.html" import player_avatar %}
+{% block content %}
+<h1 class="page-title">Lịch sử trận</h1>
+<p class="page-subtitle">Xem lại kết quả, điểm rank và phong độ thi đấu.</p>
+
+<div class="history-tabs">
+    <a class="{{ 'active' if history_view == 'mine' else '' }}" href="{{ url_for('matches', view='mine') }}">Trận của tôi</a>
+    <a class="{{ 'active' if history_view == 'all' else '' }}" href="{{ url_for('matches', view='all') }}">Toàn hệ thống</a>
+</div>
+<form class="filter-bar" method="get">
+    <input type="hidden" name="view" value="{{ history_view }}">
+    <input name="q" value="{{ q }}" placeholder="Tìm player hoặc đội bóng...">
+    <select name="status">
+        <option value="all">Mọi trạng thái</option>
+        <option value="confirmed" {{ 'selected' if status_filter == 'confirmed' else '' }}>Đã xác nhận</option>
+        <option value="disputed" {{ 'selected' if status_filter == 'disputed' else '' }}>Đang tranh chấp</option>
+        <option value="cancelled" {{ 'selected' if status_filter == 'cancelled' else '' }}>Đã hủy</option>
+        <option value="waiting_confirm" {{ 'selected' if status_filter == 'waiting_confirm' else '' }}>Chờ xác nhận</option>
+    </select>
+    <button class="btn" type="submit">Lọc</button>
+    {% if q or status_filter != 'all' %}<a class="btn gray" href="{{ url_for('matches', view=history_view) }}">Xóa lọc</a>{% endif %}
+</form>
+<p class="small history-count">Tìm thấy {{ total_items }} trận.</p>
+
+<div class="history-list">
+{% for m in matches %}
+<article class="history-card {{ 'is-mine' if m.is_mine else '' }}">
+    <div class="history-result">
+        {% if m.is_mine %}<span class="result-pill result-{{ m.result_code }}">{{ m.result_label }}</span>{% else %}<span class="badge {{ m.status }}">{{ m.status_label }}</span>{% endif %}
+        <small>{{ m.created_at_display }}</small>
+    </div>
+    <div class="history-matchup">
+        <div><a class="match-player-inline" href="{{ url_for('profile', user_id=m.player1_id) }}">{{ player_avatar(name=m.player1_name, avatar_url=m.player1_avatar_url, achievement=m.player1_achievement, size='xs') }}<span>{{ m.player1_name }}</span></a><small>{{ m.team1 or '-' }}</small></div>
+        <strong>{{ m.score_display }}</strong>
+        <div class="right"><a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.player2_id) }}"><span>{{ m.player2_name }}</span>{{ player_avatar(name=m.player2_name, avatar_url=m.player2_avatar_url, achievement=m.player2_achievement, size='xs') }}</a><small>{{ m.team2 or '-' }}</small></div>
+    </div>
+    <div class="history-points">
+        {% if m.status == 'confirmed' %}
+            {% if m.is_mine %}<strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>
+            {% else %}<strong>{{ "%+d"|format(m.delta1 or 0) }} / {{ "%+d"|format(m.delta2 or 0) }}</strong>{% endif %}
+        {% else %}<strong>Không tính điểm</strong>{% endif %}
+        <small>{{ m.status_label }}</small>
+    </div>
+    {% if m.note and m.note != 'Đã xác nhận.' %}<div class="history-note">{{ m.note }}</div>{% endif %}
+</article>
+{% else %}<div class="panel empty-state">Chưa có trận phù hợp với bộ lọc.</div>{% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination">
+    {% if page > 1 %}<a href="{{ url_for('matches', view=history_view, status=status_filter, q=q, page=page-1) }}">← Trước</a>{% endif %}
+    <span>Trang {{ page }} / {{ total_pages }}</span>
+    {% if page < total_pages %}<a href="{{ url_for('matches', view=history_view, status=status_filter, q=q, page=page+1) }}">Sau →</a>{% endif %}
+</nav>
+{% endif %}
+{% endblock %}

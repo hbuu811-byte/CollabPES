@@ -3247,6 +3247,26 @@ def api_active_room():
         "auto_redirect": auto_redirect,
     })
 
+def build_room_state_key(room):
+    """Tạo khóa trạng thái ổn định dùng chung cho HTML và API phòng đấu."""
+    return "|".join([
+        str(room.get("status")),
+        str(room.get("host_team")),
+        str(room.get("guest_team")),
+        str(room.get("guest_ready")),
+        str(room.get("host_score")),
+        str(room.get("guest_score")),
+        str(room.get("rematch_host_ready")),
+        str(room.get("rematch_guest_ready")),
+        str(room.get("rematch_host_declined")),
+        str(room.get("rematch_guest_declined")),
+        str(room.get("rematch_expired")),
+        str(room.get("state_expires_at")),
+        str((room.get("dispute") or {}).get("status")),
+        str((room.get("dispute") or {}).get("updated_at")),
+    ])
+
+
 @app.route("/api/room/<room_id>/state")
 @login_required
 
@@ -3264,22 +3284,16 @@ def api_room_state(room_id):
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
-    state_key = "|".join([
-        str(room.get("status")),
-        str(room.get("host_team")),
-        str(room.get("guest_team")),
-        str(room.get("guest_ready")),
-        str(room.get("host_score")),
-        str(room.get("guest_score")),
-        str(room.get("rematch_host_ready")),
-        str(room.get("rematch_guest_ready")),
-        str(room.get("rematch_host_declined")),
-        str(room.get("rematch_guest_declined")),
-        str(room.get("rematch_expired")),
-        str(room.get("state_expires_at")),
-        str((room.get("dispute") or {}).get("status")),
-        str((room.get("dispute") or {}).get("updated_at")),
-    ])
+    state_key = build_room_state_key(room)
+
+    # V4.1: nếu trạng thái chưa đổi, trả response rỗng để giảm dữ liệu truyền.
+    # Client vẫn giữ polling nhưng không phải nhận/phân tích JSON lặp lại.
+    since_state_key = (request.args.get("since") or "").strip()
+    if since_state_key and since_state_key == state_key:
+        response = app.response_class(status=204)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["X-Room-State-Unchanged"] = "1"
+        return response
 
     rematch_declined_by_me = (
         (user["id"] == room.get("host_user_id") and room.get("rematch_host_declined"))
@@ -4489,6 +4503,7 @@ def room_detail(room_id):
     return render_template(
         "room_detail.html",
         room=room,
+        initial_room_state_key=build_room_state_key(room),
         friendly_tiers=get_available_team_tiers(),
         room_head_to_head=room_head_to_head,
     )

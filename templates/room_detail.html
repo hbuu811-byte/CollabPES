@@ -403,7 +403,10 @@
 </div>
 
 <script>
-let currentRoomStateKey = "{{ room.status }}|{{ room.host_team }}|{{ room.guest_team }}|{{ room.guest_ready }}|{{ room.host_score }}|{{ room.guest_score }}|{{ room.rematch_host_ready }}|{{ room.rematch_guest_ready }}|{{ room.rematch_host_declined }}|{{ room.rematch_guest_declined }}|{{ room.rematch_expired }}|{{ room.state_expires_at }}|{{ room.dispute.status if room.dispute else '' }}|{{ room.dispute.updated_at if room.dispute else '' }}";
+let currentRoomStateKey = {{ initial_room_state_key|tojson }};
+let currentRoomStatus = {{ room.status|tojson }};
+const currentRoomUserIsHost = {{ (current_user.id == room.host_user_id or current_user.role == 'admin')|tojson }};
+const currentRoomUserIsGuest = {{ (current_user.id == room.guest_user_id)|tojson }};
 
 function renderRoomCountdown(seconds) {
     const countdown = document.getElementById("roomCountdown");
@@ -446,20 +449,109 @@ function roomHasActiveInput() {
     return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
 }
 
+const roomScoreForm = document.querySelector(".room-score-form");
+const roomScoreInputs = roomScoreForm
+    ? Array.from(roomScoreForm.querySelectorAll('input[name="host_score"], input[name="guest_score"]'))
+    : [];
+const roomScoreDraftKey = "pes-room-score-draft:{{ room.id }}";
+let roomScoreFormDirty = false;
+
+function saveRoomScoreDraft() {
+    if (!roomScoreInputs.length) return;
+    roomScoreFormDirty = true;
+    try {
+        const draft = {};
+        roomScoreInputs.forEach(function (input) { draft[input.name] = input.value; });
+        sessionStorage.setItem(roomScoreDraftKey, JSON.stringify(draft));
+    } catch (error) {}
+}
+
+function restoreRoomScoreDraft() {
+    if (!roomScoreInputs.length) return;
+    try {
+        const raw = sessionStorage.getItem(roomScoreDraftKey);
+        if (!raw) return;
+        const draft = JSON.parse(raw);
+        roomScoreInputs.forEach(function (input) {
+            if (Object.prototype.hasOwnProperty.call(draft, input.name)) input.value = draft[input.name];
+        });
+        roomScoreFormDirty = true;
+    } catch (error) {}
+}
+
+restoreRoomScoreDraft();
+roomScoreInputs.forEach(function (input) { input.addEventListener("input", saveRoomScoreDraft); });
+if (roomScoreForm) {
+    roomScoreForm.addEventListener("submit", function () {
+        roomScoreFormDirty = false;
+        try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
+    });
+}
+
+let roomStateRequestInFlight = false;
+let roomStateTimer = null;
+let roomStateStopped = false;
+let roomStateAbortController = null;
+
+function getRoomStateInterval() {
+    if (document.hidden) return 15000;
+
+    // Khách cần phát hiện lúc chủ vừa gửi kết quả nhanh hơn chủ phòng.
+    if (currentRoomStatus === "playing") {
+        return currentRoomUserIsGuest ? 3000 : 8000;
+    }
+    if (currentRoomStatus === "friendly_playing") return 8000;
+    if (currentRoomStatus === "waiting_result_confirm") return 1000;
+    if (currentRoomStatus === "waiting_ready") return 2500;
+    if (currentRoomStatus === "confirmed") return 3000;
+    return 6000;
+}
+
+function scheduleRoomStateCheck(delay) {
+    if (roomStateStopped) return;
+    if (roomStateTimer) window.clearTimeout(roomStateTimer);
+    const baseDelay = typeof delay === "number" ? delay : getRoomStateInterval();
+    const jitter = document.hidden ? 0 : Math.floor(Math.random() * 350);
+    roomStateTimer = window.setTimeout(runRoomStateCheck, baseDelay + jitter);
+}
+
+function runRoomStateCheck() {
+    if (roomStateStopped) return;
+    checkRoomState().finally(function () {
+        scheduleRoomStateCheck();
+    });
+}
+
 function checkRoomState() {
-    if (document.hidden || roomHasActiveInput()) return Promise.resolve();
-    return fetch("{{ url_for('api_room_state', room_id=room.id) }}", {
+    if (roomStateRequestInFlight || roomHasActiveInput() || roomScoreFormDirty) {
+        return Promise.resolve();
+    }
+
+    roomStateRequestInFlight = true;
+    roomStateAbortController = new AbortController();
+    const stateUrl = new URL("{{ url_for('api_room_state', room_id=room.id) }}", window.location.origin);
+    if (currentRoomStateKey) stateUrl.searchParams.set("since", currentRoomStateKey);
+
+    return fetch(stateUrl.toString(), {
         method: "GET",
-        credentials: "same-origin"
+        credentials: "same-origin",
+        cache: "no-store",
+        signal: roomStateAbortController.signal
     })
-    .then(function (res) { return res.json(); })
+    .then(function (res) {
+        if (res.status === 204 || res.status === 304) return null;
+        return res.json();
+    })
     .then(function (data) {
-        if (!data.ok) return;
+        if (!data || !data.ok) return;
+        currentRoomStatus = data.status || currentRoomStatus;
         if (data.status === "cancelled") {
+            roomStateStopped = true;
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
         if (data.rematch_expired) {
+            roomStateStopped = true;
             window.alert("Yêu cầu đá tiếp đã hết hạn sau 60 giây. Bạn sẽ được đưa về sảnh chính.");
             window.location.href = "{{ url_for('dashboard') }}";
             return;
@@ -469,6 +561,7 @@ function checkRoomState() {
             renderRoomCountdown(roomCountdownSeconds);
         }
         if (data.rematch_declined) {
+            roomStateStopped = true;
             if (!data.rematch_declined_by_me) {
                 window.alert("Đối thủ không muốn đá tiếp. Bạn sẽ được đưa về sảnh chính.");
             }
@@ -477,21 +570,36 @@ function checkRoomState() {
         }
         if (data.state_key !== currentRoomStateKey) {
             currentRoomStateKey = data.state_key;
+            roomStateStopped = true;
             window.location.reload();
         }
     })
-    .catch(function () {});
+    .catch(function (error) {
+        if (error && error.name === "AbortError") return;
+    })
+    .finally(function () {
+        roomStateRequestInFlight = false;
+        roomStateAbortController = null;
+    });
 }
 
 window.addEventListener("DOMContentLoaded", function () {
-    if (!window.PESNet) return checkRoomState();
-    PESNet.createPoller({
-        task: checkRoomState,
-        visibleInterval: 5000,
-        hiddenInterval: 30000,
-        immediate: true,
-        jitter: 500
-    });
+    scheduleRoomStateCheck(300);
+});
+
+function requestImmediateRoomStateCheck() {
+    if (document.hidden || roomStateStopped) return;
+    scheduleRoomStateCheck(100);
+}
+
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) requestImmediateRoomStateCheck();
+});
+window.addEventListener("focus", requestImmediateRoomStateCheck);
+window.addEventListener("pagehide", function () {
+    roomStateStopped = true;
+    if (roomStateTimer) window.clearTimeout(roomStateTimer);
+    if (roomStateAbortController) roomStateAbortController.abort();
 });
 </script>
 

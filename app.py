@@ -46,6 +46,12 @@ from modules.rp_formula import (
 from modules.rp_engine import (
     calculate_deltas as calculate_ranked_deltas, validate_deltas as validate_ranked_deltas,
 )
+from modules.admin_match_service import parse_score, score_changed
+from modules.admin_ranking_rebuild import build_replay_plan
+from modules.system_feature_service import post_login_endpoint, dashboard_is_enabled
+from modules.session_runtime_service import (
+    IDLE_TIMEOUT_SECONDS, idle_decision, room_blocks_idle_logout, client_config as session_client_config,
+)
 from modules.win_streaks import (
     WIN_STREAK_TITLES, WIN_STREAK_EVENT_PREFIX, get_win_streak_title,
     get_win_streak_badge, build_win_streak_event, encode_win_streak_room_note,
@@ -56,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.13-v4.4"
+APP_VERSION = "V1.13.13"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -99,6 +105,11 @@ DISPUTE_REASON_OPTIONS = {
     "legacy": "Tranh chấp từ phiên bản cũ",
 }
 DISPUTE_PENDING_STATUSES = {"pending", "processing"}
+
+# Khóa toàn cục ngắn hạn dùng khi Admin phát lại lịch sử BXH.
+# Lưu trong Supabase để có hiệu lực trên nhiều Serverless Function/instance.
+RANKING_REBUILD_LOCK_KEY = "admin_ranking_rebuild_lock"
+RANKING_REBUILD_LOCK_SECONDS = 5 * 60
 
 INVITE_TIMEOUT_SECONDS = 60
 ROOM_READY_TIMEOUT_SECONDS = 30 * 60
@@ -601,11 +612,6 @@ def has_admin_permission(user, permission_code: str) -> bool:
 
 
 def get_system_features():
-    # Cache ngắn để base.html không truy vấn system_settings ở mọi request.
-    cached = ttl_cache_get("admin_system_features_v44")
-    if isinstance(cached, dict):
-        return dict(cached)
-
     features = dict(SYSTEM_FEATURE_DEFAULTS)
     try:
         result = execute_query(db.table("system_settings").select("setting_value").eq("setting_key", "admin_system_features").limit(1), "get_system_features", attempts=2)
@@ -615,13 +621,125 @@ def get_system_features():
         if isinstance(raw, dict): features.update({k: bool(v) for k,v in raw.items() if k in features})
     except Exception as exc:
         print(f"get_system_features warning: {exc}")
-
-    ttl_cache_set("admin_system_features_v44", features, 30)
     return features
 
 
 def system_feature_enabled(key: str) -> bool:
     return bool(get_system_features().get(key, SYSTEM_FEATURE_DEFAULTS.get(key, False)))
+
+
+MAINTENANCE_SETTING_KEY = "server_maintenance_config"
+VN_TIMEZONE = timezone(timedelta(hours=7))
+_maintenance_cache = {"value": None, "expires_at": 0.0}
+
+
+def _maintenance_default_config():
+    return {
+        "manual_closed": False,
+        "close_at": "",
+        "open_at": "",
+        "message": "Hệ thống đang được bảo trì. Vui lòng quay lại sau.",
+        "updated_at": "",
+    }
+
+
+def _parse_maintenance_time(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=VN_TIMEZONE)
+        return parsed.astimezone(VN_TIMEZONE)
+    except (TypeError, ValueError):
+        return None
+
+
+def _normalize_maintenance_input(value):
+    parsed = _parse_maintenance_time(value)
+    return parsed.isoformat(timespec="minutes") if parsed else ""
+
+
+def get_maintenance_config(force=False):
+    now_ts = time.time()
+    if not force and _maintenance_cache.get("value") is not None and now_ts < _maintenance_cache.get("expires_at", 0):
+        return dict(_maintenance_cache["value"])
+
+    config = _maintenance_default_config()
+    try:
+        result = execute_query(
+            db.table("system_settings").select("setting_value")
+            .eq("setting_key", MAINTENANCE_SETTING_KEY).limit(1),
+            "get_server_maintenance_config",
+            attempts=2,
+        )
+        row = (result.data or [{}])[0]
+        raw = row.get("setting_value")
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if isinstance(raw, dict):
+            for key in config:
+                if key in raw:
+                    config[key] = raw[key]
+    except Exception as exc:
+        app.logger.warning("Maintenance config load failed: %s", exc)
+
+    config["manual_closed"] = bool(config.get("manual_closed"))
+    _maintenance_cache["value"] = dict(config)
+    _maintenance_cache["expires_at"] = now_ts + 15
+    return config
+
+
+def get_maintenance_status(config=None):
+    config = dict(config or get_maintenance_config())
+    now = datetime.now(VN_TIMEZONE)
+    close_at = _parse_maintenance_time(config.get("close_at"))
+    open_at = _parse_maintenance_time(config.get("open_at"))
+
+    closed = bool(config.get("manual_closed"))
+    # Lịch đóng có thể bật máy chủ tự động, lịch mở có thể mở lại kể cả khi
+    # công tắc đóng thủ công đang bật. Mốc thời gian đến sau có quyền ưu tiên.
+    transitions = []
+    if close_at:
+        transitions.append((close_at, True, "close"))
+    if open_at:
+        transitions.append((open_at, False, "open"))
+    for when, state, _kind in sorted(transitions, key=lambda item: item[0]):
+        if now >= when:
+            closed = state
+
+    future = [(when, state, kind) for when, state, kind in transitions if when > now]
+    next_transition = min(future, key=lambda item: item[0]) if future else None
+    countdown = None
+    if next_transition:
+        seconds = max(0, int((next_transition[0] - now).total_seconds()))
+        if seconds <= 30 * 60:
+            countdown = {
+                "kind": next_transition[2],
+                "target_iso": next_transition[0].isoformat(),
+                "seconds": seconds,
+                "label": "Máy chủ sẽ đóng để bảo trì" if next_transition[2] == "close" else "Máy chủ sẽ mở trở lại",
+            }
+
+    return {
+        "closed": closed,
+        "message": str(config.get("message") or _maintenance_default_config()["message"]),
+        "close_at": close_at.isoformat() if close_at else "",
+        "open_at": open_at.isoformat() if open_at else "",
+        "close_at_input": close_at.strftime("%Y-%m-%dT%H:%M") if close_at else "",
+        "open_at_input": open_at.strftime("%Y-%m-%dT%H:%M") if open_at else "",
+        "countdown": countdown,
+    }
+
+
+def _current_session_is_admin():
+    if not session.get("user_id"):
+        return False
+    try:
+        return is_admin_user(current_user())
+    except Exception:
+        return False
 
 
 def normalize_invite_code(value: str) -> str:
@@ -2017,6 +2135,35 @@ def list_unread_notifications(user_id, limit=5):
         return []
 
 
+def list_user_notifications(user_id, page=1, per_page=20, unread_only=False):
+    """Tải lịch sử thông báo của đúng người dùng, có phân trang tại Supabase."""
+    if not user_id:
+        return [], False
+    page = max(1, int(page or 1))
+    per_page = max(1, min(int(per_page or 20), 50))
+    start = (page - 1) * per_page
+    try:
+        query = (
+            db.table("user_notifications")
+            .select("*")
+            .eq("user_id", user_id)
+            .order("created_at", desc=True)
+        )
+        if unread_only:
+            query = query.eq("is_read", False)
+        result = execute_query(
+            query.range(start, start + per_page),
+            "list_user_notifications",
+            attempts=2,
+        )
+        rows = [dict(item) for item in (result.data or [])]
+        has_next = len(rows) > per_page
+        return rows[:per_page], has_next
+    except Exception as exc:
+        print(f"list_user_notifications warning: {exc}")
+        return [], False
+
+
 def dispute_reason_label(reason_code):
     return DISPUTE_REASON_OPTIONS.get(reason_code, DISPUTE_REASON_OPTIONS["other"])
 
@@ -2549,6 +2696,111 @@ def list_rooms(status=None):
 
 
 
+GLOBAL_STREAK_EVENT_SETTING_KEY = "global_win_streak_event"
+GLOBAL_STREAK_EVENT_TTL_SECONDS = 24 * 60 * 60
+GLOBAL_STREAK_EVENT_MAX_ITEMS = 30
+
+
+def _normalize_global_streak_events(raw):
+    """Chuẩn hóa dữ liệu cũ (1 dict) và dữ liệu mới (danh sách sự kiện)."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            return []
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+
+    now = now_dt()
+    active = []
+    seen = set()
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        event_id = str(item.get("id") or "").strip()
+        if not event_id or event_id in seen:
+            continue
+        expires_at = aware_utc(parse_dt(item.get("expires_at")))
+        if not expires_at or expires_at <= now:
+            continue
+        seen.add(event_id)
+        active.append(dict(item))
+
+    # SHUTDOWN ưu tiên trước; trong cùng loại, sự kiện mới hơn đứng trước.
+    active.sort(
+        key=lambda item: (
+            0 if str(item.get("kind")) == "shutdown" else 1,
+            str(item.get("published_at") or ""),
+        )
+    )
+    shutdowns = [item for item in active if str(item.get("kind")) == "shutdown"]
+    milestones = [item for item in active if str(item.get("kind")) != "shutdown"]
+    shutdowns.sort(key=lambda item: str(item.get("published_at") or ""), reverse=True)
+    milestones.sort(key=lambda item: str(item.get("published_at") or ""), reverse=True)
+    return (shutdowns + milestones)[:GLOBAL_STREAK_EVENT_MAX_ITEMS]
+
+
+def publish_global_streak_event(event):
+    if not isinstance(event, dict) or event.get("kind") not in {"milestone", "shutdown"}:
+        return False
+    payload = dict(event)
+    payload["published_at"] = now_iso()
+    payload["expires_at"] = future_iso(GLOBAL_STREAK_EVENT_TTL_SECONDS)
+    payload["source"] = "win_streak"
+    try:
+        result = execute_query(
+            db.table("system_settings").select("setting_value")
+            .eq("setting_key", GLOBAL_STREAK_EVENT_SETTING_KEY).limit(1),
+            "read_global_streak_events", attempts=2,
+        )
+        raw = ((result.data or [{}])[0]).get("setting_value")
+        events = _normalize_global_streak_events(raw)
+        events = [item for item in events if str(item.get("id")) != str(payload.get("id"))]
+        events.append(payload)
+        events = _normalize_global_streak_events(events)
+        execute_query(
+            db.table("system_settings").upsert({
+                "setting_key": GLOBAL_STREAK_EVENT_SETTING_KEY,
+                "setting_value": json.dumps(events, ensure_ascii=False),
+                "updated_at": now_iso(),
+            }, on_conflict="setting_key"),
+            "publish_global_streak_event", attempts=2,
+        )
+        ttl_cache_delete("global_win_streak_events")
+        ttl_cache_delete("global_win_streak_event")
+        return True
+    except Exception as exc:
+        print(f"publish_global_streak_event warning: {exc}")
+        return False
+
+
+def get_active_global_streak_events():
+    cached = ttl_cache_get("global_win_streak_events")
+    if cached is not None:
+        return [] if cached is False else cached
+    try:
+        result = execute_query(
+            db.table("system_settings").select("setting_value")
+            .eq("setting_key", GLOBAL_STREAK_EVENT_SETTING_KEY).limit(1),
+            "get_active_global_streak_events", attempts=2,
+        )
+        raw = ((result.data or [{}])[0]).get("setting_value")
+        events = _normalize_global_streak_events(raw)
+        ttl_cache_set("global_win_streak_events", events if events else False, 15)
+        return events
+    except Exception as exc:
+        print(f"get_active_global_streak_events warning: {exc}")
+        return []
+
+
+def get_active_global_streak_event():
+    """Tương thích với code cũ: trả sự kiện ưu tiên đầu tiên."""
+    events = get_active_global_streak_events()
+    return events[0] if events else None
+
+
 def get_active_announcement():
     try:
         cached = cache_get("_rz_active_announcement")
@@ -3021,7 +3273,7 @@ def admin_required(view):
         if not user:
             session.clear()
             flash("Phiên đăng nhập admin không hợp lệ. Vui lòng đăng nhập lại.", "warning")
-            return redirect(url_for("login"))
+            return redirect(url_for("admin_login"))
 
         if not is_admin_user(user):
             flash("Bạn không có quyền admin.", "danger")
@@ -3054,8 +3306,63 @@ def admin_permission_required(permission_code: str):
     return decorator
 
 @app.before_request
+def enforce_server_maintenance():
+    """Khóa toàn bộ website cho người dùng thường, kể cả /login.
+
+    Admin luôn dùng /admin-login để vào hệ thống khi máy chủ đang bảo trì.
+    Static assets và trang đăng nhập Admin được phép để màn hình bảo trì vẫn tải đẹp.
+    """
+    endpoint = request.endpoint or ""
+    allowed_public = {"static", "admin_login"}
+    if endpoint in allowed_public:
+        return None
+
+    status = get_maintenance_status()
+    if not status.get("closed"):
+        return None
+
+    if _current_session_is_admin():
+        return None
+
+    # Không cho người dùng thường lách qua /login, API, link trực tiếp hoặc phiên cũ.
+    if session.get("user_id"):
+        session.clear()
+    response = make_response(render_template("maintenance.html", maintenance=status), 503)
+    response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    return response
+
+
+@app.before_request
 def before_request():
     try:
+        # V4.9: chỉ thao tác thật của người dùng mới gia hạn phiên. Heartbeat/polling không gia hạn.
+        if session.get("user_id"):
+            now_ts = int(time.time())
+            last_real = int(session.get("last_real_activity", 0) or 0)
+            if not last_real:
+                session["last_real_activity"] = now_ts
+            elif now_ts - last_real >= IDLE_TIMEOUT_SECONDS and request.endpoint not in {"logout", "static", "api_session_timeout_check"}:
+                room = None
+                try:
+                    room = active_room_for_user(session.get("user_id"))
+                except Exception as exc:
+                    print(f"idle room check warning: {exc}")
+                decision = idle_decision(now_ts=now_ts, last_activity_ts=last_real, room=room)
+                if decision.expired:
+                    try:
+                        execute_query(
+                            db.table("users").update({"is_online": False, "last_seen_at": now_iso()}).eq("id", session.get("user_id")),
+                            "idle_logout_mark_offline",
+                            attempts=1,
+                        )
+                    except Exception as exc:
+                        print(f"idle logout warning: {exc}")
+                    session.clear()
+                    if request.path.startswith("/api/"):
+                        return jsonify({"ok": False, "error": "session_expired", "redirect": url_for("login")}), 401
+                    flash("Bạn đã được đăng xuất do không hoạt động trong 60 phút.", "warning")
+                    return redirect(url_for("login"))
+
         # Không gọi ensure_admin() ở mọi request. Trước đây mỗi Vercel instance mới
         # lại đọc + cập nhật bảng users trước khi tải /bxh, tạo thêm kết nối Supabase
         # và có thể gây [Errno 16] Device or resource busy.
@@ -3147,6 +3454,42 @@ def inject_globals():
     }
 
 
+@app.route("/notifications")
+@login_required
+def notifications():
+    user = current_user()
+    try:
+        page = max(1, int(request.args.get("page", 1)))
+    except (TypeError, ValueError):
+        page = 1
+    unread_only = (request.args.get("filter") or "all") == "unread"
+    notices, has_next = list_user_notifications(
+        user.get("id"), page=page, per_page=20, unread_only=unread_only
+    )
+    return render_template(
+        "notifications.html",
+        notifications=notices,
+        page=page,
+        has_next=has_next,
+        notification_filter="unread" if unread_only else "all",
+    )
+
+
+@app.route("/notifications/read-all", methods=["POST"])
+@login_required
+def mark_all_notifications_read():
+    user = current_user()
+    execute_query(
+        db.table("user_notifications").update({
+            "is_read": True,
+            "read_at": now_iso(),
+        }).eq("user_id", user.get("id")).eq("is_read", False),
+        "mark_all_notifications_read",
+    )
+    flash("Đã đánh dấu tất cả thông báo là đã đọc.", "success")
+    return redirect(url_for("notifications"))
+
+
 @app.route("/notification/<notification_id>/read", methods=["POST"])
 @login_required
 def mark_notification_read(notification_id):
@@ -3162,6 +3505,33 @@ def mark_notification_read(notification_id):
     if next_url.startswith("/") and not next_url.startswith("//"):
         return redirect(next_url)
     return redirect(request.referrer or url_for("dashboard"))
+
+
+@app.route("/api/session/activity", methods=["POST"])
+@login_required
+def api_session_activity():
+    """Gia hạn phiên chỉ khi trình duyệt báo có thao tác thật của người dùng."""
+    session["last_real_activity"] = int(time.time())
+    return jsonify({"ok": True})
+
+
+@app.route("/api/session/timeout-check")
+@login_required
+def api_session_timeout_check():
+    """Chỉ gọi một lần khi bộ đếm 60 phút hết; không phải polling."""
+    user = current_user()
+    room = None
+    try:
+        if user:
+            room = active_room_for_user(user.get("id"))
+    except Exception as exc:
+        print(f"timeout check room warning: {exc}")
+    protected = room_blocks_idle_logout(room)
+    return jsonify({
+        "ok": True,
+        "protected": protected,
+        "room_url": url_for("room_detail", room_id=room.get("id")) if protected and room else None,
+    })
 
 
 @app.route("/heartbeat", methods=["POST"])
@@ -3329,6 +3699,49 @@ def index():
     return redirect(url_for("ranking"))
 
 
+@app.route("/admin-login", methods=["GET", "POST"])
+def admin_login():
+    get_device_id()
+
+    existing = current_user() if session.get("user_id") else None
+    if existing and is_admin_user(existing):
+        return redirect(url_for("admin"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "").strip()
+        try:
+            user = get_user_by_username(username)
+        except Exception as exc:
+            app.logger.warning("Admin login database warning: %s", exc)
+            flash("Máy chủ dữ liệu đang bận. Vui lòng thử lại sau vài giây.", "warning")
+            return redirect(url_for("admin_login"))
+
+        if not user or user.get("password_hash") != hash_password(password):
+            flash("Sai tài khoản hoặc mật khẩu Admin.", "danger")
+            return redirect(url_for("admin_login"))
+        if user.get("account_status", "approved") != "approved" or not is_admin_user(user):
+            flash("Tài khoản này không có quyền truy cập trang quản trị.", "danger")
+            return redirect(url_for("admin_login"))
+
+        session.clear()
+        session["user_id"] = user["id"]
+        session["username"] = user.get("username", "")
+        session["display_name"] = user.get("display_name", "")
+        session["avatar_url"] = user.get("avatar_url")
+        session["role"] = user.get("role", "player")
+        session["account_status"] = user.get("account_status", "approved")
+        session["admin_level"] = user.get("admin_level", "none")
+        execute_query(
+            db.table("users").update({"is_online": True, "last_seen_at": now_iso()}).eq("id", user["id"]),
+            "admin_login_mark_online",
+            attempts=2,
+        )
+        return redirect(url_for("admin"))
+
+    return render_template("admin_login.html", auth_only=True)
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     get_device_id()
@@ -3380,7 +3793,7 @@ def login():
             flash("Đăng nhập bằng mật khẩu tạm thành công. Hãy tạo mật khẩu mới.", "warning")
             return redirect(url_for("change_password"))
 
-        return redirect(url_for("dashboard"))
+        return redirect(url_for(post_login_endpoint(get_system_features(), is_admin=is_admin_user(user))))
 
     return render_template("login.html")
 
@@ -3547,7 +3960,10 @@ def logout():
         except Exception as exc:
             print(f"logout warning: {exc}")
     session.clear()
-    flash("Đã đăng xuất.", "success")
+    if request.args.get("reason") == "inactive":
+        flash("Bạn đã được đăng xuất do không hoạt động trong 60 phút.", "warning")
+    else:
+        flash("Đã đăng xuất.", "success")
     return redirect(url_for("login"))
 
 
@@ -3702,19 +4118,34 @@ def admin_clear_announcement():
 @app.route("/api/announcement/current")
 @login_required
 def api_current_announcement():
+    events = get_active_global_streak_events()
+    if events:
+        announcements = []
+        for event in events:
+            kind = str(event.get("kind") or "milestone")
+            announcements.append({
+                "id": f"streak:{event.get('id', 'event')}",
+                "title": event.get("title") or "DANH HIỆU CHUỖI THẮNG",
+                "message": event.get("subtitle") or "Một danh hiệu mới vừa được thiết lập!",
+                "created_at": event.get("published_at"),
+                "expires_at": event.get("expires_at"),
+                "announcement_type": "shutdown" if kind == "shutdown" else "win_streak",
+                "icon": "⚡" if kind == "shutdown" else "🏆",
+            })
+        return jsonify({"ok": True, "announcements": announcements, "announcement": announcements[0]})
+
     announcement = get_active_announcement()
     if not announcement:
-        return jsonify({"ok": True, "announcement": None})
-
-    return jsonify({
-        "ok": True,
-        "announcement": {
-            "id": announcement["id"],
-            "title": announcement["title"],
-            "message": announcement["message"],
-            "created_at": announcement["created_at"],
-        },
-    })
+        return jsonify({"ok": True, "announcements": [], "announcement": None})
+    admin_item = {
+        "id": announcement["id"],
+        "title": announcement["title"],
+        "message": announcement["message"],
+        "created_at": announcement["created_at"],
+        "announcement_type": "admin",
+        "icon": "📢",
+    }
+    return jsonify({"ok": True, "announcements": [admin_item], "announcement": admin_item})
 
 
 @app.route("/api/chat/global/send", methods=["POST"])
@@ -3782,10 +4213,8 @@ def guide():
 @app.route("/dashboard")
 @login_required
 def dashboard():
-    # Dashboard tắt: chuyển thẳng sang BXH trước khi thực hiện bất kỳ truy vấn nào.
-    if not system_feature_enabled("dashboard_enabled"):
+    if not dashboard_is_enabled(get_system_features()):
         return redirect(url_for("ranking"))
-
     user = current_user()
     try:
         player_rows = list_players()
@@ -3948,12 +4377,7 @@ def ranking():
     # BXH là trang công khai: khách chưa đăng nhập vẫn xem được.
     # Khi đã đăng nhập, hệ thống vẫn hiển thị thêm vị trí cá nhân như trước.
     try:
-        cached_players = ttl_cache_get("ranking_players_v44")
-        if cached_players is None:
-            cached_players = list_players()
-            ttl_cache_set("ranking_players_v44", cached_players, 30)
-        # Tạo bản sao vì route sẽ gắn thêm recent_form/winrate cho từng player.
-        player_rows = json.loads(json.dumps(cached_players))
+        player_rows = list_players()
     except Exception as exc:
         # BXH là trang công khai; nếu Supabase chập chờn thì vẫn trả trang thay vì HTTP 500.
         print(f"ranking list_players warning: {exc}")
@@ -3981,10 +4405,7 @@ def ranking():
 
     top_players = filtered[:100]
     try:
-        confirmed_matches = ttl_cache_get("ranking_matches_v44")
-        if confirmed_matches is None:
-            confirmed_matches = list_matches(status="confirmed")
-            ttl_cache_set("ranking_matches_v44", confirmed_matches, 30)
+        confirmed_matches = list_matches(status="confirmed")
     except Exception as exc:
         print(f"ranking list_matches warning: {exc}")
         confirmed_matches = []
@@ -5109,6 +5530,12 @@ def room_submit_result(room_id):
         return redirect(url_for("room_detail", room_id=room_id))
 
     try:
+        assert_ranking_rebuild_not_running()
+    except ValueError as exc:
+        flash(str(exc), "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
+
+    try:
         host_score = int(request.form.get("host_score", "0"))
         guest_score = int(request.form.get("guest_score", "0"))
     except (TypeError, ValueError):
@@ -5135,7 +5562,7 @@ def room_submit_result(room_id):
         loser_id = None
 
     try:
-        execute_query(
+        saved_match = execute_query(
             db.table("matches").update({
                 "score1": host_score,
                 "score2": guest_score,
@@ -5147,6 +5574,8 @@ def room_submit_result(room_id):
             }).eq("id", match["id"]).eq("status", "playing"),
             "submit_room_match_result",
         )
+        if not (saved_match.data or []):
+            raise ValueError("Trạng thái trận vừa thay đổi; kết quả chưa được lưu.")
         execute_query(
             db.table("match_rooms").update({
                 "host_score": host_score,
@@ -5159,6 +5588,10 @@ def room_submit_result(room_id):
             "submit_room_result_state",
         )
         ttl_cache_delete("rooms_raw")
+    except ValueError as exc:
+        print(f"room_submit_result validation room={room_id} match={match.get('id')}: {exc}")
+        flash(str(exc), "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
     except Exception as exc:
         print(f"room_submit_result ERROR room={room_id} match={match.get('id')}: {type(exc).__name__}: {exc}")
         flash("Không thể lưu kết quả do lỗi dữ liệu/kết nối. Vui lòng thử lại; chưa cộng hoặc trừ RP.", "danger")
@@ -5205,6 +5638,8 @@ def room_confirm_result(room_id):
             }).eq("id", room_id).eq("status", "waiting_result_confirm"),
             "confirm_result_room",
         )
+        if streak_event:
+            publish_global_streak_event(streak_event)
     except ValueError as exc:
         print(f"room_confirm_result validation room={room_id} match={match.get('id')}: {exc}")
         flash(str(exc), "warning")
@@ -5233,6 +5668,12 @@ def room_dispute_result(room_id):
 
     if room["status"] != "waiting_result_confirm":
         flash("Phòng chưa có kết quả cần xác nhận.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
+
+    try:
+        assert_ranking_rebuild_not_running()
+    except ValueError as exc:
+        flash(str(exc), "warning")
         return redirect(url_for("room_detail", room_id=room_id))
 
     reason_code = request.form.get("reason_code", "").strip()
@@ -5443,6 +5884,210 @@ def _safe_int(value, default=0):
         return int(default)
 
 
+def _load_ranking_rebuild_lock(allow_failure=False):
+    if db is None:
+        return None
+    try:
+        result = execute_query(
+            db.table("system_settings").select("setting_value")
+            .eq("setting_key", RANKING_REBUILD_LOCK_KEY).limit(1),
+            "load_ranking_rebuild_lock",
+            attempts=1,
+        )
+        row = (result.data or [None])[0]
+        value = (row or {}).get("setting_value")
+        return dict(value) if isinstance(value, dict) else None
+    except Exception as exc:
+        app.logger.warning("load ranking rebuild lock failed: %s", exc)
+        if allow_failure:
+            return None
+        raise
+
+
+def _ranking_rebuild_lock_is_expired(lock_info):
+    if not lock_info:
+        return True
+    expires_at = aware_utc(parse_dt(lock_info.get("expires_at")))
+    return not expires_at or expires_at <= aware_utc(now_dt())
+
+
+def get_active_ranking_rebuild_lock(clean_stale=True):
+    lock_info = _load_ranking_rebuild_lock()
+    if not lock_info:
+        return None
+    if _ranking_rebuild_lock_is_expired(lock_info):
+        if clean_stale:
+            try:
+                db.table("system_settings").delete().eq(
+                    "setting_key", RANKING_REBUILD_LOCK_KEY
+                ).execute()
+            except Exception as exc:
+                app.logger.warning("cleanup stale ranking lock failed: %s", exc)
+        return None
+    return lock_info
+
+
+def assert_ranking_rebuild_not_running():
+    lock_info = get_active_ranking_rebuild_lock()
+    if lock_info:
+        raise ValueError(
+            "Admin đang tính lại lịch sử BXH. Vui lòng thử lại sau khi thao tác hoàn tất."
+        )
+
+
+def acquire_ranking_rebuild_lock(actor_id=None, match_id=None):
+    """Giành khóa DB duy nhất trước khi sửa lịch sử/RP.
+
+    Dùng INSERT vào setting_key duy nhất thay vì khóa RAM, vì Vercel có thể chạy
+    nhiều instance cùng lúc. Khóa hết hạn tự động để tránh kẹt khi request bị dừng.
+    """
+    require_db()
+    existing = get_active_ranking_rebuild_lock()
+    if existing:
+        raise ValueError("Một thao tác tính lại BXH khác đang chạy. Vui lòng thử lại sau.")
+
+    token = secrets.token_hex(16)
+    payload = {
+        "token": token,
+        "actor_id": actor_id,
+        "match_id": match_id,
+        "created_at": now_iso(),
+        "expires_at": future_iso(RANKING_REBUILD_LOCK_SECONDS),
+    }
+    try:
+        db.table("system_settings").insert({
+            "setting_key": RANKING_REBUILD_LOCK_KEY,
+            "setting_value": payload,
+            "updated_at": now_iso(),
+        }).execute()
+    except Exception as exc:
+        # Có thể instance khác vừa chèn khóa sau lần đọc phía trên.
+        active = get_active_ranking_rebuild_lock(clean_stale=False)
+        if active:
+            raise ValueError("Một thao tác tính lại BXH khác đang chạy. Vui lòng thử lại sau.") from exc
+        raise
+
+    try:
+        verified = get_active_ranking_rebuild_lock(clean_stale=False)
+        if not verified or verified.get("token") != token:
+            raise ValueError("Không thể giành khóa tính lại BXH an toàn.")
+
+        # Nếu một request xác nhận đã claim trận trước khi khóa được tạo, không phát lại
+        # song song. Request xác nhận sẽ tự trả trạng thái về; Admin chỉ cần thử lại.
+        processing = execute_query(
+            db.table("matches").select("id").eq("status", "processing_result").limit(1),
+            "check_processing_result_before_rebuild",
+            attempts=1,
+        )
+        if processing.data:
+            raise ValueError("Có kết quả trận đang được xác nhận. Vui lòng thử lại sau vài giây.")
+        return token
+    except Exception:
+        release_ranking_rebuild_lock(token)
+        raise
+
+
+def release_ranking_rebuild_lock(token):
+    if not token or db is None:
+        return
+    try:
+        active = _load_ranking_rebuild_lock(allow_failure=True)
+        if active and active.get("token") == token:
+            db.table("system_settings").delete().eq(
+                "setting_key", RANKING_REBUILD_LOCK_KEY
+            ).execute()
+    except Exception as exc:
+        app.logger.warning("release ranking rebuild lock failed: %s", exc)
+
+
+def _require_owned_ranking_rebuild_lock(token):
+    active = get_active_ranking_rebuild_lock(clean_stale=False)
+    if not active or active.get("token") != token:
+        raise ValueError("Khóa tính lại BXH đã mất hoặc hết hạn; chưa lưu thay đổi.")
+
+
+def _match_state_signature(match):
+    return (
+        str((match or {}).get("status") or ""),
+        (match or {}).get("score1"),
+        (match or {}).get("score2"),
+        str((match or {}).get("updated_at") or ""),
+    )
+
+
+def _payload_differs(current, payload):
+    for key, value in dict(payload or {}).items():
+        if key in {"created_at", "updated_at"}:
+            continue
+        if (current or {}).get(key) != value:
+            return True
+    return False
+
+
+def _room_status_from_match_status(status):
+    return {
+        "playing": "playing",
+        "waiting_confirm": "waiting_result_confirm",
+        "disputed": "disputed",
+        "confirmed": "confirmed",
+        "cancelled": "cancelled",
+    }.get(str(status or ""), str(status or ""))
+
+
+def sync_room_after_admin_match_change(match, target, actor_id=None):
+    """Đồng bộ đúng cột host_score/guest_score mà không sửa created_at."""
+    if not match or not match.get("id"):
+        return
+    result = execute_query(
+        db.table("match_rooms").select(
+            "id,match_id,host_user_id,guest_user_id,status,host_score,guest_score,note,confirmed_by_id,state_expires_at"
+        ).eq("match_id", match.get("id")).limit(1),
+        "load_room_for_admin_match_sync",
+        attempts=2,
+    )
+    room = (result.data or [None])[0]
+    if not room:
+        return
+
+    status = str(target.get("status", match.get("status")) or "")
+    score1 = target.get("score1", match.get("score1"))
+    score2 = target.get("score2", match.get("score2"))
+    p1_id = str(match.get("player1_id") or "")
+    p2_id = str(match.get("player2_id") or "")
+    host_id = str(room.get("host_user_id") or "")
+    if host_id == p2_id:
+        host_score, guest_score = score2, score1
+    else:
+        # Mặc định cấu trúc hiện hành: player1 là chủ phòng.
+        host_score, guest_score = score1, score2
+
+    room_payload = {
+        "host_score": host_score,
+        "guest_score": guest_score,
+        "status": _room_status_from_match_status(status),
+        "note": target.get("note", match.get("note")),
+        "updated_at": now_iso(),
+    }
+    if status == "confirmed":
+        room_payload["confirmed_by_id"] = target.get("confirmed_by_id") or actor_id
+        room_payload["state_expires_at"] = None
+    elif status == "waiting_confirm":
+        room_payload["confirmed_by_id"] = None
+        room_payload["state_expires_at"] = future_iso(RESULT_CONFIRM_TIMEOUT_SECONDS)
+    elif status == "playing":
+        room_payload["confirmed_by_id"] = None
+        room_payload["state_expires_at"] = future_iso(ROOM_MATCH_INACTIVITY_TIMEOUT_SECONDS)
+    else:
+        room_payload["confirmed_by_id"] = None
+        room_payload["state_expires_at"] = None
+
+    execute_query(
+        db.table("match_rooms").update(room_payload).eq("id", room.get("id")),
+        "sync_room_after_admin_match_change",
+        attempts=2,
+    )
+
+
 def apply_match_result(match):
     """Apply one ranked result exactly once with clear validation and recovery.
 
@@ -5451,6 +6096,10 @@ def apply_match_result(match):
     """
     if not match or not match.get("id"):
         raise ValueError("Thiếu dữ liệu trận đấu.")
+    # Không cho request người chơi ghi RP trong lúc Admin đang phát lại lịch sử.
+    # Trận confirmed đã có delta vẫn được trả idempotent phía dưới.
+    if match.get("status") != "confirmed":
+        assert_ranking_rebuild_not_running()
     if match.get("score1") is None or match.get("score2") is None:
         raise ValueError("Trận chưa có tỉ số.")
 
@@ -5494,6 +6143,10 @@ def apply_match_result(match):
             if fresh and fresh.get("status") == "confirmed":
                 return _safe_int(fresh.get("delta1")), _safe_int(fresh.get("delta2"))
             raise ValueError("Kết quả đã được một yêu cầu khác xử lý hoặc trạng thái trận đã thay đổi.")
+
+        # Đóng khe race: Admin có thể tạo khóa sau lần kiểm tra đầu nhưng trước khi
+        # request này claim được dòng trận. Khi đó trả status về và dừng trước khi ghi RP.
+        assert_ranking_rebuild_not_running()
 
         delta1, delta2 = calculate_deltas(
             player1, player2, score1, score2,
@@ -5582,84 +6235,62 @@ def resolve_match_dispute_with_result(
     if not dispute or dispute.get("status") not in DISPUTE_PENDING_STATUSES:
         raise ValueError("Tranh chấp này đã được xử lý hoặc không còn hiệu lực.")
 
-    match = get_match(dispute.get("match_id"))
-    if not match or match.get("status") != "disputed":
-        raise ValueError("Trận đấu không còn ở trạng thái tranh chấp.")
+    score1 = parse_score(score1)
+    score2 = parse_score(score2)
+    if score1 is None or score2 is None:
+        raise ValueError("Trận được công nhận phải có đủ hai tỷ số.")
 
-    score1 = int(score1)
-    score2 = int(score2)
-    if score1 < 0 or score2 < 0:
-        raise ValueError("Tỉ số không được âm.")
+    match_id = dispute.get("match_id")
+    lock_token = acquire_ranking_rebuild_lock(resolved_by_id, match_id)
+    try:
+        match = get_match(match_id)
+        if not match or match.get("status") != "disputed":
+            raise ValueError("Trận đấu không còn ở trạng thái tranh chấp.")
 
-    if score1 > score2:
-        winner_id, loser_id = match.get("player1_id"), match.get("player2_id")
-    elif score2 > score1:
-        winner_id, loser_id = match.get("player2_id"), match.get("player1_id")
-    else:
-        winner_id = loser_id = None
-
-    final_note = (resolution_note or "Tranh chấp đã được xử lý và kết quả được công nhận.").strip()[:500]
-    execute_query(
-        db.table("matches").update({
+        final_note = (
+            resolution_note or "Tranh chấp đã được xử lý và kết quả được công nhận."
+        ).strip()[:500]
+        override = {
             "score1": score1,
             "score2": score2,
-            "winner_id": winner_id,
-            "loser_id": loser_id,
-            "status": "confirmed",
-            "note": final_note,
-            "updated_at": now_iso(),
-        }).eq("id", match.get("id")).eq("status", "disputed"),
-        "prepare_dispute_resolution_match",
-    )
-
-    execute_query(
-        db.table("match_rooms").update({
-            "host_score": score1,
-            "guest_score": score2,
             "status": "confirmed",
             "confirmed_by_id": resolved_by_id,
             "note": final_note,
-            "state_expires_at": None,
-            "updated_at": now_iso(),
-        }).eq("id", dispute.get("room_id")),
-        "finish_dispute_resolution_room",
-    )
+        }
+        rebuild_rankings_after_admin_change(
+            match_id, override, lock_token=lock_token, actor_id=resolved_by_id
+        )
 
-    execute_query(
-        db.table("match_disputes").update({
-            "status": final_dispute_status,
-            "resolution_type": resolution_type,
-            "resolution_score1": score1,
-            "resolution_score2": score2,
-            "resolution_note": final_note,
-            "resolved_by_id": resolved_by_id,
-            "resolved_at": now_iso(),
-            "updated_at": now_iso(),
-        }).eq("id", dispute.get("id")),
-        "finish_match_dispute",
-    )
+        execute_query(
+            db.table("match_disputes").update({
+                "status": final_dispute_status,
+                "resolution_type": resolution_type,
+                "resolution_score1": score1,
+                "resolution_score2": score2,
+                "resolution_note": final_note,
+                "resolved_by_id": resolved_by_id,
+                "resolved_at": now_iso(),
+                "updated_at": now_iso(),
+            }).eq("id", dispute.get("id")).in_("status", list(DISPUTE_PENDING_STATUSES)),
+            "finish_match_dispute_chronologically",
+        )
 
-    # Chỉ áp dụng kết quả của đúng trận tranh chấp này; không reset toàn bộ BXH.
-    resolved_match = get_match(match.get("id")) or {}
-    delta1, delta2 = apply_match_result(resolved_match)
-    db.table("matches").update({
-        "note": final_note,
-        "updated_at": now_iso(),
-    }).eq("id", match.get("id")).execute()
-
-    users = users_map()
-    p1_name = users.get(match.get("player1_id"), {}).get("display_name", "Player 1")
-    p2_name = users.get(match.get("player2_id"), {}).get("display_name", "Player 2")
-    title = "✅ Tranh chấp đã được xử lý"
-    message = f"Trận {p1_name} {score1} - {score2} {p2_name}: {final_note}"
-    create_notifications_for_users(
-        [match.get("player1_id"), match.get("player2_id")],
-        title,
-        message,
-        f"/room/{dispute.get('room_id')}",
-        "dispute_resolved",
-    )
-    return delta1, delta2
+        resolved_match = get_match(match_id) or {}
+        delta1 = _safe_int(resolved_match.get("delta1"))
+        delta2 = _safe_int(resolved_match.get("delta2"))
+        users = users_map()
+        p1_name = users.get(match.get("player1_id"), {}).get("display_name", "Player 1")
+        p2_name = users.get(match.get("player2_id"), {}).get("display_name", "Player 2")
+        create_notifications_for_users(
+            [match.get("player1_id"), match.get("player2_id")],
+            "✅ Tranh chấp đã được xử lý",
+            f"Trận {p1_name} {score1} - {score2} {p2_name}: {final_note}",
+            f"/room/{dispute.get('room_id')}",
+            "dispute_resolved",
+        )
+        return delta1, delta2
+    finally:
+        release_ranking_rebuild_lock(lock_token)
 
 
 def cancel_match_dispute(dispute, resolved_by_id, resolution_note=""):
@@ -5783,6 +6414,144 @@ def reverse_confirmed_match_result(match):
     reverse_player_match_stats(player2, int(match.get("delta2", 0) or 0), score2, score1)
     return True
 
+
+
+def rebuild_rankings_after_admin_change(
+    match_id, override_payload, *, lock_token, actor_id=None
+):
+    """Phát lại toàn bộ lịch sử confirmed theo ``created_at`` gốc.
+
+    - Không ghi ``created_at`` vào bất kỳ payload nào.
+    - Giữ lại RP/thống kê gốc không sinh ra từ bảng matches.
+    - Có rollback best-effort nếu một cập nhật giữa chừng thất bại.
+    """
+    require_db()
+    _require_owned_ranking_rebuild_lock(lock_token)
+
+    users_result = execute_query(
+        db.table("users").select(
+            "id,rank_points,total_matches,wins,draws,losses,goals_for,goals_against,streak,loss_streak"
+        ),
+        "admin_rebuild_load_users",
+    )
+    matches_result = execute_query(
+        db.table("matches").select("*").order("created_at", desc=False),
+        "admin_rebuild_load_matches",
+    )
+    rooms_result = execute_query(
+        db.table("match_rooms").select("match_id,host_user_id"),
+        "admin_rebuild_load_hosts",
+        attempts=2,
+    )
+    users_rows = [dict(row) for row in (users_result.data or [])]
+    matches_rows = [dict(row) for row in (matches_result.data or [])]
+    user_original = {str(row.get("id")): row for row in users_rows if row.get("id")}
+    match_original = {str(row.get("id")): row for row in matches_rows if row.get("id")}
+    host_by_match = {
+        str(row.get("match_id")): row.get("host_user_id")
+        for row in (rooms_result.data or []) if row.get("match_id")
+    }
+
+    override = {key: value for key, value in dict(override_payload or {}).items() if key != "created_at"}
+    user_updates, match_updates = build_replay_plan(
+        users=users_rows,
+        matches=matches_rows,
+        overrides={str(match_id): override},
+        calculate_deltas=calculate_ranked_deltas,
+        get_rank_level=get_rank_level,
+        apply_host_factor=apply_host_xp_factor,
+        host_by_match=host_by_match,
+        default_points=DEFAULT_POINTS,
+        placement_matches=PLACEMENT_MATCHES,
+        host_win_factor=HOST_WIN_FACTOR,
+        formula_version=RP_FORMULA_VERSION,
+        formula_summary=formula_summary,
+        seed_namespace=RP_RANDOM_SEED_NAMESPACE,
+    )
+
+    changed_matches = {
+        current_id: dict(payload)
+        for current_id, payload in match_updates.items()
+        if _payload_differs(match_original.get(str(current_id)), payload)
+    }
+    changed_users = {
+        user_id: dict(payload)
+        for user_id, payload in user_updates.items()
+        if _payload_differs(user_original.get(str(user_id)), payload)
+    }
+
+    applied_matches = []
+    applied_users = []
+    try:
+        _require_owned_ranking_rebuild_lock(lock_token)
+        for current_match_id, payload in changed_matches.items():
+            safe_payload = {key: value for key, value in payload.items() if key != "created_at"}
+            safe_payload["updated_at"] = now_iso()
+            result = execute_query(
+                db.table("matches").update(safe_payload).eq("id", current_match_id),
+                f"admin_rebuild_match:{current_match_id}",
+            )
+            if not (result.data or []):
+                raise RuntimeError(f"Không cập nhật được trận {current_match_id}.")
+            applied_matches.append(str(current_match_id))
+
+        _require_owned_ranking_rebuild_lock(lock_token)
+        for user_id, payload in changed_users.items():
+            result = execute_query(
+                db.table("users").update(payload).eq("id", user_id),
+                f"admin_rebuild_user:{user_id}",
+            )
+            if not (result.data or []):
+                raise RuntimeError(f"Không cập nhật được người chơi {user_id}.")
+            applied_users.append(str(user_id))
+
+        target_match = dict(match_original.get(str(match_id)) or get_match(match_id) or {})
+        target_match.update(override)
+        sync_room_after_admin_match_change(
+            match_original.get(str(match_id)) or target_match,
+            target_match,
+            actor_id=actor_id,
+        )
+    except Exception:
+        # Rollback best-effort. Không bao giờ phục hồi/ghi created_at vì nó chưa bị sửa.
+        for user_id in reversed(applied_users):
+            original = user_original.get(user_id) or {}
+            restore = {
+                key: original.get(key)
+                for key in (
+                    "rank_points", "total_matches", "wins", "draws", "losses",
+                    "goals_for", "goals_against", "streak", "loss_streak"
+                )
+            }
+            try:
+                db.table("users").update(restore).eq("id", user_id).execute()
+            except Exception as rollback_exc:
+                app.logger.exception("rollback user %s failed: %s", user_id, rollback_exc)
+        for current_match_id in reversed(applied_matches):
+            original = match_original.get(current_match_id) or {}
+            restore = {
+                key: original.get(key)
+                for key in (
+                    "score1", "score2", "status", "note", "delta1", "delta2",
+                    "winner_id", "loser_id", "confirmed_by_id",
+                    "rp_formula_version", "rp_details", "updated_at"
+                )
+            }
+            try:
+                db.table("matches").update(restore).eq("id", current_match_id).execute()
+            except Exception as rollback_exc:
+                app.logger.exception("rollback match %s failed: %s", current_match_id, rollback_exc)
+        raise
+
+    cache_delete("_rz_players_all", "_rz_users_map", "_rz_matches_all", "_rz_rooms_all")
+    ttl_cache_delete("players_raw", "achievement_map", "rooms_raw")
+    try:
+        sync_achievements_for_users(list(user_updates.keys()))
+    except Exception as exc:
+        app.logger.warning("admin rebuild achievement warning: %s", exc)
+    return len(changed_matches), len(changed_users)
+
+
 def remove_match_dispute_evidence(match_id):
     if not match_id or db is None:
         return
@@ -5864,7 +6633,45 @@ def inject_admin_feature_context():
         "is_test_mode": is_test_mode(),
         "simple_test_passwords_enabled": simple_test_passwords_enabled(),
         "minimum_password_length": minimum_password_length(),
+        "maintenance_status": get_maintenance_status(),
     }
+
+@app.route("/admin/system/maintenance", methods=["POST"])
+@login_required
+@admin_required
+@admin_permission_required("system_features_manage")
+def admin_update_maintenance():
+    close_at = _normalize_maintenance_input(request.form.get("close_at"))
+    open_at = _normalize_maintenance_input(request.form.get("open_at"))
+    close_dt = _parse_maintenance_time(close_at)
+    open_dt = _parse_maintenance_time(open_at)
+    if close_dt and open_dt and open_dt <= close_dt:
+        flash("Thời gian mở máy chủ phải sau thời gian đóng máy chủ.", "danger")
+        return redirect_admin("system")
+
+    config = {
+        "manual_closed": request.form.get("manual_closed") == "1",
+        "close_at": close_at,
+        "open_at": open_at,
+        "message": (request.form.get("message") or "").strip()[:500]
+            or _maintenance_default_config()["message"],
+        "updated_at": now_iso(),
+    }
+    execute_query(
+        db.table("system_settings").upsert({
+            "setting_key": MAINTENANCE_SETTING_KEY,
+            "setting_value": config,
+            "updated_at": now_iso(),
+        }, on_conflict="setting_key"),
+        "update_server_maintenance_config",
+        attempts=2,
+    )
+    _maintenance_cache["value"] = dict(config)
+    _maintenance_cache["expires_at"] = time.time() + 15
+    log_admin_action("Cập nhật trạng thái bảo trì máy chủ", "system", details=config)
+    flash("Đã lưu trạng thái và lịch bảo trì máy chủ.", "success")
+    return redirect_admin("system")
+
 
 @app.route("/admin/system/features", methods=["POST"])
 @login_required
@@ -5884,7 +6691,6 @@ def admin_update_system_features():
         ),
         "update_system_features",
     )
-    ttl_cache_set("admin_system_features_v44", features, 30)
 
     # Khi Admin vừa tắt Giao hữu, đưa các phòng giao hữu đang mở về trạng thái
     # chờ sẵn sàng để người chơi không bị kẹt trong một tính năng đã khóa.
@@ -6159,9 +6965,23 @@ def redirect_admin(tab="overview"):
 @login_required
 @admin_required
 def admin():
-    all_rooms = list_rooms()
-    all_matches = list_matches()
-    admin_users = decorate_admin_users(list_all_users())
+    # Trang Admin chứa nhiều khối dữ liệu độc lập. Một truy vấn phụ lỗi không được
+    # làm sập toàn bộ trang; khối lỗi sẽ tạm trả danh sách rỗng và ghi log Vercel.
+    def admin_safe_load(label, loader, default):
+        try:
+            value = loader()
+            return default if value is None else value
+        except Exception as exc:
+            app.logger.exception("Admin load failed [%s]: %s", label, exc)
+            return default
+
+    all_rooms = admin_safe_load("rooms", list_rooms, [])
+    all_matches = admin_safe_load("matches", list_matches, [])
+    raw_users = admin_safe_load("users", list_all_users, [])
+    admin_users = admin_safe_load(
+        "decorate_users", lambda: decorate_admin_users(raw_users), []
+    )
+
     # Ưu tiên nhóm IP trùng lên đầu và đặt các tài khoản cùng IP cạnh nhau.
     admin_users.sort(key=lambda item: (
         0 if item.get("duplicate_ips") else 1,
@@ -6171,10 +6991,27 @@ def admin():
     players = [u for u in admin_users if u.get("role") == "player"]
     admins = [u for u in admin_users if is_admin_user(u)]
     pending_users = [u for u in players if u.get("account_status") == "pending"]
-    password_reset_requests = list_password_reset_requests("pending")
-    pending_disputes = [decorate_match_dispute(item, all_matches) for item in list_match_disputes("pending")]
-    audit_logs = list_admin_activity_logs() if is_owner_user(current_user()) else []
-    duplicate_ip_groups = build_duplicate_ip_groups(admin_users)
+
+    password_reset_requests = admin_safe_load(
+        "password_resets", lambda: list_password_reset_requests("pending"), []
+    )
+    raw_disputes = admin_safe_load(
+        "match_disputes", lambda: list_match_disputes("pending"), []
+    )
+    pending_disputes = []
+    for item in raw_disputes:
+        try:
+            pending_disputes.append(decorate_match_dispute(item, all_matches))
+        except Exception as exc:
+            app.logger.exception("Admin dispute decoration failed: %s", exc)
+
+    audit_logs = (
+        admin_safe_load("audit_logs", list_admin_activity_logs, [])
+        if is_owner_user(current_user()) else []
+    )
+    duplicate_ip_groups = admin_safe_load(
+        "duplicate_ips", lambda: build_duplicate_ip_groups(admin_users), []
+    )
     duplicate_ip_user_count = len({
         str(account.get("id"))
         for group in duplicate_ip_groups
@@ -6189,12 +7026,12 @@ def admin():
         admins=admins,
         pending_users=pending_users,
         all_matches=all_matches[:80],
-        disputed=[m for m in all_matches if m["status"] == "disputed"],
-        playing=[m for m in all_matches if m["status"] == "playing"],
-        rooms=[r for r in all_rooms if r["status"] in ["waiting_ready", "playing", "waiting_result_confirm", "disputed"]],
+        disputed=[m for m in all_matches if m.get("status") == "disputed"],
+        playing=[m for m in all_matches if m.get("status") == "playing"],
+        rooms=[r for r in all_rooms if r.get("status") in ["waiting_ready", "playing", "waiting_result_confirm", "disputed"]],
         all_rooms=all_rooms[:80],
-        invites=list_invites("pending"),
-        active_announcement=get_active_announcement(),
+        invites=admin_safe_load("invites", lambda: list_invites("pending"), []),
+        active_announcement=admin_safe_load("announcement", get_active_announcement, None),
         password_reset_requests=password_reset_requests,
         audit_logs=audit_logs,
         duplicate_ip_groups=duplicate_ip_groups,
@@ -6205,7 +7042,9 @@ def admin():
         admin_permission_groups=ADMIN_PERMISSION_GROUPS,
         admin_permission_labels=ADMIN_PERMISSION_LABELS,
         current_admin_permissions=_admin_permissions(current_user()),
-        system_features=get_system_features(),
+        system_features=admin_safe_load("system_features", get_system_features, dict(SYSTEM_FEATURE_DEFAULTS)),
+        maintenance_config=admin_safe_load("maintenance_config", get_maintenance_config, _maintenance_default_config()),
+        maintenance_status=admin_safe_load("maintenance_status", get_maintenance_status, {"closed": False, "countdown": None}),
     )
 
 
@@ -6823,113 +7662,124 @@ def admin_dispute_cancel(dispute_id):
     return redirect_admin("disputes")
 
 
-@app.route("/admin/match/<match_id>/status", methods=["POST"])
+
+@app.route("/admin/match/<match_id>/update", methods=["POST"])
 @login_required
 @admin_required
-@admin_permission_required("matches_cancel")
-def admin_update_match_status(match_id):
+def admin_update_match(match_id):
+    """Admin sửa tỷ số/trạng thái và tính lại BXH theo thời gian trận gốc."""
+    actor = current_user()
     match = get_match(match_id)
     if not match:
         flash("Không tìm thấy trận.", "danger")
         return redirect_admin("matches")
 
+    old_signature = _match_state_signature(match)
     old_status = str(match.get("status") or "waiting_confirm")
     new_status = str(request.form.get("status") or old_status).strip()
-    note = str(request.form.get("note") or "").strip()[:220]
-    allowed_statuses = {"waiting_confirm", "disputed", "cancelled", "confirmed"}
-
+    note = str(request.form.get("note") or "").strip()[:500]
+    allowed_statuses = {"playing", "waiting_confirm", "disputed", "confirmed", "cancelled"}
     if new_status not in allowed_statuses:
-        flash("Trạng thái trận không hợp lệ.", "danger")
+        flash("Trạng thái không hợp lệ.", "danger")
         return redirect_admin("matches")
 
-    # Admin được phép xác nhận trận ngay tại bảng quản lý. Việc xác nhận phải đi
-    # qua apply_match_result để tính RP, cập nhật thống kê và chống cộng điểm hai lần.
-    if new_status == "confirmed" and old_status != "confirmed":
-        if old_status == "cancelled":
-            flash("Trận đã hủy không thể xác nhận trực tiếp. Hãy khôi phục trận trước khi xử lý.", "warning")
-            return redirect_admin("matches")
-        if match.get("score1") is None or match.get("score2") is None:
-            flash("Không thể xác nhận vì trận chưa có tỷ số.", "danger")
-            return redirect_admin("matches")
-        try:
-            delta1, delta2 = apply_match_result(match)
-            final_note = note or "Admin xác nhận kết quả trận đấu."
-            execute_query(
-                db.table("matches").update({
-                    "note": final_note,
-                    "updated_at": now_iso(),
-                }).eq("id", match_id).eq("status", "confirmed"),
-                "admin_confirm_match_note",
+    try:
+        new_score1 = parse_score(request.form.get("score1"))
+        new_score2 = parse_score(request.form.get("score2"))
+    except ValueError as exc:
+        flash(str(exc), "danger")
+        return redirect_admin("matches")
+
+    if new_status == "confirmed" and not has_admin_permission(actor, "matches_confirm"):
+        abort(403)
+    if new_status == "cancelled" and not has_admin_permission(actor, "matches_cancel"):
+        abort(403)
+    if new_status not in {"confirmed", "cancelled"} and not (
+        has_admin_permission(actor, "matches_confirm")
+        or has_admin_permission(actor, "matches_cancel")
+    ):
+        abort(403)
+    if new_status == "confirmed" and (new_score1 is None or new_score2 is None):
+        flash("Trận xác nhận phải có đủ hai tỷ số.", "danger")
+        return redirect_admin("matches")
+
+    changed_score = score_changed(match, new_score1, new_score2)
+    changed_status = new_status != old_status
+    changed_note = note != str(match.get("note") or "")
+    if not (changed_score or changed_status or changed_note):
+        flash("Không có thay đổi cần lưu.", "warning")
+        return redirect_admin("matches")
+
+    override = {
+        "score1": new_score1,
+        "score2": new_score2,
+        "status": new_status,
+        "note": note or match.get("note") or (
+            "Đã xác nhận." if new_status == "confirmed" else "Admin đã cập nhật trận."
+        ),
+    }
+    if changed_score or changed_status:
+        override["confirmed_by_id"] = actor.get("id") if new_status == "confirmed" else None
+
+    lock_token = None
+    try:
+        if changed_score or changed_status:
+            lock_token = acquire_ranking_rebuild_lock(actor.get("id"), match_id)
+            fresh = get_match(match_id)
+            if not fresh or _match_state_signature(fresh) != old_signature:
+                raise ValueError(
+                    "Trận vừa được một luồng khác cập nhật. Hãy tải lại trang trước khi lưu."
+                )
+            match = fresh
+            old_status = str(match.get("status") or old_status)
+
+        affects_ranking = old_status == "confirmed" or new_status == "confirmed"
+        if affects_ranking and (changed_score or changed_status):
+            match_count, user_count = rebuild_rankings_after_admin_change(
+                match_id, override, lock_token=lock_token, actor_id=actor.get("id")
             )
-            try:
-                db.table("match_rooms").update({
-                    "status": "confirmed",
-                    "confirmed_by_id": (current_user() or {}).get("id"),
-                    "note": final_note,
-                    "state_expires_at": None,
-                    "updated_at": now_iso(),
-                }).eq("match_id", match_id).execute()
-            except Exception as exc:
-                print(f"admin_confirm_match room warning: {exc}")
             log_admin_action(
-                "Admin xác nhận trận",
+                "Sửa kết quả/trạng thái trận",
                 "match",
                 match_id,
-                details=f"{old_status} -> confirmed; RP: {delta1}/{delta2}; ghi chú: {final_note}",
+                details=(
+                    f"{match.get('score1')}-{match.get('score2')} / {old_status} → "
+                    f"{new_score1}-{new_score2} / {new_status}; phát lại {match_count} trận, "
+                    f"tính lại {user_count} tài khoản; giữ nguyên created_at"
+                ),
             )
-            flash(f"Đã xác nhận trận và cập nhật RP: {delta1:+d} / {delta2:+d}.", "success")
-        except Exception as exc:
-            flash(f"Không thể xác nhận trận: {exc}", "danger")
-        return redirect_admin("matches")
-
-    # Nếu hủy một trận đã confirmed, hoàn tác đúng RP và thống kê trước khi đổi trạng thái.
-    if old_status == "confirmed" and new_status == "cancelled":
-        if not reverse_confirmed_match_result(match):
-            flash("Không thể hoàn tác RP của trận đã xác nhận; trạng thái chưa được thay đổi.", "danger")
+            flash(
+                "Đã lưu và tính lại RP, thắng/thua, streak, loss_streak theo đúng mốc thời gian cũ.",
+                "success",
+            )
             return redirect_admin("matches")
 
-    # Không cho đổi confirmed sang trạng thái trung gian, tránh trận bị xác nhận lại và cộng RP lần hai.
-    if old_status == "confirmed" and new_status not in {"confirmed", "cancelled"}:
-        flash("Trận đã xác nhận chỉ có thể giữ nguyên hoặc chuyển sang Đã hủy (có hoàn tác RP).", "warning")
-        return redirect_admin("matches")
-
-    values = {
-        "status": new_status,
-        "note": note or match.get("note") or "",
-        "updated_at": now_iso(),
-    }
-    if old_status == "confirmed" and new_status == "cancelled":
-        values["delta1"] = 0
-        values["delta2"] = 0
-        values["note"] = note or "Admin đổi trạng thái sang Đã hủy và đã hoàn tác RP."
-
-    execute_query(
-        db.table("matches").update(values).eq("id", match_id),
-        "admin_update_match_status",
-    )
-
-    room_status_map = {
-        "waiting_confirm": "waiting_result_confirm",
-        "disputed": "disputed",
-        "cancelled": "cancelled",
-        "confirmed": "confirmed",
-    }
-    try:
-        db.table("match_rooms").update({
-            "status": room_status_map[new_status],
-            "note": values["note"],
-            "updated_at": now_iso(),
-        }).eq("match_id", match_id).execute()
+        payload = {key: value for key, value in override.items() if key != "created_at"}
+        payload["updated_at"] = now_iso()
+        result = execute_query(
+            db.table("matches").update(payload).eq("id", match_id).eq("status", old_status),
+            "admin_update_match_without_rebuild",
+        )
+        if not (result.data or []):
+            raise ValueError("Trạng thái trận đã thay đổi; chưa ghi đè dữ liệu mới.")
+        sync_room_after_admin_match_change(match, override, actor_id=actor.get("id"))
+        cache_delete("_rz_matches_all", "_rz_rooms_all")
+        ttl_cache_delete("rooms_raw")
+        log_admin_action(
+            "Cập nhật trận", "match", match_id,
+            details=f"{old_status} → {new_status}; giữ nguyên created_at",
+        )
+        flash("Đã lưu tỷ số, trạng thái và ghi chú. Thời gian trận được giữ nguyên.", "success")
+    except ValueError as exc:
+        flash(str(exc), "warning")
     except Exception as exc:
-        print(f"admin_update_match_status room warning: {exc}")
-
-    log_admin_action(
-        "Cập nhật trạng thái trận",
-        "match",
-        match_id,
-        details=f"{old_status} -> {new_status}; ghi chú: {values['note']}",
-    )
-    flash("Đã lưu trạng thái trận đấu.", "success")
+        app.logger.exception("admin_update_match failed: %s", exc)
+        flash(
+            "Không thể cập nhật hoàn chỉnh. Hệ thống đã dừng để tránh cộng/trừ RP sai.",
+            "danger",
+        )
+    finally:
+        release_ranking_rebuild_lock(lock_token)
     return redirect_admin("matches")
 
 
@@ -6938,35 +7788,55 @@ def admin_update_match_status(match_id):
 @admin_required
 @admin_permission_required("matches_cancel")
 def admin_cancel(match_id):
-    match = get_match(match_id)
-    if not match:
-        flash("Không tìm thấy trận.", "danger")
-        return redirect_admin("matches")
+    actor = current_user()
+    lock_token = None
+    try:
+        lock_token = acquire_ranking_rebuild_lock(actor.get("id"), match_id)
+        match = get_match(match_id)
+        if not match:
+            raise ValueError("Không tìm thấy trận.")
 
-    if match["status"] == "confirmed":
-        flash("Không thể hủy trận đã xác nhận.", "danger")
-        return redirect_admin("matches")
-
-    if match.get("status") == "disputed":
-        dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
-        if dispute:
-            try:
-                cancel_match_dispute(dispute, current_user().get("id"), "Admin hủy trận tranh chấp; không tính điểm.")
-            except Exception as exc:
-                flash(f"Không thể hủy trận tranh chấp: {exc}", "danger")
+        if match.get("status") == "disputed":
+            dispute = get_match_dispute_by_match(match_id, DISPUTE_PENDING_STATUSES)
+            if dispute:
+                cancel_match_dispute(
+                    dispute, actor.get("id"), "Admin hủy trận tranh chấp; không tính điểm."
+                )
+                log_admin_action("Hủy trận tranh chấp", "match", match_id, details="Không tính điểm.")
+                flash("Đã hủy trận tranh chấp. Không ai bị cộng hoặc trừ điểm.", "success")
                 return redirect_admin("disputes")
-            log_admin_action("Hủy trận tranh chấp", "match", match_id, details="Không tính điểm.")
-            flash("Đã hủy trận tranh chấp. Không ai bị cộng hoặc trừ điểm.", "success")
-            return redirect_admin("disputes")
 
-    db.table("matches").update({
-        "status": "cancelled",
-        "note": "Admin đã hủy trận.",
-        "updated_at": now_iso(),
-    }).eq("id", match_id).execute()
+        override = {
+            "status": "cancelled",
+            "confirmed_by_id": None,
+            "note": "Admin đã hủy trận.",
+        }
+        if match.get("status") == "confirmed":
+            rebuild_rankings_after_admin_change(
+                match_id, override, lock_token=lock_token, actor_id=actor.get("id")
+            )
+        else:
+            payload = {**override, "delta1": None, "delta2": None,
+                       "winner_id": None, "loser_id": None,
+                       "rp_formula_version": None, "rp_details": None,
+                       "updated_at": now_iso()}
+            result = execute_query(
+                db.table("matches").update(payload).eq("id", match_id).eq("status", match.get("status")),
+                "admin_cancel_match",
+            )
+            if not (result.data or []):
+                raise ValueError("Trạng thái trận đã thay đổi; chưa hủy trận.")
+            sync_room_after_admin_match_change(match, override, actor_id=actor.get("id"))
 
-    log_admin_action("Hủy trận", "match", match_id, details=f"Trạng thái cũ: {match.get('status')}")
-    flash("Đã hủy trận.", "success")
+        log_admin_action("Hủy trận", "match", match_id, details=f"Trạng thái cũ: {match.get('status')}")
+        flash("Đã hủy trận và tính lại lịch sử liên quan.", "success")
+    except ValueError as exc:
+        flash(str(exc), "warning")
+    except Exception as exc:
+        app.logger.exception("admin_cancel failed: %s", exc)
+        flash("Không thể hủy trận an toàn; chưa tiếp tục để tránh sai RP.", "danger")
+    finally:
+        release_ranking_rebuild_lock(lock_token)
     return redirect_admin("matches")
 
 
@@ -6999,8 +7869,27 @@ def admin_confirm_disputed(match_id):
             flash(f"Không thể xử lý tranh chấp: {exc}", "danger")
             return redirect_admin("disputes")
     else:
-        apply_match_result(match)
-    log_admin_action("Xác nhận tranh chấp", "match", match_id, details="Đã áp dụng kết quả và cập nhật điểm.")
+        lock_token = None
+        try:
+            lock_token = acquire_ranking_rebuild_lock(current_user().get("id"), match_id)
+            rebuild_rankings_after_admin_change(
+                match_id,
+                {
+                    "score1": match.get("score1"),
+                    "score2": match.get("score2"),
+                    "status": "confirmed",
+                    "confirmed_by_id": current_user().get("id"),
+                    "note": "Admin công nhận kết quả tranh chấp.",
+                },
+                lock_token=lock_token,
+                actor_id=current_user().get("id"),
+            )
+        except Exception as exc:
+            flash(f"Không thể xử lý tranh chấp: {exc}", "danger")
+            return redirect_admin("disputes")
+        finally:
+            release_ranking_rebuild_lock(lock_token)
+    log_admin_action("Xác nhận tranh chấp", "match", match_id, details="Đã phát lại lịch sử và cập nhật điểm.")
     flash("Admin đã xác nhận trận tranh chấp.", "success")
     return redirect_admin("disputes")
 
@@ -7149,14 +8038,57 @@ def admin_delete_player(user_id):
 @admin_required
 @admin_permission_required("matches_delete")
 def admin_delete_match(match_id):
-    match = get_match(match_id)
-    if not match:
-        flash("Không tìm thấy trận.", "danger")
-        return redirect_admin("matches")
+    actor = current_user()
+    lock_token = None
+    try:
+        lock_token = acquire_ranking_rebuild_lock(actor.get("id"), match_id)
+        match = get_match(match_id)
+        if not match:
+            raise ValueError("Không tìm thấy trận.")
 
-    delete_match_safe(match_id)
-    log_admin_action("Xóa trận", "match", match_id, details=f"Trạng thái cũ: {match.get('status')}")
-    flash("Đã xóa trận và hoàn tác đúng thông số của trận này.", "success")
+        if match.get("status") == "confirmed":
+            rebuild_rankings_after_admin_change(
+                match_id,
+                {
+                    "status": "cancelled",
+                    "confirmed_by_id": None,
+                    "note": "Admin chuẩn bị xóa trận; đã hoàn tác trong lịch sử.",
+                },
+                lock_token=lock_token,
+                actor_id=actor.get("id"),
+            )
+
+        remove_match_dispute_evidence(match_id)
+        execute_query(
+            db.table("match_rooms").update({
+                "status": "cancelled",
+                "match_id": None,
+                "confirmed_by_id": None,
+                "state_expires_at": None,
+                "note": "Admin đã xóa trận liên kết.",
+                "updated_at": now_iso(),
+            }).eq("match_id", match_id),
+            "admin_unlink_room_before_delete_match",
+            attempts=2,
+        )
+        execute_query(
+            db.table("matches").delete().eq("id", match_id),
+            "admin_delete_match_after_rebuild",
+        )
+        cache_delete("_rz_matches_all", "_rz_rooms_all")
+        ttl_cache_delete("rooms_raw")
+        log_admin_action(
+            "Xóa trận", "match", match_id,
+            details=f"Trạng thái cũ: {match.get('status')}; đã phát lại lịch sử trước khi xóa",
+        )
+        flash("Đã xóa trận và tính lại RP, streak, loss_streak theo lịch sử còn lại.", "success")
+    except ValueError as exc:
+        flash(str(exc), "warning")
+    except Exception as exc:
+        app.logger.exception("admin_delete_match failed: %s", exc)
+        flash("Không thể xóa trận an toàn; thao tác đã dừng để tránh sai lịch sử.", "danger")
+    finally:
+        release_ranking_rebuild_lock(lock_token)
     return redirect_admin("matches")
 
 

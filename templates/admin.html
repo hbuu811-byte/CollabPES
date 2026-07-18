@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+.admin-score-edit-cell{white-space:nowrap;min-width:150px}
+.admin-score-edit-cell input{width:58px;text-align:center;padding:7px 5px}
+.admin-score-edit-cell span{margin:0 4px;font-weight:800}
+.admin-match-status-select{min-width:145px}
+.admin-match-note-input{min-width:210px;width:100%}
+.admin-match-locked{opacity:.72;font-size:.84rem;white-space:nowrap}
+</style>
 <div class="admin-dashboard-heading">
     <div>
         <span class="admin-kicker">ADMIN PANEL</span>
@@ -360,28 +368,50 @@
         <div class="admin-section-heading">
             <div>
                 <h2>🎮 Quản lý trận đấu gần đây</h2>
-                <p class="small">Theo dõi RP, trạng thái và ghi chú trận đấu. Tỷ số đã xác nhận chỉ được xem, không chỉnh sửa từ Admin.</p>
+                <p class="small">Admin có quyền được sửa tỷ số và trạng thái. Khi một trận đi vào hoặc rời trạng thái <strong>Đã xác nhận</strong>, hệ thống phát lại lịch sử theo thời gian gốc để tính lại RP, W-D-L, streak và loss_streak.</p>
             </div>
             <span class="admin-count">{{ all_matches|length }}</span>
         </div>
         <div class="table-wrap admin-table-wrap admin-match-scroll">
             <table class="admin-match-table">
-                <thead><tr><th>Thời gian</th><th>Người chơi 1</th><th>RP 1</th><th>Tỷ số</th><th>Người chơi 2</th><th>RP 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
+                <thead><tr><th>Thời gian gốc</th><th>Người chơi 1</th><th>RP 1</th><th>Tỷ số</th><th>Người chơi 2</th><th>RP 2</th><th>Trạng thái</th><th>Ghi chú</th><th>Hành động</th></tr></thead>
                 <tbody>
                 {% for m in all_matches %}
+                {% set can_edit_match = can_admin('matches_confirm') or can_admin('matches_cancel') %}
                 <tr>
                     <td class="match-time-cell">{{ format_vn_datetime(m.created_at) }}</td>
                     <td class="match-player-cell"><strong>{{ m.player1_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta1 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta1 or 0) }}</td>
-                    <td><strong>{{ m.score1 if m.score1 is not none else 0 }} – {{ m.score2 if m.score2 is not none else 0 }}</strong></td>
+                    <td class="admin-score-edit-cell">
+                        <input {% if can_edit_match %}form="match-update-{{ m.id }}"{% endif %} name="score1" type="number" min="0" max="99" value="{{ m.score1 if m.score1 is not none else '' }}" aria-label="Tỷ số người chơi 1" {% if not can_admin('matches_confirm') %}disabled{% endif %}>
+                        <span>–</span>
+                        <input {% if can_edit_match %}form="match-update-{{ m.id }}"{% endif %} name="score2" type="number" min="0" max="99" value="{{ m.score2 if m.score2 is not none else '' }}" aria-label="Tỷ số người chơi 2" {% if not can_admin('matches_confirm') %}disabled{% endif %}>
+                    </td>
                     <td class="match-player-cell"><strong>{{ m.player2_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta2 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta2 or 0) }}</td>
-                    <td><span class="badge {{ m.status }}">{{ m.status }}</span></td>
-                    <td class="match-note-cell">{{ m.note or '—' }}</td>
+                    <td>
+                        {% if can_edit_match %}
+                        <select name="status" form="match-update-{{ m.id }}" class="admin-match-status-select">
+                            <option value="playing" {% if m.status == 'playing' %}selected{% endif %}>Đang thi đấu</option>
+                            <option value="waiting_confirm" {% if m.status == 'waiting_confirm' %}selected{% endif %}>Chờ xác nhận</option>
+                            <option value="disputed" {% if m.status == 'disputed' %}selected{% endif %}>Đang tranh chấp</option>
+                            <option value="confirmed" {% if m.status == 'confirmed' %}selected{% endif %} {% if not can_admin('matches_confirm') %}disabled{% endif %}>Đã xác nhận</option>
+                            <option value="cancelled" {% if m.status == 'cancelled' %}selected{% endif %} {% if not can_admin('matches_cancel') %}disabled{% endif %}>Đã hủy</option>
+                        </select>
+                        {% else %}
+                        <span class="badge {{ m.status }}">{{ m.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="match-note-cell">
+                        {% if can_edit_match %}
+                        <input class="admin-match-note-input" name="note" form="match-update-{{ m.id }}" value="{{ m.note or '' }}" maxlength="500" placeholder="Ghi chú trận đấu">
+                        {% else %}{{ m.note or '—' }}{% endif %}
+                    </td>
                     <td>
                         <div class="match-actions">
-                            <form method="post" action="{{ url_for('admin_cancel', match_id=m.id) }}" onsubmit="return confirm('Hủy trận này?')"><button class="btn gold" type="submit">Hủy</button></form>
-                            <form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('Xóa trận này và hoàn tác đúng RP của trận?')"><button class="btn red" type="submit">Xóa</button></form>
+                            {% if can_edit_match %}<form id="match-update-{{ m.id }}" method="post" action="{{ url_for('admin_update_match', match_id=m.id) }}"></form><button class="btn green" type="submit" form="match-update-{{ m.id }}" onclick="return confirm('Lưu thay đổi? Nếu ảnh hưởng trận đã xác nhận, hệ thống sẽ tính lại toàn bộ lịch sử liên quan.')">Lưu</button>{% endif %}
+                            {% if can_admin('matches_delete') %}<form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('Xóa trận này? Hệ thống sẽ phát lại lịch sử trước khi xóa.')"><button class="btn red" type="submit">Xóa</button></form>{% endif %}
+                            {% if not can_edit_match and not can_admin('matches_delete') %}<span class="admin-match-locked">Chỉ xem</span>{% endif %}
                         </div>
                     </td>
                 </tr>

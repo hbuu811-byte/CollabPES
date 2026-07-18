@@ -39,6 +39,22 @@
                 <p class="room-stage-subtitle">{{ room.match_mode_label }} • 1 vs 1</p>
             </div>
         </div>
+        {% if room.status == 'waiting_ready' and not room.has_guest and (current_user.id == room.host_user_id or current_user.role == 'admin') %}
+        <div class="room-stage-share-wrap">
+            <button id="copyRoomShareLink"
+                    class="room-share-button"
+                    type="button"
+                    data-share-path="{{ url_for('room_join_shared', room_id=room.id) }}"
+                    aria-label="Copy link chia sẻ phòng đấu">
+                <span class="room-share-icon" aria-hidden="true">🔗</span>
+                <span class="room-share-copy">
+                    <strong>Chia sẻ phòng</strong>
+                    <small>Copy link tham gia</small>
+                </span>
+            </button>
+            <span id="roomShareStatus" class="room-share-status" role="status" aria-live="polite"></span>
+        </div>
+        {% endif %}
     </div>
 
     <div class="room-match-shell">
@@ -405,6 +421,61 @@
 </div>
 
 <script>
+function fallbackCopyRoomLink(value) {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    const copied = document.execCommand("copy");
+    textarea.remove();
+    return copied;
+}
+
+async function copySharedRoomLink() {
+    const button = document.getElementById("copyRoomShareLink");
+    const status = document.getElementById("roomShareStatus");
+    if (!button) return;
+
+    const shareUrl = new URL(button.dataset.sharePath, window.location.origin).toString();
+    let copied = false;
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(shareUrl);
+            copied = true;
+        } else {
+            copied = fallbackCopyRoomLink(shareUrl);
+        }
+    } catch (error) {
+        copied = fallbackCopyRoomLink(shareUrl);
+    }
+
+    const strong = button.querySelector("strong");
+    const small = button.querySelector("small");
+    if (copied) {
+        button.classList.add("is-copied");
+        if (strong) strong.textContent = "Đã copy link";
+        if (small) small.textContent = "Gửi link này cho đối thủ";
+        if (status) status.textContent = "Đã sao chép link phòng đấu.";
+        window.setTimeout(function () {
+            button.classList.remove("is-copied");
+            if (strong) strong.textContent = "Chia sẻ phòng";
+            if (small) small.textContent = "Copy link tham gia";
+            if (status) status.textContent = "";
+        }, 3500);
+    } else {
+        if (status) status.textContent = "Không thể tự copy. Hãy sao chép link trên thanh địa chỉ.";
+        window.prompt("Copy link phòng đấu:", shareUrl);
+    }
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+    const shareButton = document.getElementById("copyRoomShareLink");
+    if (shareButton) shareButton.addEventListener("click", copySharedRoomLink);
+});
+
 let currentRoomStateKey = {{ initial_room_state_key|tojson }};
 let currentRoomStatus = {{ room.status|tojson }};
 const currentRoomUserIsHost = {{ (current_user.id == room.host_user_id or current_user.role == 'admin')|tojson }};

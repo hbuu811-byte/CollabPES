@@ -3078,6 +3078,16 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
 .room-stage-subtitle{margin:6px 0 0;color:#d3dae6;font-weight:700}
 .room-stage-top-actions{display:flex;align-items:center;gap:10px}
 .room-invite-btn{min-width:128px;min-height:46px;font-weight:800}
+.room-stage-share-wrap{display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:174px}
+.room-share-button{display:flex;align-items:center;justify-content:center;gap:10px;min-width:174px;min-height:58px;padding:9px 14px;border:1px solid rgba(245,190,60,.55);border-radius:13px;background:linear-gradient(135deg,rgba(245,190,60,.2),rgba(255,211,104,.08));color:#fff;cursor:pointer;box-shadow:0 10px 24px rgba(0,0,0,.2);transition:transform .18s ease,border-color .18s ease,background .18s ease,box-shadow .18s ease}
+.room-share-button:hover{transform:translateY(-1px);border-color:#f6cf6b;background:linear-gradient(135deg,rgba(245,190,60,.3),rgba(255,211,104,.13));box-shadow:0 13px 28px rgba(0,0,0,.26)}
+.room-share-button:focus-visible{outline:3px solid rgba(92,164,255,.5);outline-offset:3px}
+.room-share-button.is-copied{border-color:rgba(52,211,153,.75);background:linear-gradient(135deg,rgba(16,185,129,.28),rgba(52,211,153,.1))}
+.room-share-icon{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:rgba(255,255,255,.08);font-size:18px}
+.room-share-copy{display:flex;flex-direction:column;align-items:flex-start;line-height:1.12;text-align:left}
+.room-share-copy strong{font-size:15px;color:#fff}
+.room-share-copy small{margin-top:4px;font-size:11px;font-weight:700;color:#d8e0ec}
+.room-share-status{min-height:14px;max-width:230px;font-size:11px;font-weight:700;color:#6ee7b7;text-align:right}
 .room-stage-timeout{margin-top:-4px}
 
 .room-battle-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(290px,.85fr) minmax(0,1fr);gap:16px;align-items:stretch}
@@ -3142,6 +3152,9 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
   .room-stage-subtitle{font-size:14px}
   .room-stage-top-actions{width:100%}
   .room-invite-btn{width:100%}
+  .room-stage-share-wrap{width:100%;align-items:stretch;min-width:0}
+  .room-share-button{width:100%;min-width:0}
+  .room-share-status{max-width:none;text-align:left}
   .room-battle-grid{gap:12px}
   .room-showcase-card{min-height:420px;border-radius:18px}
   .room-showcase-head{padding:14px 14px 6px}

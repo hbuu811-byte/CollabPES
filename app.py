@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.0"
+APP_VERSION = "Collap_V1.13.1"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -3906,6 +3906,12 @@ def login():
             flash("Đăng nhập bằng mật khẩu tạm thành công. Hãy tạo mật khẩu mới.", "warning")
             return redirect(url_for("change_password"))
 
+        # Người mở link chia sẻ khi chưa đăng nhập sẽ được đưa trở lại đúng
+        # phòng sau khi đăng nhập, thay vì bị rơi về Dashboard/BXH.
+        pending_room_join_id = session.pop("pending_room_join_id", None)
+        if pending_room_join_id:
+            return redirect(url_for("room_join_shared", room_id=pending_room_join_id))
+
         return redirect(url_for(post_login_endpoint(get_system_features(), is_admin=is_admin_user(user))))
 
     return render_template("login.html")
@@ -3989,6 +3995,9 @@ def change_password():
         except Exception as exc:
             print(f"close password reset warning: {exc}")
         flash("Đã đổi mật khẩu thành công.", "success")
+        pending_room_join_id = session.pop("pending_room_join_id", None)
+        if pending_room_join_id:
+            return redirect(url_for("room_join_shared", room_id=pending_room_join_id))
         return redirect(url_for("profile", user_id=user["id"]) + "#account-controls")
 
     if not user.get("must_change_password"):
@@ -5031,6 +5040,128 @@ def rooms():
     all_rooms = list_rooms()
     my_rooms = [r for r in all_rooms if user["id"] in [r["host_user_id"], r["guest_user_id"]]]
     return render_template("rooms.html", rooms=my_rooms)
+
+
+@app.route("/room/join/<room_id>", methods=["GET"])
+def room_join_shared(room_id):
+    """Cho phép một tài khoản tham gia phòng trống từ link được chia sẻ.
+
+    Route này tự ghi nhớ phòng nếu người mở link chưa đăng nhập. Việc nhận chỗ
+    khách được cập nhật có điều kiện để hai người bấm cùng lúc không thể cùng
+    chiếm một phòng.
+    """
+    if not session.get("user_id"):
+        session["pending_room_join_id"] = str(room_id)
+        flash("Hãy đăng nhập để tham gia phòng đấu được chia sẻ.", "warning")
+        return redirect(url_for("login"))
+
+    user = current_user()
+    if not user:
+        session.clear()
+        session["pending_room_join_id"] = str(room_id)
+        flash("Phiên đăng nhập không hợp lệ. Hãy đăng nhập lại để vào phòng.", "warning")
+        return redirect(url_for("login"))
+
+    if user.get("account_status", "approved") != "approved":
+        session.clear()
+        flash("Tài khoản chưa được phép tham gia phòng đấu.", "danger")
+        return redirect(url_for("login"))
+
+    try:
+        room = get_room(room_id)
+    except Exception as exc:
+        app.logger.warning("Shared room join load failed room=%s: %s", room_id, exc)
+        flash("Phòng đang tải chậm. Vui lòng mở lại link sau vài giây.", "warning")
+        return redirect(url_for("dashboard"))
+
+    if not room:
+        flash("Link phòng không còn tồn tại hoặc phòng đã bị xóa.", "danger")
+        return redirect(url_for("dashboard"))
+
+    user_id = user.get("id")
+    if user_id in {room.get("host_user_id"), room.get("guest_user_id")} or is_admin_user(user):
+        return redirect(url_for("room_detail", room_id=room_id))
+
+    if room.get("status") != "waiting_ready":
+        flash("Phòng đã bắt đầu hoặc không còn nhận người tham gia.", "warning")
+        return redirect(url_for("dashboard"))
+
+    if room.get("guest_user_id"):
+        flash("Phòng đã có đủ hai người chơi.", "warning")
+        return redirect(url_for("dashboard"))
+
+    if is_player_in_cooldown(user):
+        flash(f"Bạn đang trong thời gian chờ {cooldown_text(user)}.", "warning")
+        return redirect(url_for("dashboard"))
+
+    existing_room = active_room_for_user(user_id)
+    if existing_room:
+        flash("Bạn đang có một phòng chưa hoàn tất. Hãy xử lý phòng đó trước.", "warning")
+        return redirect(url_for("room_detail", room_id=existing_room.get("id")))
+
+    if active_match_for_user(user_id):
+        flash("Bạn đang có trận chưa hoàn tất nên chưa thể vào phòng khác.", "warning")
+        return redirect(url_for("dashboard"))
+
+    host_id = room.get("host_user_id")
+    host_other_room = active_room_for_user(host_id, exclude_room_id=room_id)
+    if active_match_for_user(host_id) or host_other_room:
+        flash("Chủ phòng đang ở một phòng hoặc trận khác. Link này không còn hiệu lực.", "warning")
+        return redirect(url_for("dashboard"))
+
+    joined_at = now_iso()
+    update_result = execute_query(
+        db.table("match_rooms").update({
+            "invite_id": None,
+            "guest_user_id": user_id,
+            "guest_ready": False,
+            "guest_team": None,
+            "guest_team_overall": None,
+            "guest_team_logo_url": None,
+            "guest_team_league": None,
+            "note": f'{user.get("display_name") or user.get("username") or "Người chơi"} đã tham gia qua link chia sẻ. Khách chưa sẵn sàng.',
+            "state_expires_at": None,
+            "updated_at": joined_at,
+        })
+        .eq("id", room_id)
+        .eq("status", "waiting_ready")
+        .is_("guest_user_id", "null"),
+        "join_shared_room",
+        attempts=3,
+    )
+
+    joined_rows = update_result.data or []
+    if not joined_rows:
+        latest_room = get_room(room_id)
+        if latest_room and latest_room.get("guest_user_id") == user_id:
+            return redirect(url_for("room_detail", room_id=room_id))
+        flash("Có người khác vừa tham gia trước bạn hoặc phòng đã thay đổi trạng thái.", "warning")
+        return redirect(url_for("dashboard"))
+
+    # Link chia sẻ có thể được dùng khi chủ phòng từng gửi lời mời riêng.
+    # Hủy lời mời đang treo để người được mời cũ không thể nhận chỗ lần nữa.
+    old_invite_id = room.get("invite_id")
+    if old_invite_id:
+        try:
+            execute_query(
+                db.table("match_invites").update({
+                    "status": "cancelled",
+                    "updated_at": joined_at,
+                }).eq("id", old_invite_id).eq("status", "pending"),
+                "cancel_invite_after_shared_join",
+                attempts=2,
+            )
+        except Exception as exc:
+            app.logger.warning("Shared room stale invite cleanup failed invite=%s: %s", old_invite_id, exc)
+
+    cache_delete("_rz_rooms_all")
+    cache_delete("_rz_invites_all")
+    cache_delete("_rz_current_pending_invites")
+    ttl_cache_delete("rooms_raw")
+    ttl_cache_delete("invites_raw")
+
+    flash("Bạn đã tham gia phòng qua link chia sẻ. Hãy bấm Sẵn Sàng khi đã chuẩn bị xong.", "success")
+    return redirect(url_for("room_detail", room_id=room_id))
 
 
 @app.route("/room/<room_id>")

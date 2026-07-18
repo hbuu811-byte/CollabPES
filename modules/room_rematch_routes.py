@@ -27,6 +27,13 @@ def register_routes(context):
             flash("Phòng hiện không ở trạng thái có thể bỏ cuộc.", "warning")
             return redirect(url_for("room_detail", room_id=room_id))
 
+        # Ở trạng thái chờ, chỉ bắt đầu áp dụng phạt sau khi khách đã bấm Sẵn Sàng.
+        # Giao diện sẽ đưa khách chưa sẵn sàng qua route room_leave để rời phòng không mất RP.
+        # Kiểm tra này bảo vệ cả trường hợp người dùng tự gửi POST trực tiếp vào route bỏ cuộc.
+        if room.get("status") == "waiting_ready" and not bool(room.get("guest_ready")):
+            flash("Bạn chưa Sẵn Sàng nên có thể rời phòng mà không bị trừ RP.", "warning")
+            return redirect(url_for("room_detail", room_id=room_id))
+
         original_status = room.get("status")
         reason = f'{user["display_name"]} đã chủ động bỏ cuộc và bị trừ {ROOM_ABANDON_PENALTY} RP.'
         result = execute_query(

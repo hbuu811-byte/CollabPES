@@ -172,9 +172,15 @@
                                 <button class="btn gray room-center-action-btn" type="submit">Hủy Sẵn Sàng</button>
                             </form>
                             {% endif %}
-                            <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn chắc chắn muốn thoát phòng?');">
+                            {% if room.guest_ready %}
+                            <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn đã Sẵn Sàng. Thoát phòng lúc này sẽ bị tính là bỏ cuộc và trừ 20 RP. Bạn có chắc chắn muốn tiếp tục?');">
                                 <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
                             </form>
+                            {% else %}
+                            <form method="post" action="{{ url_for('room_leave', room_id=room.id) }}" onsubmit="return confirm('Bạn chưa Sẵn Sàng nên có thể rời phòng mà không bị trừ RP. Bạn có chắc chắn muốn thoát?');">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% endif %}
                         </div>
                         {% endif %}
                     {% else %}

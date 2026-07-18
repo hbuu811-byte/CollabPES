@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "V1.13.13"
+APP_VERSION = "Collap_V1.13.0"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -7933,7 +7933,7 @@ def admin_cancel(match_id):
                 match_id, override, lock_token=lock_token, actor_id=actor.get("id")
             )
         else:
-            payload = {**override, "delta1": None, "delta2": None,
+            payload = {**override, "delta1": 0, "delta2": 0,
                        "winner_id": None, "loser_id": None,
                        "rp_formula_version": None, "rp_details": None,
                        "updated_at": now_iso()}

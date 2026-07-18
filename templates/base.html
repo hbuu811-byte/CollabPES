@@ -8,6 +8,20 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.13.13">
     <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v=1.13.13" defer></script>
+    {% if current_user and not (auth_only|default(false)) %}
+    <script>
+    window.PES_SESSION_CONFIG = {
+        enabled: true,
+        idleTimeoutSeconds: 3600,
+        warningSeconds: 300,
+        activitySyncSeconds: 300,
+        activityUrl: {{ url_for('api_session_activity')|tojson }},
+        timeoutCheckUrl: {{ url_for('api_session_timeout_check')|tojson }},
+        logoutUrl: {{ url_for('logout')|tojson }}
+    };
+    </script>
+    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v=1.13.13-v4.9" defer></script>
+    {% endif %}
 
 <script>
 (function initTheme(){
@@ -24,6 +38,12 @@ function toggleTheme(){
 </head>
 <body>
 {% if is_test_mode %}<div style="position:fixed;z-index:99999;left:0;right:0;top:0;text-align:center;background:#ffcc00;color:#111;font-weight:800;padding:6px">🧪 PES ARENA TEST MODE — KHÔNG DÙNG DATABASE PRODUCTION</div><div style="height:34px"></div>{% endif %}
+{% if maintenance_status and maintenance_status.countdown %}
+<div class="server-transition-banner {{ 'server-closing' if maintenance_status.countdown.kind == 'close' else 'server-opening' }}">
+    <strong>{{ '⚠️' if maintenance_status.countdown.kind == 'close' else '✅' }} {{ maintenance_status.countdown.label }}</strong>
+    <span data-maintenance-countdown="{{ maintenance_status.countdown.target_iso }}">--:--</span>
+</div>
+{% endif %}
 {% if current_user and not (auth_only|default(false)) %}
 <div class="layout player-app-shell">
     <aside class="sidebar player-sidebar">
@@ -34,14 +54,13 @@ function toggleTheme(){
 
         <nav class="nav player-nav">
             <a class="{{ 'active' if request.endpoint == 'ranking' else '' }}" href="{{ url_for('ranking') }}"><span>🏆</span> BXH</a>
-            <form class="nav-room-create-form" method="post" action="{{ url_for('create_open_room') }}">
-                <button class="nav-room-create-button {{ 'active' if request.endpoint in ['rooms', 'room_detail'] else '' }}" type="submit"><span>🎮</span> Phòng đấu</button>
-            </form>
+            <a class="{{ 'active' if request.endpoint in ['rooms', 'room_detail'] else '' }}" href="#" onclick="event.preventDefault(); document.getElementById('quickCreateRoomForm').submit();"><span>🎮</span> Phòng đấu</a>
             <a class="{{ 'active' if request.endpoint == 'matches' else '' }}" href="{{ url_for('matches') }}"><span>📜</span> Lịch sử</a>
-            <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📖</span> Hướng dẫn</a>
+            <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📘</span> Hướng dẫn</a>
             {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> Admin</a>{% endif %}
             <a class="logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
         </nav>
+        <form id="quickCreateRoomForm" method="post" action="{{ url_for('create_open_room') }}" hidden></form>
 
     </aside>
 
@@ -106,12 +125,15 @@ function toggleTheme(){
                         {% else %}
                             <p class="notification-empty">Không có thông báo mới.</p>
                         {% endif %}
+                        <div class="notification-dropdown-footer">
+                            <a href="{{ url_for('notifications') }}">Xem tất cả thông báo cũ →</a>
+                        </div>
                     </div>
                 </div>
                 <a class="topbar-profile" href="{{ url_for('profile', user_id=current_user.id) }}">{{ player_avatar(current_user, size='sm') }}<span><strong>{{ current_user.display_name }}</strong><small><i></i> Online</small></span><em>⌄</em></a>
             </div>
         </header>
-        {% if request.endpoint == 'players' %}
+        {% if request.endpoint == "players" %}
         <div class="app-status-row">
             <div class="online-floating-badge" title="Người đang online"><span class="online-floating-dot"></span><span id="onlineFloatingCount">0</span><span class="online-floating-text">online</span></div>
         </div>
@@ -292,8 +314,6 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkPendingInvites() {
-    // Lời mời phải được kiểm tra ở cả BXH, Lịch sử, Profile và Phòng đấu.
-    // Chỉ dừng khi tab bị ẩn để tránh request nền không cần thiết.
     if (document.hidden) return Promise.resolve();
     return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
@@ -558,6 +578,10 @@ if (bottomChatInput) {
 let lastAnnouncementId = null;
 let announcementAnimation = null;
 let announcementResizeTimer = null;
+let announcementRotateTimer = null;
+let announcementItems = [];
+let announcementIndex = 0;
+let overlayQueueRunning = false;
 
 function stopAnnouncementMarquee() {
     if (announcementAnimation) {
@@ -589,11 +613,7 @@ function startAnnouncementMarquee() {
                 { transform: "translate3d(0,0,0)" },
                 { transform: `translate3d(-${distance}px,0,0)` }
             ],
-            {
-                duration: duration,
-                iterations: Infinity,
-                easing: "linear"
-            }
+            { duration: duration, iterations: Infinity, easing: "linear" }
         );
     });
 }
@@ -601,7 +621,6 @@ function startAnnouncementMarquee() {
 function renderAnnouncement(announcement) {
     const mount = document.getElementById("adminAnnouncementMount");
     if (!mount) return;
-
     if (!announcement) {
         stopAnnouncementMarquee();
         mount.innerHTML = "";
@@ -609,27 +628,96 @@ function renderAnnouncement(announcement) {
         return;
     }
 
+    const type = String(announcement.announcement_type || "admin");
+    const icon = String(announcement.icon || (type === "admin" ? "📢" : "🏆"));
     const existing = mount.querySelector("[data-announcement-id]");
     const existingId = existing ? existing.getAttribute("data-announcement-id") : null;
     const currentMessage = existing ? existing.getAttribute("data-announcement-message") : null;
-
-    if (existingId === String(announcement.id) && currentMessage === String(announcement.message || "")) {
-        return;
-    }
+    if (existingId === String(announcement.id) && currentMessage === String(announcement.message || "")) return;
 
     lastAnnouncementId = String(announcement.id);
     mount.innerHTML = `
-        <div class="admin-announcement" data-announcement-id="${escapeHtml(announcement.id)}" data-announcement-message="${escapeHtml(announcement.message)}">
-            <div class="admin-announcement-label">📢 ${escapeHtml(announcement.title)}</div>
-            <div class="admin-announcement-marquee" aria-label="${escapeHtml(announcement.message)}">
-                <div class="admin-announcement-track">
-                    <span>${escapeHtml(announcement.message)}</span>
-                    <span aria-hidden="true">${escapeHtml(announcement.message)}</span>
-                </div>
-            </div>
-        </div>
-    `;
+        <div class="admin-announcement system-event-announcement ${escapeHtml(type)}" data-announcement-id="${escapeHtml(announcement.id)}" data-announcement-message="${escapeHtml(announcement.message)}">
+            <div class="admin-announcement-label">${escapeHtml(icon)} ${escapeHtml(announcement.title)}</div>
+            <div class="admin-announcement-marquee" aria-label="${escapeHtml(announcement.message)}"><div class="admin-announcement-track"><span>${escapeHtml(announcement.message)}</span><span aria-hidden="true">${escapeHtml(announcement.message)}</span></div></div>
+            ${type !== "admin" ? '<span class="system-event-spark spark-a"></span><span class="system-event-spark spark-b"></span><span class="system-event-spark spark-c"></span>' : ''}
+        </div>`;
     startAnnouncementMarquee();
+}
+
+function rotateAnnouncementBanner() {
+    if (!announcementItems.length) {
+        renderAnnouncement(null);
+        return;
+    }
+    if (announcementIndex >= announcementItems.length) announcementIndex = 0;
+    renderAnnouncement(announcementItems[announcementIndex]);
+    announcementIndex = (announcementIndex + 1) % announcementItems.length;
+}
+
+function scheduleAnnouncementRotation() {
+    if (announcementRotateTimer) clearInterval(announcementRotateTimer);
+    announcementRotateTimer = null;
+    rotateAnnouncementBanner();
+    if (announcementItems.length > 1) {
+        announcementRotateTimer = setInterval(function () {
+            if (!document.hidden) rotateAnnouncementBanner();
+        }, 8000);
+    }
+}
+
+function showGlobalSystemEventOverlay(announcement) {
+    return new Promise(function (resolve) {
+        const type = String(announcement.announcement_type || "win_streak");
+        const overlay = document.createElement("div");
+        overlay.className = "global-system-event-overlay " + type;
+        overlay.innerHTML = `<div class="global-system-event-burst"></div><div class="global-system-event-card"><div class="global-system-event-icon">${escapeHtml(announcement.icon || "🏆")}</div><strong>${escapeHtml(announcement.title || "DANH HIỆU")}</strong><span>${escapeHtml(announcement.message || "")}</span></div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add("is-visible"));
+        const visibleMs = type === "shutdown" ? 5200 : 4300;
+        setTimeout(function () {
+            overlay.classList.add("is-leaving");
+            setTimeout(function () { overlay.remove(); resolve(); }, 700);
+        }, visibleMs);
+    });
+}
+
+async function playSystemEventQueue(items) {
+    if (overlayQueueRunning || document.hidden) return;
+    const overlayCountKey = "pes-global-system-event-overlay-count";
+    let shownCount = 0;
+    try { shownCount = Number(sessionStorage.getItem(overlayCountKey) || 0); } catch (error) {}
+    const remainingSlots = Math.max(0, 3 - shownCount);
+    if (!remainingSlots) return;
+
+    const unseen = [];
+    for (const item of items) {
+        if (String(item.announcement_type || "admin") === "admin") continue;
+        const eventId = String(item.id || "");
+        if (!eventId) continue;
+        const storageKey = "pes-global-system-event:" + eventId;
+        let viewed = false;
+        try { viewed = sessionStorage.getItem(storageKey) === "1"; } catch (error) {}
+        if (!viewed) unseen.push({item, storageKey});
+        if (unseen.length >= remainingSlots) break;
+    }
+    if (!unseen.length) return;
+
+    overlayQueueRunning = true;
+    try {
+        for (let i = 0; i < unseen.length; i++) {
+            const entry = unseen[i];
+            try {
+                sessionStorage.setItem(entry.storageKey, "1");
+                shownCount += 1;
+                sessionStorage.setItem(overlayCountKey, String(shownCount));
+            } catch (error) {}
+            await showGlobalSystemEventOverlay(entry.item);
+            if (i < unseen.length - 1) await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    } finally {
+        overlayQueueRunning = false;
+    }
 }
 
 document.addEventListener("DOMContentLoaded", startAnnouncementMarquee);
@@ -639,14 +727,30 @@ window.addEventListener("resize", function () {
     announcementResizeTimer = setTimeout(startAnnouncementMarquee, 180);
 });
 document.addEventListener("visibilitychange", function () {
-    if (!document.hidden && !announcementAnimation) startAnnouncementMarquee();
+    if (!document.hidden) {
+        if (!announcementAnimation) startAnnouncementMarquee();
+        playSystemEventQueue(announcementItems);
+    }
 });
 
 function checkAnnouncement() {
     return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (data.ok) renderAnnouncement(data.announcement);
+            if (!data.ok) return;
+            const items = Array.isArray(data.announcements)
+                ? data.announcements
+                : (data.announcement ? [data.announcement] : []);
+            const oldIds = announcementItems.map(item => String(item.id || "")).join("|");
+            const newIds = items.map(item => String(item.id || "")).join("|");
+            announcementItems = items;
+            if (oldIds !== newIds) {
+                announcementIndex = 0;
+                scheduleAnnouncementRotation();
+            } else if (!items.length) {
+                renderAnnouncement(null);
+            }
+            playSystemEventQueue(items);
         })
         .catch(function () {});
 }
@@ -687,46 +791,42 @@ function sendAdminAnnouncement() {
     });
 }
 
-// V4.4 FIX4: polling theo trang, nhưng lời mời là tín hiệu hệ thống bắt buộc
-// nên được kiểm tra nhẹ trên mọi trang đã đăng nhập. Tab ẩn sẽ dừng hoàn toàn.
+// V4.8: chỉ chạy polling thật sự cần cho trang hiện tại.
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return;
-    const page = {{ request.endpoint|tojson }};
-    const hasLoggedInUser = {{ (current_user is not none)|tojson }};
+    const path = window.location.pathname;
+    const isRoomPage = path.startsWith("/room/");
+    const isPlayersPage = path === "/players";
+    const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
 
-    if (hasLoggedInUser) {
-        PESNet.createPoller({
-            task: checkPendingInvites,
-            visibleInterval: 7000,
-            hiddenInterval: 60000,
-            runWhenHidden: false,
-            immediate: true,
-            jitter: 900
-        });
+    // Heartbeat nhẹ, không chạy khi tab ẩn.
+    PESNet.createPoller({task: postHeartbeat, visibleInterval: 180000, hiddenInterval: 600000, runWhenHidden: false, immediate: false, jitter: 7000});
+
+    // Lời mời cần trên toàn hệ thống, nhưng phòng đấu đã có polling trạng thái riêng nên giảm tần suất.
+    PESNet.createPoller({task: checkPendingInvites, visibleInterval: isRoomPage ? 15000 : 9000, hiddenInterval: 120000, immediate: true, jitter: 1200});
+
+    // Không kiểm tra active-room ở chính trang phòng. BXH kiểm tra thưa hơn để tránh request khi chuyển qua lại.
+    if (!isRoomPage) {
+        PESNet.createPoller({task: checkActiveRoom, visibleInterval: isRankingPage ? 30000 : 20000, hiddenInterval: 120000, immediate: false, jitter: 2500});
     }
 
-    if (page === "players") {
-        PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: false, immediate: false, jitter: 5000});
-        PESNet.createPoller({task: checkActiveRoom, visibleInterval: 12000, hiddenInterval: 60000, runWhenHidden: false, immediate: true, jitter: 1500});
-    } else if (page === "rooms") {
-        PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: false, immediate: false, jitter: 5000});
-        PESNet.createPoller({task: checkActiveRoom, visibleInterval: 15000, hiddenInterval: 60000, runWhenHidden: false, immediate: true, jitter: 1500});
-    } else if (page === "room_detail") {
-        // State phòng được room_detail.html quản lý theo trạng thái; base chỉ duy trì heartbeat nhẹ.
-        PESNet.createPoller({task: postHeartbeat, visibleInterval: 120000, hiddenInterval: 300000, runWhenHidden: false, immediate: false, jitter: 5000});
+    // Chat sảnh chỉ tải khi khung chat đang mở; không polling ngầm toàn trang.
+    if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
+        PESNet.createPoller({task: loadBottomChatSmart, visibleInterval: 20000, hiddenInterval: 120000, immediate: true, jitter: 2000});
     }
+
+    // Thông báo hệ thống kiểm tra thưa, lần đầu dùng dữ liệu server render sẵn.
+    PESNet.createPoller({task: checkAnnouncementSmart, visibleInterval: 300000, hiddenInterval: 600000, immediate: false, jitter: 7000});
 });
 
 document.addEventListener("visibilitychange", function () {
-    if (document.hidden) return;
-    if (isLobbyChatOpen) loadBottomChat();
-    else checkLobbyChatUnread();
+    if (!document.hidden && typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) loadBottomChat();
 });
 </script>
 {% endif %}
 
 
-{% if current_user and not (auth_only|default(false)) and request.endpoint == 'players' %}
+{% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
 <script>
 function updateOnlineFloatingCount() {
     return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
@@ -746,5 +846,22 @@ window.addEventListener("DOMContentLoaded", function () {
 </script>
 {% endif %}
 
+<script>
+(function maintenanceCountdowns(){
+    function tick(){
+        document.querySelectorAll('[data-maintenance-countdown]').forEach(function(el){
+            const target = Date.parse(el.dataset.maintenanceCountdown || '');
+            if (!Number.isFinite(target)) return;
+            const seconds = Math.max(0, Math.floor((target - Date.now()) / 1000));
+            const minutes = Math.floor(seconds / 60);
+            const remain = seconds % 60;
+            el.textContent = String(minutes).padStart(2,'0') + ':' + String(remain).padStart(2,'0');
+            if (seconds === 0) window.setTimeout(function(){ window.location.reload(); }, 1200);
+        });
+    }
+    tick();
+    window.setInterval(tick, 1000);
+})();
+</script>
 </body>
 </html>

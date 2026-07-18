@@ -1,89 +1,91 @@
-# Log — PES Arena V1.13.13-v4.9.1
+# Log — PES Arena V1.13.13-v4.9.2
 
-- **Ngày giờ:** 18/07/2026, múi giờ Asia/Bangkok
-- **Gói sửa:** `PES_Arena_V1.13.13-v4.9.1_Admin_Doi_Trang_Thai_Tinh_Lai_Lich_Su.zip`
-- **Cơ sở ghép mã:** Giữ giao diện phân quyền trực tiếp từ file người dùng gửi; backend lấy từ nhánh gần nhất đã có trên hệ thống, sau đó sửa tiếp. Không dựng lại dự án từ đầu.
+- **Ngày giờ:** 18/07/2026 12:57 — múi giờ Asia/Bangkok
+- **Gói sửa:** `PES_Arena_V1.13.13-v4.9.2_Sua_Hien_Thi_Ben_Thang_Ben_Thua.zip`
+- **Phiên bản đối chiếu:** `PES_Arena_V1.13.13-v4.9.1_Admin_Doi_Trang_Thai_Tinh_Lai_Lich_Su.zip`
+- **File vá người dùng gửi để tham khảo:** `fix_profile_match_result_v1_13_13(1).py`
+- **Phạm vi:** Chỉ sửa phần hiển thị kết quả tại Lịch sử, Hồ sơ và dữ liệu trang Dashboard dùng chung hàm trang trí trận. Không sửa database, không thay đổi thời gian trận và không thay đổi công thức RP.
+
+## Nguyên nhân lỗi
+
+1. Hồ sơ luôn đặt người đang xem ở bên trái nhưng `score_display` vẫn dùng thứ tự gốc `score1 - score2`.
+2. Lịch sử “Trận của tôi” tính nhãn THẮNG/THUA theo người đăng nhập, nhưng tên, CLB và tỷ số vẫn hiển thị theo thứ tự `player1 - player2`.
+3. Khi người đang xem là `player2`, nhãn THẮNG có thể nằm cạnh phía hiển thị đối thủ, tạo cảm giác hệ thống xác định sai bên thắng và bên thua.
+4. So sánh tỷ số trực tiếp chưa chuẩn hóa kiểu dữ liệu; nếu Supabase trả chuỗi số như `"10"` và `"2"`, việc so sánh có nguy cơ sai.
+5. Trường `winner_id`/`loser_id` cũ có thể chưa đồng bộ ở một số dữ liệu lịch sử. Giao diện cần lấy tỷ số đã xác nhận làm nguồn sự thật khi hiển thị.
 
 ## Nội dung đã sửa
 
-1. **Admin thay đổi tỷ số và trạng thái trận**
-   - Cho phép chuyển giữa: `playing`, `waiting_confirm`, `disputed`, `confirmed`, `cancelled`.
-   - Quyền `matches_confirm` mới được sửa tỷ số/xác nhận.
-   - Quyền `matches_cancel` mới được chuyển sang trạng thái hủy.
-   - Admin phụ dùng chung đúng logic với Admin chính theo quyền đã được cấp.
+### 1. `app.py`
 
-2. **Giữ nguyên mốc thời gian lịch sử**
-   - Mọi lần sửa chỉ cập nhật `updated_at`.
-   - Không đưa `created_at` vào payload cập nhật hoặc rollback.
-   - Trận cũ được phát lại đúng vị trí theo `created_at`, sau đó dùng `id` để ổn định thứ tự nếu trùng thời gian.
+- **Khoảng dòng 1951–2120:**
+  - Thêm chuẩn hóa tỷ số về số nguyên nhưng vẫn giữ `None` khi chưa nhập.
+  - Chuẩn hóa delta RP từ int, float hoặc chuỗi số.
+  - So sánh ID an toàn khi dữ liệu Supabase trả kiểu khác nhau.
+  - Tạo một thứ tự hiển thị thống nhất `left/right`.
+  - Trong Hồ sơ và “Trận của tôi”, người đang được xem luôn nằm bên trái.
+  - Tỷ số, CLB, avatar, danh hiệu, delta RP và nhãn THẮNG/THUA được đảo đồng bộ cùng người chơi.
+  - Bên thắng/bên thua hiển thị được tính lại từ `score1/score2` của trận confirmed, không tin mù quáng vào `winner_id/loser_id` cũ.
+  - Hòa, hủy, tranh chấp và chờ xác nhận có nhãn riêng đúng trạng thái.
 
-3. **Tính lại toàn bộ dữ liệu phụ thuộc lịch sử**
-   - RP của cả hai người chơi.
-   - Tổng trận, thắng, hòa, thua.
-   - Bàn thắng, bàn thua.
-   - `streak` và `loss_streak`.
-   - `winner_id`, `loser_id`, `delta1`, `delta2`, phiên bản/cấu trúc chi tiết công thức RP.
-   - Tính lại cả các trận nằm sau trận bị sửa vì Rank, số trận đầu và chuỗi thắng/thua có thể làm thay đổi RP.
+- **Khoảng dòng 5963–5967:**
+  - Chế độ “Trận của tôi” truyền người đăng nhập làm góc nhìn.
+  - Chế độ “Toàn hệ thống” giữ thứ tự gốc `player1/player2`, tránh việc mỗi thẻ bị đảo theo người đang đăng nhập.
 
-4. **Không làm mất dữ liệu gốc/import/legacy**
-   - Mốc gốc được tính bằng dữ liệu hiện tại trừ phần đã sinh ra từ các trận confirmed đang lưu.
-   - Không còn đặt toàn bộ W-D-L và tổng trận về 0 trước khi phát lại.
-   - Giữ đúng số trận gốc để công thức 10 trận đầu không bị kích hoạt lại sai.
-   - Trận legacy còn tham chiếu tài khoản đã xóa vẫn được phát lại bằng delta đã lưu cho người chơi còn tồn tại, thay vì làm lỗi toàn bộ BXH.
+### 2. `templates/matches.html`
 
-5. **Khóa luồng chống cộng/trừ RP chồng chéo**
-   - Thêm khóa toàn cục trong bảng `system_settings`, có hiệu lực giữa nhiều Vercel Serverless Function/instance.
-   - Khóa có token và tự hết hạn sau 5 phút để tránh kẹt vĩnh viễn.
-   - Nút xác nhận của người chơi kiểm tra khóa trước và sau khi claim `processing_result`.
-   - Admin không phát lại lịch sử khi còn trận đang ở `processing_result`.
-   - Kiểm tra lại trạng thái/tỷ số/`updated_at` sau khi giành khóa để không ghi đè thay đổi vừa xảy ra.
+- **Khoảng dòng 33–49:**
+  - Dùng các trường `left_player_*` và `right_player_*` thay cho việc gắn cứng `player1/player2`.
+  - Tên, avatar, CLB, tỷ số và RP luôn cùng một phía.
+  - Hiển thị rõ nhãn THẮNG, THUA hoặc HÒA dưới từng người chơi đối với trận confirmed.
+  - Chế độ toàn hệ thống hiển thị delta RP theo đúng phía trái/phải.
 
-6. **Đồng bộ phòng đấu đúng cấu trúc**
-   - Dùng `host_score` và `guest_score` thay vì ghi nhầm `score1`/`score2` vào `match_rooms`.
-   - Ánh xạ `waiting_confirm` của trận thành `waiting_result_confirm` của phòng.
-   - Đồng bộ `confirmed_by_id`, `state_expires_at`, trạng thái và ghi chú.
+### 3. `templates/profile.html`
 
-7. **Các luồng liên quan**
-   - Xác nhận tranh chấp cũ được phát lại theo thời gian trận gốc.
-   - Hủy trận confirmed tính lại lịch sử thay vì chỉ trừ delta trực tiếp.
-   - Xóa trận confirmed phát lại lịch sử trước khi xóa.
-   - Khi cập nhật giữa chừng thất bại, hệ thống rollback best-effort dữ liệu người chơi và trận đã ghi.
+- **Khoảng dòng 214–229:**
+  - Người sở hữu hồ sơ luôn nằm bên trái.
+  - Đối thủ luôn nằm bên phải.
+  - Tỷ số được hiển thị theo góc nhìn của người sở hữu hồ sơ.
+  - Avatar, CLB, tên người chơi, nhãn THẮNG/THUA và RP không còn bị lệch phía.
 
-## File đã chỉnh sửa
+## Ví dụ sau khi sửa
 
-### `app.py`
-- Khoảng dòng **109–115**: khai báo khóa phát lại BXH.
-- Khoảng dòng **5516–5595**: khóa luồng nhập kết quả và kiểm tra cập nhật có thực sự thành công.
-- Khoảng dòng **5657–5735**: khóa luồng tạo tranh chấp khi Admin đang tính lại lịch sử.
-- Khoảng dòng **5883–6090**: quản lý khóa DB, kiểm tra stale lock, đồng bộ phòng và kiểm tra dữ liệu cạnh tranh.
-- Khoảng dòng **6091–6224**: bổ sung khóa hai lớp cho luồng xác nhận kết quả.
-- Khoảng dòng **6226–6294**: xác nhận tranh chấp bằng phát lại lịch sử theo thời gian gốc.
-- Khoảng dòng **6419–6565**: lập kế hoạch, cập nhật, rollback và xóa cache sau khi tính lại BXH.
-- Khoảng dòng **7669–7790**: Admin sửa tỷ số/trạng thái, kiểm tra quyền và chống ghi đè luồng khác.
-- Khoảng dòng **7790–7888**: hủy/xác nhận tranh chấp theo logic phát lại.
-- Khoảng dòng **8040–8095**: xóa trận sau khi hoàn tác bằng phát lại lịch sử.
+Trận gốc trong database:
 
-### `modules/admin_ranking_rebuild.py`
-- Khoảng dòng **1–183**: tính mốc gốc RP, W-D-L, bàn thắng/thua và suy ra streak gốc.
-- Khoảng dòng **184–326**: phát lại theo `created_at`, tính delta RP, host factor, placement, winner/loser và xử lý lịch sử orphan/legacy.
+- `player1 = An`, `score1 = 1`
+- `player2 = Bình`, `score2 = 3`
 
-### `templates/admin.html`
-- Khoảng dòng **3–10**: kiểu hiển thị ô sửa tỷ số/trạng thái.
-- Khoảng dòng **366–420**: giao diện sửa tỷ số, trạng thái, ghi chú; ẩn/khóa thao tác theo quyền Admin.
+Khi mở Hồ sơ của Bình:
+
+- Bên trái: Bình — 3 — THẮNG
+- Bên phải: An — 1 — THUA
+- Tỷ số: `3 - 1`
+
+Khi mở Toàn hệ thống:
+
+- Bên trái giữ An — 1 — THUA
+- Bên phải giữ Bình — 3 — THẮNG
+- Tỷ số: `1 - 3`
 
 ## Kiểm tra đã thực hiện
 
 - `python -m py_compile app.py`: đạt.
-- `python -m py_compile modules/admin_ranking_rebuild.py`: đạt.
-- Jinja parse `templates/admin.html`: đạt.
-- Test giữ nguyên dữ liệu legacy khi phát lại lịch sử không thay đổi: đạt.
-- Test đảo người thắng và tính lại RP/W-D-L/streak/loss_streak: đạt.
-- Test confirmed → cancelled, xóa delta và winner/loser: đạt.
-- Test trận tham chiếu người chơi đã xóa không làm hỏng toàn bộ BXH: đạt.
-- Kiểm tra mọi lời gọi phát lại đều truyền khóa sở hữu: đạt.
+- Kiểm tra cú pháp Jinja `matches.html`, `profile.html`, `admin.html`: đạt.
+- Người xem là player1 và thắng: đạt.
+- Người xem là player1 và thua: đạt.
+- Người xem là player2 và thắng: đạt.
+- Người xem là player2 và thua: đạt.
+- Tỷ số chuỗi `"2" - "10"`: xác định đúng người thắng, không so sánh theo chữ.
+- Trận hòa: đạt.
+- Trận hủy: hiển thị “Không tính”, đạt.
+- `winner_id` cũ bị sai nhưng tỷ số đúng: giao diện vẫn hiển thị đúng bên thắng/bên thua.
 
-## Lưu ý triển khai
+## File cần thay
 
-- Gói này là **bản vá gồm đúng các file cần thay**, không phải bản full.
-- Sao chép ba file mã nguồn vào đúng vị trí trong dự án full rồi deploy lại.
-- Bảng `system_settings` đang được dự án sử dụng và cần có khóa duy nhất theo `setting_key` như cấu trúc hiện tại.
+```text
+app.py
+templates/matches.html
+templates/profile.html
+```
+
+Không cần chạy SQL và không cần thay file khác.

@@ -1948,21 +1948,149 @@ def match_status_label(status):
     return MATCH_STATUS_LABELS.get(status, str(status or "-").replace("_", " ").title())
 
 
+def _normalize_match_score(value):
+    """Return an integer score while preserving a missing score as None."""
+    if value is None or value == "":
+        return None
+    try:
+        return int(round(float(value)))
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _same_user_id(left, right):
+    """Compare Supabase/user IDs safely even when one side is not a string."""
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
+def _normalize_match_delta(value):
+    """Normalize RP deltas returned as int, float or numeric string."""
+    try:
+        return int(round(float(value or 0)))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
 def decorate_match_for_view(match, viewer_id=None):
+    """Prepare one match with a single, consistent left/right display order.
+
+    Personal history and Profile always put the viewed player on the left.
+    System-wide history keeps the original player1/player2 order. Winner/loser
+    display data is derived from the confirmed score, so stale winner_id fields
+    cannot make the UI show the wrong side.
+    """
     item = dict(match or {})
     item["status_label"] = match_status_label(item.get("status"))
     item["created_at_display"] = format_vn_datetime(item.get("created_at"))
     item["is_cancelled"] = item.get("status") == "cancelled"
-    item["score_display"] = (
-        "Không tính"
-        if item["is_cancelled"]
-        else f'{item.get("score1")} - {item.get("score2")}'
-    )
 
-    item["is_mine"] = bool(
-        viewer_id
-        and viewer_id in {item.get("player1_id"), item.get("player2_id")}
+    score1 = _normalize_match_score(item.get("score1"))
+    score2 = _normalize_match_score(item.get("score2"))
+    item["score1_normalized"] = score1
+    item["score2_normalized"] = score2
+
+    player1_id = item.get("player1_id")
+    player2_id = item.get("player2_id")
+    viewer_is_player1 = _same_user_id(viewer_id, player1_id)
+    viewer_is_player2 = _same_user_id(viewer_id, player2_id)
+    item["is_mine"] = bool(viewer_is_player1 or viewer_is_player2)
+
+    computed_winner_id = None
+    computed_loser_id = None
+    is_confirmed_result = (
+        item.get("status") == "confirmed"
+        and score1 is not None
+        and score2 is not None
     )
+    if is_confirmed_result:
+        if score1 > score2:
+            computed_winner_id, computed_loser_id = player1_id, player2_id
+        elif score2 > score1:
+            computed_winner_id, computed_loser_id = player2_id, player1_id
+
+    # Display-only winner/loser fields use the score as source of truth.
+    item["display_winner_id"] = computed_winner_id
+    item["display_loser_id"] = computed_loser_id
+    if computed_winner_id is not None:
+        item["winner_name"] = (
+            item.get("player1_name")
+            if _same_user_id(computed_winner_id, player1_id)
+            else item.get("player2_name")
+        )
+        item["loser_name"] = (
+            item.get("player2_name")
+            if _same_user_id(computed_loser_id, player2_id)
+            else item.get("player1_name")
+        )
+    elif is_confirmed_result:
+        item["winner_name"] = ""
+        item["loser_name"] = ""
+
+    # Personal views always put the relevant player on the left.
+    left_is_player1 = not viewer_is_player2
+    if left_is_player1:
+        left_prefix, right_prefix = "player1", "player2"
+        left_score, right_score = score1, score2
+        left_delta, right_delta = item.get("delta1"), item.get("delta2")
+        left_team, right_team = item.get("team1"), item.get("team2")
+    else:
+        left_prefix, right_prefix = "player2", "player1"
+        left_score, right_score = score2, score1
+        left_delta, right_delta = item.get("delta2"), item.get("delta1")
+        left_team, right_team = item.get("team2"), item.get("team1")
+
+    def side_value(prefix, suffix):
+        return item.get(f"{prefix}_{suffix}")
+
+    item["left_player_id"] = side_value(left_prefix, "id")
+    item["left_player_name"] = side_value(left_prefix, "name")
+    item["left_avatar_url"] = side_value(left_prefix, "avatar_url")
+    item["left_achievement"] = side_value(left_prefix, "achievement")
+    item["left_team"] = left_team
+    item["left_score"] = left_score
+    item["left_delta"] = _normalize_match_delta(left_delta)
+
+    item["right_player_id"] = side_value(right_prefix, "id")
+    item["right_player_name"] = side_value(right_prefix, "name")
+    item["right_avatar_url"] = side_value(right_prefix, "avatar_url")
+    item["right_achievement"] = side_value(right_prefix, "achievement")
+    item["right_team"] = right_team
+    item["right_score"] = right_score
+    item["right_delta"] = _normalize_match_delta(right_delta)
+
+    if item["is_cancelled"]:
+        item["score_display"] = "Không tính"
+    else:
+        left_score_display = left_score if left_score is not None else "-"
+        right_score_display = right_score if right_score is not None else "-"
+        item["score_display"] = f"{left_score_display} - {right_score_display}"
+
+    item["left_result_code"] = "neutral"
+    item["left_result_label"] = item["status_label"]
+    item["right_result_code"] = "neutral"
+    item["right_result_label"] = item["status_label"]
+
+    if is_confirmed_result:
+        if left_score > right_score:
+            item["left_result_code"], item["left_result_label"] = "win", "THẮNG"
+            item["right_result_code"], item["right_result_label"] = "loss", "THUA"
+        elif left_score < right_score:
+            item["left_result_code"], item["left_result_label"] = "loss", "THUA"
+            item["right_result_code"], item["right_result_label"] = "win", "THẮNG"
+        else:
+            item["left_result_code"] = item["right_result_code"] = "draw"
+            item["left_result_label"] = item["right_result_label"] = "HÒA"
+    elif item.get("status") == "cancelled":
+        item["left_result_code"] = item["right_result_code"] = "cancelled"
+        item["left_result_label"] = item["right_result_label"] = "ĐÃ HỦY"
+    elif item.get("status") == "disputed":
+        item["left_result_code"] = item["right_result_code"] = "disputed"
+        item["left_result_label"] = item["right_result_label"] = "TRANH CHẤP"
+    else:
+        item["left_result_code"] = item["right_result_code"] = "pending"
+
     item["result_code"] = "neutral"
     item["result_label"] = item["status_label"]
     item["my_delta"] = None
@@ -1976,35 +2104,20 @@ def decorate_match_for_view(match, viewer_id=None):
     item["opponent_team"] = None
 
     if item["is_mine"]:
-        as_player1 = item.get("player1_id") == viewer_id
-        my_score = item.get("score1") if as_player1 else item.get("score2")
-        opponent_score = item.get("score2") if as_player1 else item.get("score1")
-        item["my_delta"] = int((item.get("delta1") if as_player1 else item.get("delta2")) or 0)
-        item["opponent_id"] = item.get("player2_id") if as_player1 else item.get("player1_id")
-        item["opponent_name"] = item.get("player2_name") if as_player1 else item.get("player1_name")
-        item["my_avatar_url"] = item.get("player1_avatar_url") if as_player1 else item.get("player2_avatar_url")
-        item["opponent_avatar_url"] = item.get("player2_avatar_url") if as_player1 else item.get("player1_avatar_url")
-        item["my_achievement"] = item.get("player1_achievement") if as_player1 else item.get("player2_achievement")
-        item["opponent_achievement"] = item.get("player2_achievement") if as_player1 else item.get("player1_achievement")
-        item["my_team"] = item.get("team1") if as_player1 else item.get("team2")
-        item["opponent_team"] = item.get("team2") if as_player1 else item.get("team1")
-
-        if item.get("status") == "confirmed" and my_score is not None and opponent_score is not None:
-            if my_score > opponent_score:
-                item["result_code"], item["result_label"] = "win", "THẮNG"
-            elif my_score < opponent_score:
-                item["result_code"], item["result_label"] = "loss", "THUA"
-            else:
-                item["result_code"], item["result_label"] = "draw", "HÒA"
-        elif item.get("status") == "cancelled":
-            item["result_code"], item["result_label"] = "cancelled", "ĐÃ HỦY"
-        elif item.get("status") == "disputed":
-            item["result_code"], item["result_label"] = "disputed", "TRANH CHẤP"
-        else:
-            item["result_code"] = "pending"
+        # The viewed/current player is always the left side in personal views.
+        item["result_code"] = item["left_result_code"]
+        item["result_label"] = item["left_result_label"]
+        item["my_delta"] = item["left_delta"]
+        item["opponent_id"] = item["right_player_id"]
+        item["opponent_name"] = item["right_player_name"]
+        item["my_avatar_url"] = item["left_avatar_url"]
+        item["opponent_avatar_url"] = item["right_avatar_url"]
+        item["my_achievement"] = item["left_achievement"]
+        item["opponent_achievement"] = item["right_achievement"]
+        item["my_team"] = item["left_team"]
+        item["opponent_team"] = item["right_team"]
 
     return item
-
 
 def build_player_activity_map(rooms=None, matches=None):
     rooms = list_rooms() if rooms is None else rooms
@@ -5847,7 +5960,11 @@ def matches():
     total_pages = max(1, (total_items + per_page - 1) // per_page)
     page = min(page, total_pages)
     start = (page - 1) * per_page
-    page_rows = [decorate_match_for_view(match, user.get("id")) for match in rows[start:start + per_page]]
+    history_viewer_id = user.get("id") if history_view == "mine" else None
+    page_rows = [
+        decorate_match_for_view(match, history_viewer_id)
+        for match in rows[start:start + per_page]
+    ]
 
     return render_template(
         "matches.html",

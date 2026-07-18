@@ -31,14 +31,20 @@
         <small>{{ m.created_at_display }}</small>
     </div>
     <div class="history-matchup">
-        <div><a class="match-player-inline" href="{{ url_for('profile', user_id=m.player1_id) }}">{{ player_avatar(name=m.player1_name, avatar_url=m.player1_avatar_url, achievement=m.player1_achievement, size='xs') }}<span>{{ m.player1_name }}</span></a><small>{{ m.team1 or '-' }}</small></div>
+        <div>
+            <a class="match-player-inline" href="{{ url_for('profile', user_id=m.left_player_id) }}">{{ player_avatar(name=m.left_player_name, avatar_url=m.left_avatar_url, achievement=m.left_achievement, size='xs') }}<span>{{ m.left_player_name }}</span></a>
+            <small>{{ m.left_team or '-' }}{% if m.status == 'confirmed' %} · <strong class="{{ 'positive' if m.left_result_code == 'win' else 'negative' if m.left_result_code == 'loss' else '' }}">{{ m.left_result_label }}</strong>{% endif %}</small>
+        </div>
         <strong>{{ m.score_display }}</strong>
-        <div class="right"><a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.player2_id) }}"><span>{{ m.player2_name }}</span>{{ player_avatar(name=m.player2_name, avatar_url=m.player2_avatar_url, achievement=m.player2_achievement, size='xs') }}</a><small>{{ m.team2 or '-' }}</small></div>
+        <div class="right">
+            <a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.right_player_id) }}"><span>{{ m.right_player_name }}</span>{{ player_avatar(name=m.right_player_name, avatar_url=m.right_avatar_url, achievement=m.right_achievement, size='xs') }}</a>
+            <small>{{ m.right_team or '-' }}{% if m.status == 'confirmed' %} · <strong class="{{ 'positive' if m.right_result_code == 'win' else 'negative' if m.right_result_code == 'loss' else '' }}">{{ m.right_result_label }}</strong>{% endif %}</small>
+        </div>
     </div>
     <div class="history-points">
         {% if m.status == 'confirmed' %}
             {% if m.is_mine %}<strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>
-            {% else %}<strong>{{ "%+d"|format(m.delta1 or 0) }} / {{ "%+d"|format(m.delta2 or 0) }}</strong>{% endif %}
+            {% else %}<strong>{{ "%+d"|format(m.left_delta or 0) }} / {{ "%+d"|format(m.right_delta or 0) }}</strong>{% endif %}
         {% else %}<strong>Không tính điểm</strong>{% endif %}
         <small>{{ m.status_label }}</small>
     </div>

@@ -1,101 +1,52 @@
-# Collap_V1.13.3d — Chủ phòng thoát sau khi khách Sẵn Sàng
+# Collap_V1.13.3e — Chuyển lịch sử đấu sang cột phải và giảm trễ phía khách
 
-- **Ngày giờ:** 18/07/2026 17:45, múi giờ Asia/Bangkok
-- **Bản nền trực tiếp:** `Collap_V1.13.3c`
-- **Bản gốc kiến trúc:** `Collap_V1.13.2`
-- **Các bản đã đối chiếu:**
-  - `Collap_V1.13.3b`: cơ chế khách rời phòng trước/sau Sẵn Sàng và phạt 20 RP.
-  - `Collap_V1.13.3c`: modal xác nhận giữa màn hình đồng bộ giao diện game.
-  - `Collap_V1.13.2`: route `room_leave` và cấu trúc module phòng đấu.
+- **Ngày giờ:** 18/07/2026 18:03 — Asia/Bangkok
+- **Bản nền:** Collap_V1.13.3d
+- **Loại gói:** Chỉ chứa các file cần chép đè
+- **SQL Supabase:** Không cần
 
-## Yêu cầu
+## Nội dung thay đổi
 
-Áp dụng quy tắc tương tự cho Chủ Phòng:
+### 1. Chuyển LỊCH SỬ ĐẤU xuống dưới Thông tin phòng đấu
+- Di chuyển toàn bộ khối lịch sử phiên khỏi phần `Điều khiển phòng`.
+- Đặt lịch sử ở cột phải, ngay dưới `Thông tin phòng đấu`, đúng vùng trống trên ảnh yêu cầu.
+- Thu gọn bố cục để phù hợp cột nhỏ: tổng trận, W-D-L, tỷ số, thời gian và RP.
+- Hiển thị tối đa 8 trận mới nhất trong danh sách cuộn; tổng W-D-L vẫn tính trên toàn bộ trận của phiên phòng.
+- Trên màn hình hẹp, cột phải tự chuyển thành bố cục responsive, không làm vỡ hai thẻ CLB.
 
-1. Khách chưa Sẵn Sàng: Chủ Phòng được thoát và đóng phòng, không bị trừ RP.
-2. Khách đã Sẵn Sàng: Chủ Phòng thoát bị tính là bỏ cuộc và trừ 20 RP.
-3. Hiển thị modal giữa màn hình, không dùng hộp `confirm()` mặc định của trình duyệt.
-4. Gửi thông báo cho cả Chủ Phòng và Khách sau khi Chủ Phòng bỏ cuộc.
+### 2. Giảm độ trễ khi phía khách nhận thay đổi
+- Trước đây mỗi lần phía khách phát hiện trạng thái đổi và tải lại trang, lịch sử phòng gọi `list_matches("confirmed")`, kéo/làm giàu toàn bộ lịch sử trận hệ thống.
+- Thay bằng truy vấn nhỏ chỉ đọc đúng hai người chơi, trạng thái `confirmed`, kể từ thời điểm mở phòng và chỉ chọn các cột cần thiết.
+- Có fallback về cơ chế cũ nếu truy vấn lọc cặp tạm thời lỗi, để lịch sử phụ không làm hỏng phòng đấu.
+- Giảm nhịp chờ đồng bộ của khách khi đang `playing` từ 3.000 ms xuống 2.200 ms. API không đổi vẫn trả HTTP 204 khi trạng thái chưa đổi, nên payload lặp rất nhỏ.
+- Khi Chat phòng bị tắt, trình duyệt không còn chạy poll chat ngầm.
+- Khi Chat phòng bật nhưng nội dung chưa đổi, không dựng lại toàn bộ DOM tin nhắn.
 
-## Nội dung đã sửa
+## File đã sửa và vị trí ước lượng
 
-### `app.py`
+| File | Khoảng dòng | Nội dung |
+|---|---:|---|
+| `app.py` | 65 | Nâng phiên bản lên `Collap_V1.13.3e` |
+| `app.py` | 3046–3150 | Tối ưu `build_room_head_to_head()` bằng truy vấn cặp trực tiếp, fallback an toàn và giới hạn 8 dòng hiển thị |
+| `templates/room_detail.html` | 294–358 | Đưa LỊCH SỬ ĐẤU vào cột phải, dưới Thông tin phòng đấu |
+| `templates/room_detail.html` | 646–660 | Điều chỉnh nhịp đồng bộ phía khách khi đang thi đấu |
+| `templates/room_detail.html` | 756–826 | Chỉ chạy chat poll khi bật và tránh render lại khi dữ liệu không đổi |
+| `static/style.css` | cuối file | Giao diện lịch sử dạng sidebar và responsive |
 
-- **Khoảng dòng 64–66:** nâng `APP_VERSION` từ `Collap_V1.13.3a` lên `Collap_V1.13.3d`.
-- Không thay đổi công thức RP hoặc route khác trong `app.py`.
+## Những phần không thay đổi
 
-### `modules/room_access_routes.py`
+- Không sửa công thức RP.
+- Không sửa xác nhận, hủy, bỏ cuộc hoặc trừ 20 RP.
+- Không sửa dữ liệu trận trong Supabase.
+- Không thay đổi `created_at` của trận hoặc phòng.
+- Không thêm bảng, cột, trigger hay SQL.
+- Giữ nguyên các modal thoát phòng của Collap_V1.13.3d.
 
-- **Khoảng dòng 171–235 — route `room_leave`:**
-  - Khóa luồng rời phòng không phạt khi `room.status = waiting_ready` và `guest_ready = true`.
-  - Áp dụng cho cả Chủ Phòng và Khách.
-  - Ngăn né phạt bằng cách gửi POST trực tiếp vào endpoint `/leave`.
-  - Nếu trạng thái vừa thay đổi, người chơi được đưa lại phòng để xác nhận đúng luồng; không tự trừ RP sai.
+## Kiểm tra
 
-### `modules/room_rematch_routes.py`
-
-- **Khoảng dòng 86–163 — route mới `room_host_forfeit`:**
-  - Chỉ Chủ Phòng thật sự được gọi route.
-  - Chỉ chạy khi phòng đang `waiting_ready`, có khách và khách đã Sẵn Sàng.
-  - Lệnh cập nhật có điều kiện đồng thời theo:
-    - `id` phòng;
-    - `status = waiting_ready`;
-    - `guest_ready = true`.
-  - Điều kiện trên tránh trừ RP nếu khách vừa bấm Hủy Sẵn Sàng cùng lúc.
-  - Đóng phòng và đặt `guest_ready = false`.
-  - Trừ Chủ Phòng 20 RP bằng hàm dùng chung `apply_room_abandon_penalty()`.
-  - Tính thêm một trận thua cho Chủ Phòng, đặt streak về 0 theo logic hiện có.
-  - Nếu phòng có `match_id` bất thường, lưu delta đúng phía Chủ Phòng: `delta1 = -20`, `delta2 = 0`.
-  - Gửi thông báo cho Khách rằng Chủ Phòng bỏ cuộc; Khách không được cộng hoặc trừ RP.
-  - Gửi thông báo cho Chủ Phòng về mức phạt và trận thua.
-  - Chống bấm/gửi hai lần bằng update có điều kiện; request sau không bị trừ thêm.
-
-### `templates/room_detail.html`
-
-- **Khoảng dòng 164–221 — khu điều khiển khi phòng `waiting_ready`:**
-  - Giữ nguyên nút của Khách từ `Collap_V1.13.3c`.
-  - Bổ sung nút **Thoát Phòng** cho Chủ Phòng khi đã có khách.
-  - Khách chưa Sẵn Sàng:
-    - gọi route `room_leave`;
-    - modal màu an toàn;
-    - hiển thị `KHÔNG TRỪ RP`.
-  - Khách đã Sẵn Sàng:
-    - gọi route `room_host_forfeit`;
-    - modal cảnh báo màu đỏ;
-    - hiển thị `−20 RP`;
-    - nút xác nhận ghi `Bỏ cuộc và đóng phòng`.
-- Tái sử dụng modal và CSS của `Collap_V1.13.3c`; không cần sửa `static/style.css`.
-
-## Logic cuối cùng
-
-| Người thoát | Trạng thái khách | Kết quả |
-|---|---|---|
-| Khách | Chưa Sẵn Sàng | Rời phòng, không trừ RP |
-| Khách | Đã Sẵn Sàng | Bỏ cuộc, trừ 20 RP |
-| Chủ Phòng | Khách chưa Sẵn Sàng | Đóng phòng, không trừ RP |
-| Chủ Phòng | Khách đã Sẵn Sàng | Bỏ cuộc, trừ 20 RP |
-
-Đối thủ không được cộng RP trong các trường hợp bỏ cuộc này.
-
-## Kiểm tra kỹ thuật
-
-- `python -m py_compile app.py modules/room_access_routes.py modules/room_rematch_routes.py`: **đạt**.
-- Import dự án sau khi ghép tuần tự `1.13.2 → 1.13.3a → 1.13.3b → 1.13.3c → 1.13.3d`: **đạt**.
-- Phiên bản sau import: `Collap_V1.13.3d`.
-- Tổng route Flask: **101**.
-- Route mới: `POST /room/<room_id>/host-forfeit`.
-- Route URL + HTTP method trùng: **không có**.
-- Parse 24 template Jinja: **đạt**.
-- Mô phỏng Chủ Phòng thoát khi khách đã Sẵn Sàng:
-  - trừ điểm đúng một lần: **đạt**;
-  - tạo hai thông báo: **đạt**;
-  - đóng phòng: **đạt**.
-- Mô phỏng gọi route phạt khi khách chưa Sẵn Sàng:
-  - không trừ RP: **đạt**.
-- Mô phỏng gửi trực tiếp POST vào `/leave` sau khi khách đã Sẵn Sàng:
-  - bị chặn, không thể né phạt: **đạt**.
-- Không cần SQL Supabase.
-
-## Cài đặt
-
-Bản này áp dụng sau `Collap_V1.13.3c`. Chép đè đúng các file trong ZIP vào thư mục gốc dự án, sau đó Commit, Push và triển khai trên nhánh test.
+- Biên dịch Python `app.py` và toàn bộ `modules/*.py`.
+- Import Flask app trong thư mục sạch.
+- So sánh route với Collap_V1.13.3d, không được mất hoặc trùng route.
+- Parse toàn bộ template Jinja.
+- Mô phỏng truy vấn lịch sử đúng cặp host/guest và kiểm tra đảo tỷ số/RP khi host là player2.
+- Kiểm tra ZIP không bọc thư mục cha, không chứa `.pyc`, `__pycache__` hoặc file backup.

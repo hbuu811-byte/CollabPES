@@ -300,6 +300,52 @@
                     <div><span>Trạng thái phòng</span><strong>{{ room.status|replace('_',' ')|title }}</strong></div>
                 </div>
             </section>
+
+            {% if room_head_to_head and room_head_to_head.available %}
+            <section class="panel room-session-h2h room-session-h2h-rail" aria-label="Lịch sử đấu trong phòng">
+                <div class="room-session-h2h-heading">
+                    <div>
+                        <h3>LỊCH SỬ ĐẤU</h3>
+                        <p class="small">Từ {{ room_head_to_head.since }}</p>
+                    </div>
+                    <strong class="room-session-total">{{ room_head_to_head.total }} trận</strong>
+                </div>
+
+                <div class="room-session-scoreboard">
+                    <div class="room-session-player">
+                        <span>{{ room.host_name }}</span>
+                        <strong>{{ room_head_to_head.host_wins }}</strong>
+                        <small>Thắng</small>
+                    </div>
+                    <div class="room-session-draws">
+                        <strong>{{ room_head_to_head.draws }}</strong>
+                        <small>Hòa</small>
+                    </div>
+                    <div class="room-session-player">
+                        <span>{{ room.guest_name or 'Đối thủ' }}</span>
+                        <strong>{{ room_head_to_head.guest_wins }}</strong>
+                        <small>Thắng</small>
+                    </div>
+                </div>
+
+                {% if room_head_to_head.matches %}
+                <div class="room-session-match-list">
+                    {% for match in room_head_to_head.matches %}
+                    <div class="room-session-match-row">
+                        <div class="room-session-result-line">
+                            <strong>{{ match.host_score }} - {{ match.guest_score }}</strong>
+                            <span>{{ match.created_at_display }}</span>
+                        </div>
+                        <span class="room-session-match-rp">{{ '%+d'|format(match.host_delta) }} / {{ '%+d'|format(match.guest_delta) }} RP</span>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <p class="room-session-empty">Chưa có trận nào được xác nhận trong phòng này.</p>
+                {% endif %}
+            </section>
+            {% endif %}
+
             {% if system_features.room_chat_enabled %}<section class="panel room-chat-side">
                 <h2>Chat phòng</h2>
                 <div id="roomChatBox" class="chat-box"></div>
@@ -314,49 +360,6 @@
 
     <div class="panel room-extra-controls">
     <h2 class="room-control-title">Điều khiển phòng</h2>
-
-    {% if room_head_to_head and room_head_to_head.available %}
-    <section class="room-session-h2h" aria-label="Lịch sử đối đầu trong phòng">
-        <div class="room-session-h2h-heading">
-            <div>
-                <h3>LỊCH SỬ ĐẤU</h3>
-                <p class="small">Tính các trận đã xác nhận kể từ {{ room_head_to_head.since }}.</p>
-            </div>
-            <strong class="room-session-total">{{ room_head_to_head.total }} trận</strong>
-        </div>
-
-        <div class="room-session-scoreboard">
-            <div class="room-session-player">
-                <span>{{ room.host_name }}</span>
-                <strong>{{ room_head_to_head.host_wins }}</strong>
-                <small>Thắng</small>
-            </div>
-            <div class="room-session-draws">
-                <strong>{{ room_head_to_head.draws }}</strong>
-                <small>Hòa</small>
-            </div>
-            <div class="room-session-player">
-                <span>{{ room.guest_name or 'Đang chờ đối thủ' }}</span>
-                <strong>{{ room_head_to_head.guest_wins }}</strong>
-                <small>Thắng</small>
-            </div>
-        </div>
-
-        {% if room_head_to_head.matches %}
-        <div class="room-session-match-list">
-            {% for match in room_head_to_head.matches %}
-            <div class="room-session-match-row">
-                <span class="room-session-match-time">{{ match.created_at_display }}</span>
-                <strong>{{ room.host_name }} {{ match.host_score }} - {{ match.guest_score }} {{ room.guest_name }}</strong>
-                <span class="room-session-match-rp">{{ '%+d'|format(match.host_delta) }} / {{ '%+d'|format(match.guest_delta) }} RP</span>
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p class="room-session-empty">Chưa có trận đối đầu nào được xác nhận kể từ khi phòng này được mở.</p>
-        {% endif %}
-    </section>
-    {% endif %}
 
     {% if system_features.friendly_enabled and room.status == "waiting_ready" %}
 
@@ -648,7 +651,7 @@ function getRoomStateInterval() {
 
     // Khách cần phát hiện lúc chủ vừa gửi kết quả nhanh hơn chủ phòng.
     if (currentRoomStatus === "playing") {
-        return currentRoomUserIsGuest ? 3000 : 8000;
+        return currentRoomUserIsGuest ? 2200 : 8000;
     }
     if (currentRoomStatus === "friendly_playing") return 8000;
     if (currentRoomStatus === "waiting_result_confirm") return 1000;
@@ -753,7 +756,10 @@ window.addEventListener("pagehide", function () {
 });
 </script>
 
+{% if system_features.room_chat_enabled %}
 <script>
+let currentRoomChatKey = "";
+
 function escapeRoomHtml(text) {
     const div = document.createElement("div");
     div.innerText = text || "";
@@ -773,6 +779,12 @@ function renderRoomAvatar(url, name, achievement) {
 function renderRoomChat(messages) {
     const box = document.getElementById("roomChatBox");
     if (!box) return;
+
+    const nextKey = (messages || []).map(function (msg) {
+        return [msg.id || "", msg.created_at || "", msg.message || ""].join(":");
+    }).join("|");
+    if (nextKey === currentRoomChatKey) return;
+    currentRoomChatKey = nextKey;
 
     box.innerHTML = messages.map(function (msg) {
         const adminBadge = msg.user_role === "admin" ? '<span class="badge gold">ADMIN</span>' : '';
@@ -811,6 +823,7 @@ window.addEventListener("DOMContentLoaded", function () {
     });
 });
 </script>
+{% endif %}
 
 <script>
 (function initWinStreakEvent(){

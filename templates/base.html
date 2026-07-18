@@ -93,15 +93,15 @@ function toggleTheme(){
                 <a class="topbar-icon" href="{{ url_for('players') }}" title="Tìm người chơi">⌕</a>
                 <button id="themeToggle" class="topbar-icon theme-toggle" type="button" onclick="toggleTheme()" title="Chuyển giao diện sáng/tối" aria-label="Chuyển giao diện sáng/tối"><span class="theme-sun">☀</span><span class="theme-moon">☾</span></button>
                 <div class="topbar-notification-wrap">
-                    <button id="notificationBellButton" class="topbar-icon notification-bell" type="button" onclick="toggleUserNotifications(event)" title="Thông báo" aria-label="Mở thông báo" aria-expanded="false">🔔{% if unread_notifications %}<b>{{ unread_notifications|length }}</b>{% endif %}</button>
+                    <button id="notificationBellButton" class="topbar-icon notification-bell" type="button" onclick="toggleUserNotifications(event)" title="Thông báo" aria-label="Mở thông báo" aria-expanded="false">🔔{% if unread_notification_count %}<b>{{ unread_notification_count }}</b>{% endif %}</button>
                     <div id="userNotificationDropdown" class="user-notification-dropdown" hidden>
                         <div class="notification-dropdown-head">
                             <strong>Thông báo</strong>
-                            <span>{{ unread_notifications|length if unread_notifications else 0 }} chưa đọc</span>
+                            <span>{{ unread_notification_count or 0 }} chưa đọc</span>
                         </div>
-                        {% if unread_notifications %}
+                        {% if bell_notifications %}
                             <div class="notification-dropdown-list">
-                            {% for notice in unread_notifications %}
+                            {% for notice in bell_notifications %}
                                 <article class="user-notification-card">
                                     <div class="user-notification-content">
                                         <strong>{{ notice.title }}</strong>
@@ -123,7 +123,7 @@ function toggleTheme(){
                             {% endfor %}
                             </div>
                         {% else %}
-                            <p class="notification-empty">Không có thông báo mới.</p>
+                            <p class="notification-empty">Chưa có thông báo.</p>
                         {% endif %}
                         <div class="notification-dropdown-footer">
                             <a href="{{ url_for('notifications') }}">Xem tất cả thông báo cũ →</a>

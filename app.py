@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3f"
+APP_VERSION = "Collap_V1.13.3h"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -3494,7 +3494,8 @@ def inject_globals():
             "active_room": None,
             "cooldown_text": "",
             "active_announcement": None,
-            "unread_notifications": [],
+            "bell_notifications": [],
+            "unread_notification_count": 0,
         }
 
     # Tối ưu phản hồi HTML: không chặn render để chờ phòng, lời mời và thông báo
@@ -3506,9 +3507,11 @@ def inject_globals():
     cooldown = cooldown_text(user) if user else ""
     announcement = None
     try:
-        unread_notifications = list_unread_notifications(user.get("id"), 5) if user else []
+        bell_notifications = list_bell_notifications(user.get("id"), 20) if user else []
+        unread_notification_count = sum(1 for notice in bell_notifications if not notice.get("is_read"))
     except Exception:
-        unread_notifications = []
+        bell_notifications = []
+        unread_notification_count = 0
 
     return {
         "APP_NAME": APP_NAME,
@@ -3529,7 +3532,8 @@ def inject_globals():
         "active_room": active_room,
         "cooldown_text": cooldown,
         "active_announcement": announcement,
-        "unread_notifications": unread_notifications,
+        "bell_notifications": bell_notifications,
+        "unread_notification_count": unread_notification_count,
     }
 
 

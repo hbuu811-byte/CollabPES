@@ -13,6 +13,7 @@ EXPORTED_NAMES = [
     "notify_admins",
     "cleanup_user_notifications",
     "list_unread_notifications",
+    "list_bell_notifications",
     "list_user_notifications",
 ]
 
@@ -149,6 +150,31 @@ def list_unread_notifications(user_id, limit=5):
         return [dict(item) for item in (result.data or [])][:NOTIFICATION_MAX_ITEMS]
     except Exception as exc:
         print(f"list_unread_notifications warning: {exc}")
+        return []
+
+
+def list_bell_notifications(user_id, limit=20):
+    """Trả tối đa 20 thông báo mới nhất còn hạn cho chuông thông báo.
+
+    Gồm cả đã đọc và chưa đọc. Chỉ lọc theo đúng user_id đang đăng nhập và
+    không chạy lệnh dọn dữ liệu trên mỗi lần render trang để tránh tăng request.
+    """
+    if not user_id:
+        return []
+    try:
+        result = execute_query(
+            db.table("user_notifications")
+            .select("*")
+            .eq("user_id", user_id)
+            .gte("created_at", _cutoff_iso())
+            .order("created_at", desc=True)
+            .limit(max(1, min(int(limit), NOTIFICATION_MAX_ITEMS))),
+            "list_bell_notifications",
+            attempts=2,
+        )
+        return [dict(item) for item in (result.data or [])][:NOTIFICATION_MAX_ITEMS]
+    except Exception as exc:
+        print(f"list_bell_notifications warning: {exc}")
         return []
 
 

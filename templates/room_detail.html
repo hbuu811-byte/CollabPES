@@ -308,46 +308,30 @@
             </section>
 
             {% if room_head_to_head and room_head_to_head.available %}
-            <section class="panel room-session-h2h room-session-h2h-rail" aria-label="Lịch sử đấu trong phòng">
-                <div class="room-session-h2h-heading">
-                    <div>
-                        <h3>LỊCH SỬ ĐẤU</h3>
-                        <p class="small">Từ {{ room_head_to_head.since }}</p>
-                    </div>
-                    <strong class="room-session-total">{{ room_head_to_head.total }} trận</strong>
-                </div>
-
-                <div class="room-session-scoreboard">
-                    <div class="room-session-player">
-                        <span>{{ room.host_name }}</span>
-                        <strong>{{ room_head_to_head.host_wins }}</strong>
-                        <small>Thắng</small>
-                    </div>
-                    <div class="room-session-draws">
-                        <strong>{{ room_head_to_head.draws }}</strong>
-                        <small>Hòa</small>
-                    </div>
-                    <div class="room-session-player">
-                        <span>{{ room.guest_name or 'Đối thủ' }}</span>
-                        <strong>{{ room_head_to_head.guest_wins }}</strong>
-                        <small>Thắng</small>
-                    </div>
+            <section class="panel room-session-h2h room-session-h2h-rail room-score-history-panel" aria-label="Lịch sử tỷ số trong phòng">
+                <div class="room-score-history-title">
+                    <h3>LỊCH SỬ ĐẤU</h3>
                 </div>
 
                 {% if room_head_to_head.matches %}
-                <div class="room-session-match-list">
-                    {% for match in room_head_to_head.matches %}
-                    <div class="room-session-match-row">
-                        <div class="room-session-result-line">
-                            <strong>{{ match.host_score }} - {{ match.guest_score }}</strong>
-                            <span>{{ match.created_at_display }}</span>
-                        </div>
-                        <span class="room-session-match-rp">{{ '%+d'|format(match.host_delta) }} / {{ '%+d'|format(match.guest_delta) }} RP</span>
+                <div class="room-score-history-board">
+                    <div class="room-score-history-head">
+                        <span title="{{ room.host_name }}">{{ room.host_name }}</span>
+                        <strong>TỶ SỐ</strong>
+                        <span class="is-right" title="{{ room.guest_name or 'Đối thủ' }}">{{ room.guest_name or 'Đối thủ' }}</span>
                     </div>
-                    {% endfor %}
+                    <div class="room-score-history-list">
+                        {% for match in room_head_to_head.matches %}
+                        <div class="room-score-history-row" aria-label="Tỷ số {{ match.host_score }} - {{ match.guest_score }}">
+                            <span class="room-score-value{% if match.host_score|int > match.guest_score|int %} is-winner{% endif %}">{{ match.host_score }}</span>
+                            <span class="room-score-separator">-</span>
+                            <span class="room-score-value{% if match.guest_score|int > match.host_score|int %} is-winner{% endif %}">{{ match.guest_score }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
                 </div>
                 {% else %}
-                <p class="room-session-empty">Chưa có trận nào được xác nhận trong phòng này.</p>
+                <p class="room-session-empty">Chưa có tỷ số nào trong phòng này.</p>
                 {% endif %}
             </section>
             {% endif %}

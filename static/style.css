@@ -4342,3 +4342,116 @@ body.room-action-modal-open{overflow:hidden}
   .room-side-rail{display:flex;grid-column:auto;min-height:unset}
   .room-session-h2h-rail{min-height:0}
 }
+
+/* Collap V1.13.3j — Bảng lịch sử trong phòng chỉ hiển thị tỷ số */
+.room-score-history-panel{
+  padding:14px;
+  background:
+    linear-gradient(155deg,rgba(214,173,85,.075),rgba(7,17,29,.82)),
+    var(--pes-panel,#0b1726);
+}
+.room-score-history-title{
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:1px 2px 10px;
+  border-bottom:1px solid rgba(214,173,85,.18);
+}
+.room-score-history-title h3{
+  margin:0;
+  color:var(--pes-text,#f4f7fb);
+  font-size:17px;
+  letter-spacing:.04em;
+}
+.room-score-history-board{
+  margin-top:11px;
+  overflow:hidden;
+  border:1px solid rgba(214,173,85,.26);
+  border-radius:13px;
+  background:rgba(3,10,18,.48);
+}
+.room-score-history-head{
+  display:grid;
+  grid-template-columns:minmax(0,1fr) 72px minmax(0,1fr);
+  align-items:center;
+  gap:8px;
+  min-height:42px;
+  padding:8px 12px;
+  border-bottom:1px solid rgba(214,173,85,.24);
+  background:linear-gradient(180deg,rgba(214,173,85,.13),rgba(214,173,85,.045));
+}
+.room-score-history-head span{
+  min-width:0;
+  overflow:hidden;
+  color:var(--pes-text,#f4f7fb);
+  font-size:11px;
+  font-weight:850;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+}
+.room-score-history-head .is-right{text-align:right}
+.room-score-history-head strong{
+  color:#e6c579;
+  font-size:10px;
+  letter-spacing:.11em;
+  text-align:center;
+}
+.room-score-history-list{
+  display:grid;
+  max-height:278px;
+  overflow-y:auto;
+  overscroll-behavior:contain;
+  scrollbar-width:thin;
+}
+.room-score-history-row{
+  display:grid;
+  grid-template-columns:1fr 26px 1fr;
+  align-items:center;
+  min-height:48px;
+  padding:6px 18px;
+  border-bottom:1px solid rgba(255,255,255,.065);
+  background:rgba(255,255,255,.012);
+}
+.room-score-history-row:last-child{border-bottom:0}
+.room-score-history-row:nth-child(even){background:rgba(214,173,85,.025)}
+.room-score-value{
+  display:block;
+  color:var(--pes-text,#f4f7fb);
+  font-size:24px;
+  font-weight:950;
+  line-height:1;
+  text-align:center;
+  font-variant-numeric:tabular-nums;
+  text-shadow:0 2px 12px rgba(0,0,0,.5);
+}
+.room-score-value.is-winner{
+  color:#e6c579;
+  text-shadow:0 0 18px rgba(214,173,85,.22);
+}
+.room-score-separator{
+  color:var(--pes-muted,#8d9aab);
+  font-size:17px;
+  font-weight:800;
+  text-align:center;
+}
+html[data-theme="light"] .room-score-history-panel{
+  background:linear-gradient(155deg,rgba(174,128,27,.08),rgba(255,255,255,.92));
+}
+html[data-theme="light"] .room-score-history-board{
+  border-color:#e1c98f;
+  background:#fff;
+}
+html[data-theme="light"] .room-score-history-head{
+  border-color:#ead7a9;
+  background:#fff8e8;
+}
+html[data-theme="light"] .room-score-history-head span,
+html[data-theme="light"] .room-score-value{color:#172233}
+html[data-theme="light"] .room-score-value.is-winner{color:#8a6212}
+html[data-theme="light"] .room-score-history-row{border-color:#edf0f3}
+@media(max-width:560px){
+  .room-score-history-head{grid-template-columns:minmax(0,1fr) 58px minmax(0,1fr);padding-inline:9px}
+  .room-score-history-row{min-height:45px;padding-inline:12px}
+  .room-score-value{font-size:22px}
+}
+

@@ -226,7 +226,13 @@
                             <form method="post" action="{{ url_for('room_rematch', room_id=room.id) }}">
                                 <button class="btn gold room-center-action-btn" type="submit" {% if current_has_rematch_ready %}disabled{% endif %}>{{ 'Đã Chọn Đá Tiếp' if current_has_rematch_ready else 'Đá Tiếp' }}</button>
                             </form>
-                            <form method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}">
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}"
+                                  data-modal-tone="warning"
+                                  data-modal-icon="🚪"
+                                  data-modal-title="Kết thúc phiên đấu?"
+                                  data-modal-message="Bạn không muốn đá tiếp? Đối thủ sẽ nhận được thông báo và cả hai sẽ được đưa về sảnh chính."
+                                  data-modal-note="KHÔNG TRỪ RP"
+                                  data-modal-confirm-label="Thoát và về sảnh">
                                 <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
                             </form>
                         </div>
@@ -705,8 +711,20 @@ function checkRoomState() {
         }
         if (data.rematch_expired) {
             roomStateStopped = true;
-            window.alert("Yêu cầu đá tiếp đã hết hạn sau 60 giây. Bạn sẽ được đưa về sảnh chính.");
-            window.location.href = "{{ url_for('dashboard') }}";
+            if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
+                window.PESRoomActionModal.showNotice({
+                    tone: "warning",
+                    icon: "⌛",
+                    title: "Yêu cầu đá tiếp đã hết hạn",
+                    message: "Yêu cầu đá tiếp đã hết hạn sau 60 giây. Bạn sẽ được đưa về sảnh chính.",
+                    note: "VỀ SẢNH CHÍNH",
+                    confirmLabel: "Về sảnh chính",
+                    redirectUrl: "{{ url_for('dashboard') }}",
+                    autoRedirectMs: 4500
+                });
+            } else {
+                window.location.href = "{{ url_for('dashboard') }}";
+            }
             return;
         }
         if (typeof data.timeout_seconds !== "undefined") {
@@ -715,10 +733,20 @@ function checkRoomState() {
         }
         if (data.rematch_declined) {
             roomStateStopped = true;
-            if (!data.rematch_declined_by_me) {
-                window.alert("Đối thủ không muốn đá tiếp. Bạn sẽ được đưa về sảnh chính.");
+            if (!data.rematch_declined_by_me && window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
+                window.PESRoomActionModal.showNotice({
+                    tone: "warning",
+                    icon: "🚪",
+                    title: "Đối thủ đã rời phòng",
+                    message: "Đối thủ không muốn đá tiếp. Bạn sẽ được đưa về sảnh chính.",
+                    note: "PHIÊN ĐẤU ĐÃ KẾT THÚC",
+                    confirmLabel: "Về sảnh chính",
+                    redirectUrl: "{{ url_for('dashboard') }}",
+                    autoRedirectMs: 5000
+                });
+            } else {
+                window.location.href = "{{ url_for('dashboard') }}";
             }
-            window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
         if (data.state_key !== currentRoomStateKey) {
@@ -874,15 +902,53 @@ window.addEventListener("DOMContentLoaded", function () {
     const note = document.getElementById("roomActionModalNote");
     const icon = document.getElementById("roomActionModalIcon");
     const confirmButton = document.getElementById("roomActionModalConfirm");
+    const cancelButton = document.getElementById("roomActionModalCancel");
+    const closeButton = modal.querySelector(".room-action-modal-close");
     const cancelButtons = modal.querySelectorAll("[data-room-modal-cancel]");
     const forms = document.querySelectorAll(".room-exit-confirm-form");
 
     let pendingForm = null;
     let returnFocus = null;
     let submitting = false;
+    let noticeMode = false;
+    let noticeRedirectUrl = "";
+    let noticeTimer = null;
+
+    function clearNoticeTimer() {
+        if (noticeTimer) {
+            window.clearTimeout(noticeTimer);
+            noticeTimer = null;
+        }
+    }
+
+    function setDismissControlsVisible(visible) {
+        if (cancelButton) cancelButton.hidden = !visible;
+        if (closeButton) closeButton.hidden = !visible;
+    }
+
+    function revealModal() {
+        modal.hidden = false;
+        modal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("room-action-modal-open");
+        window.requestAnimationFrame(function () {
+            modal.classList.add("is-open");
+            confirmButton.focus();
+        });
+    }
+
+    function redirectNotice() {
+        if (!noticeRedirectUrl) return;
+        const target = noticeRedirectUrl;
+        noticeRedirectUrl = "";
+        clearNoticeTimer();
+        confirmButton.disabled = true;
+        confirmButton.textContent = "Đang chuyển về sảnh...";
+        window.location.href = target;
+    }
 
     function closeModal() {
-        if (submitting) return;
+        if (submitting || noticeMode) return;
+        clearNoticeTimer();
         modal.classList.remove("is-open");
         modal.setAttribute("aria-hidden", "true");
         window.setTimeout(function () {
@@ -894,8 +960,12 @@ window.addEventListener("DOMContentLoaded", function () {
     }
 
     function openModal(form) {
+        clearNoticeTimer();
+        noticeMode = false;
+        noticeRedirectUrl = "";
         pendingForm = form;
         returnFocus = document.activeElement;
+        setDismissControlsVisible(true);
 
         const tone = form.dataset.modalTone || "warning";
         modal.dataset.tone = tone;
@@ -907,20 +977,39 @@ window.addEventListener("DOMContentLoaded", function () {
         confirmButton.textContent = form.dataset.modalConfirmLabel || "Xác nhận";
         confirmButton.disabled = false;
         submitting = false;
+        revealModal();
+    }
 
-        modal.hidden = false;
-        modal.setAttribute("aria-hidden", "false");
-        document.body.classList.add("room-action-modal-open");
-        window.requestAnimationFrame(function () {
-            modal.classList.add("is-open");
-            confirmButton.focus();
-        });
+    function showNotice(options) {
+        const settings = options || {};
+        clearNoticeTimer();
+        pendingForm = null;
+        returnFocus = null;
+        submitting = false;
+        noticeMode = true;
+        noticeRedirectUrl = settings.redirectUrl || "";
+        setDismissControlsVisible(false);
+
+        modal.dataset.tone = settings.tone || "warning";
+        icon.textContent = settings.icon || "ℹ";
+        title.textContent = settings.title || "Thông báo phòng đấu";
+        message.textContent = settings.message || "";
+        note.textContent = settings.note || "";
+        note.hidden = !settings.note;
+        confirmButton.textContent = settings.confirmLabel || "Tiếp tục";
+        confirmButton.disabled = false;
+        revealModal();
+
+        const autoRedirectMs = Number(settings.autoRedirectMs || 0);
+        if (noticeRedirectUrl && autoRedirectMs > 0) {
+            noticeTimer = window.setTimeout(redirectNotice, Math.max(1500, autoRedirectMs));
+        }
     }
 
     forms.forEach(function (form) {
         form.addEventListener("submit", function (event) {
             event.preventDefault();
-            if (submitting) return;
+            if (submitting || noticeMode) return;
             openModal(form);
         });
     });
@@ -934,7 +1023,7 @@ window.addEventListener("DOMContentLoaded", function () {
     });
 
     document.addEventListener("keydown", function (event) {
-        if (!modal.classList.contains("is-open")) return;
+        if (!modal.classList.contains("is-open") || noticeMode) return;
         if (event.key === "Escape") {
             event.preventDefault();
             closeModal();
@@ -942,6 +1031,10 @@ window.addEventListener("DOMContentLoaded", function () {
     });
 
     confirmButton.addEventListener("click", function () {
+        if (noticeMode) {
+            redirectNotice();
+            return;
+        }
         if (!pendingForm || submitting) return;
         submitting = true;
         confirmButton.disabled = true;
@@ -951,6 +1044,10 @@ window.addEventListener("DOMContentLoaded", function () {
             HTMLFormElement.prototype.submit.call(formToSubmit);
         }, 120);
     });
+
+    window.PESRoomActionModal = {
+        showNotice: showNotice
+    };
 })();
 </script>
 

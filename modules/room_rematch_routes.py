@@ -83,6 +83,86 @@ def register_routes(context):
         return redirect(url_for("dashboard"))
 
 
+    @app.route("/room/<room_id>/host-forfeit", methods=["POST"])
+    @login_required
+    def room_host_forfeit(room_id):
+        """Chủ phòng bỏ cuộc khi khách đã bấm Sẵn Sàng.
+
+        Trạng thái chờ nhưng khách chưa sẵn sàng phải đi qua ``room_leave`` để
+        đóng phòng không mất RP. Điều kiện ``guest_ready = true`` trong lệnh
+        update bảo vệ trường hợp khách vừa hủy Sẵn Sàng cùng lúc chủ phòng xác
+        nhận thoát.
+        """
+        user = current_user()
+        room = get_room(room_id)
+
+        if not room:
+            flash("Không tìm thấy phòng.", "danger")
+            return redirect(url_for("dashboard"))
+
+        if user["id"] != room.get("host_user_id"):
+            flash("Chỉ Chủ Phòng mới có thể dùng chức năng này.", "danger")
+            return redirect(url_for("room_detail", room_id=room_id))
+
+        if room.get("status") != "waiting_ready":
+            flash("Phòng không còn ở trạng thái chờ Sẵn Sàng.", "warning")
+            return redirect(url_for("room_detail", room_id=room_id))
+
+        if not room.get("guest_user_id") or not bool(room.get("guest_ready")):
+            flash("Khách chưa Sẵn Sàng nên bạn có thể đóng phòng mà không bị trừ RP.", "warning")
+            return redirect(url_for("room_detail", room_id=room_id))
+
+        reason = f'{user["display_name"]} đã rời phòng sau khi khách Sẵn Sàng và bị trừ {ROOM_ABANDON_PENALTY} RP.'
+        result = execute_query(
+            db.table("match_rooms").update({
+                "status": "cancelled",
+                "guest_ready": False,
+                "note": reason,
+                "state_expires_at": None,
+                "updated_at": now_iso(),
+            })
+            .eq("id", room_id)
+            .eq("status", "waiting_ready")
+            .eq("guest_ready", True),
+            "host_forfeit_after_guest_ready",
+        )
+
+        # Nếu khách vừa Hủy Sẵn Sàng hoặc request khác đã xử lý phòng, không trừ RP.
+        if not (result.data or []):
+            flash("Trạng thái phòng vừa thay đổi. Bạn không bị trừ RP; hãy kiểm tra lại phòng.", "warning")
+            return redirect(url_for("room_detail", room_id=room_id))
+
+        penalty_delta = apply_room_abandon_penalty(user["id"])
+        if room.get("match_id"):
+            execute_query(
+                db.table("matches").update({
+                    "status": "cancelled",
+                    "delta1": penalty_delta if penalty_delta is not None else -ROOM_ABANDON_PENALTY,
+                    "delta2": 0,
+                    "note": reason,
+                    "updated_at": now_iso(),
+                }).eq("id", room.get("match_id")),
+                "host_forfeit_match",
+            )
+
+        create_user_notification(
+            room.get("guest_user_id"),
+            "🚪 Chủ phòng đã bỏ cuộc",
+            f'{user["display_name"]} đã thoát sau khi bạn Sẵn Sàng và bị trừ {ROOM_ABANDON_PENALTY} RP. Bạn không bị cộng hoặc trừ RP.',
+            "/matches",
+            "host_forfeit",
+        )
+        create_user_notification(
+            user["id"],
+            "⚠️ Bạn đã bỏ cuộc",
+            f"Bạn bị trừ {ROOM_ABANDON_PENALTY} RP và được tính một trận thua vì rời phòng sau khi khách đã Sẵn Sàng.",
+            "/matches",
+            "room_forfeit_penalty",
+        )
+        flash(f"Bạn đã bỏ cuộc và bị trừ {ROOM_ABANDON_PENALTY} RP.", "danger")
+        return redirect(url_for("dashboard"))
+
+
     @app.route("/room/<room_id>/rematch", methods=["POST"])
     @login_required
     def room_rematch(room_id):

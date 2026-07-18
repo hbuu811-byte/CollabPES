@@ -194,6 +194,30 @@
                             </form>
                             {% endif %}
                         </div>
+                        {% elif current_user.id == room.host_user_id %}
+                        <div class="room-center-primary-actions">
+                            {% if room.guest_ready %}
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_host_forfeit', room_id=room.id) }}"
+                                  data-modal-tone="danger"
+                                  data-modal-icon="⚠"
+                                  data-modal-title="Xác nhận bỏ cuộc"
+                                  data-modal-message="Khách đã Sẵn Sàng. Chủ phòng thoát lúc này sẽ bị tính là bỏ cuộc và hệ thống trừ 20 RP."
+                                  data-modal-note="−20 RP"
+                                  data-modal-confirm-label="Bỏ cuộc và đóng phòng">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% else %}
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
+                                  data-modal-tone="safe"
+                                  data-modal-icon="🚪"
+                                  data-modal-title="Đóng phòng đấu?"
+                                  data-modal-message="Khách chưa Sẵn Sàng nên bạn có thể đóng phòng mà không bị trừ RP."
+                                  data-modal-note="KHÔNG TRỪ RP"
+                                  data-modal-confirm-label="Thoát và đóng phòng">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% endif %}
+                        </div>
                         {% endif %}
                     {% else %}
                         {% if room.status == 'confirmed' and current_user.id in [room.host_user_id, room.guest_user_id] %}

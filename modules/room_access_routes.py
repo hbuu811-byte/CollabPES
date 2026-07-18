@@ -186,6 +186,16 @@ def register_routes(context):
             flash("Không thể rời phòng khi trận xếp hạng đang thi đấu hoặc đang chờ xác nhận kết quả.", "warning")
             return redirect(url_for("room_detail", room_id=room_id))
 
+        # Ở bước chờ Sẵn Sàng, luồng rời phòng không phạt chỉ hợp lệ khi khách
+        # chưa Sẵn Sàng. Kiểm tra tại backend để không thể né phạt bằng POST
+        # trực tiếp vào endpoint /leave hoặc do giao diện vừa bị thay đổi trạng thái.
+        if room.get("status") == "waiting_ready" and bool(room.get("guest_ready")):
+            if user["id"] == room.get("guest_user_id"):
+                flash("Bạn đã Sẵn Sàng. Thoát lúc này được tính là bỏ cuộc và trừ 20 RP.", "warning")
+            else:
+                flash("Khách đã Sẵn Sàng. Chủ phòng thoát lúc này được tính là bỏ cuộc và trừ 20 RP.", "warning")
+            return redirect(url_for("room_detail", room_id=room_id))
+
         if user["id"] == room.get("guest_user_id"):
             execute_query(
                 db.table("match_rooms").update({

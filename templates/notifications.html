@@ -3,7 +3,7 @@
 <div class="notification-page-head">
     <div>
         <h1 class="page-title">Thông báo của tôi</h1>
-        <p class="page-subtitle">Xem lại toàn bộ thông báo cá nhân theo thứ tự mới nhất.</p>
+        <p class="page-subtitle">Hiển thị tối đa {{ notification_max_items }} thông báo mới nhất. Thông báo quá {{ notification_retention_days }} ngày sẽ được dọn khi mở trang hoặc khi có thông báo mới.</p>
     </div>
     <form method="post" action="{{ url_for('mark_all_notifications_read') }}">
         <button class="btn green" type="submit">Đánh dấu tất cả đã đọc</button>
@@ -42,11 +42,4 @@
 {% endfor %}
 </div>
 
-{% if page > 1 or has_next %}
-<nav class="pagination">
-    {% if page > 1 %}<a href="{{ url_for('notifications', filter=notification_filter, page=page-1) }}">← Trước</a>{% endif %}
-    <span>Trang {{ page }}</span>
-    {% if has_next %}<a href="{{ url_for('notifications', filter=notification_filter, page=page+1) }}">Sau →</a>{% endif %}
-</nav>
-{% endif %}
 {% endblock %}

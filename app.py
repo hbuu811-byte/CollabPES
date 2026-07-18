@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.2"
+APP_VERSION = "Collap_V1.13.3a"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -2189,93 +2189,7 @@ def list_match_disputes(status=None):
     return [dict(item) for item in (result.data or [])]
 
 
-def create_user_notification(user_id, title, message, link_url=None, notification_type="system"):
-    if not user_id:
-        return None
-    try:
-        result = execute_query(
-            db.table("user_notifications").insert({
-                "user_id": user_id,
-                "notification_type": str(notification_type)[:50],
-                "title": str(title)[:120],
-                "message": str(message)[:500],
-                "link_url": str(link_url)[:300] if link_url else None,
-                "is_read": False,
-            }),
-            "create_user_notification",
-            attempts=2,
-        )
-        return result.data[0] if result.data else None
-    except Exception as exc:
-        print(f"create_user_notification warning: {exc}")
-        return None
-
-
-def create_notifications_for_users(user_ids, title, message, link_url=None, notification_type="system"):
-    seen = set()
-    for user_id in user_ids or []:
-        if not user_id or user_id in seen:
-            continue
-        seen.add(user_id)
-        create_user_notification(user_id, title, message, link_url, notification_type)
-
-
-def notify_admins(title, message, link_url="/admin#disputes"):
-    try:
-        admin_ids = [user.get("id") for user in list_all_users() if is_admin_user(user)]
-        create_notifications_for_users(admin_ids, title, message, link_url, "dispute")
-    except Exception as exc:
-        print(f"notify_admins warning: {exc}")
-
-
-def list_unread_notifications(user_id, limit=5):
-    if not user_id:
-        return []
-    try:
-        result = execute_query(
-            db.table("user_notifications")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("is_read", False)
-            .order("created_at", desc=True)
-            .limit(max(1, min(int(limit), 20))),
-            "list_unread_notifications",
-            attempts=2,
-        )
-        return [dict(item) for item in (result.data or [])]
-    except Exception as exc:
-        print(f"list_unread_notifications warning: {exc}")
-        return []
-
-
-def list_user_notifications(user_id, page=1, per_page=20, unread_only=False):
-    """Tải lịch sử thông báo của đúng người dùng, có phân trang tại Supabase."""
-    if not user_id:
-        return [], False
-    page = max(1, int(page or 1))
-    per_page = max(1, min(int(per_page or 20), 50))
-    start = (page - 1) * per_page
-    try:
-        query = (
-            db.table("user_notifications")
-            .select("*")
-            .eq("user_id", user_id)
-            .order("created_at", desc=True)
-        )
-        if unread_only:
-            query = query.eq("is_read", False)
-        result = execute_query(
-            query.range(start, start + per_page),
-            "list_user_notifications",
-            attempts=2,
-        )
-        rows = [dict(item) for item in (result.data or [])]
-        has_next = len(rows) > per_page
-        return rows[:per_page], has_next
-    except Exception as exc:
-        print(f"list_user_notifications warning: {exc}")
-        return [], False
-
+# Dịch vụ thông báo cá nhân đã tách sang modules/notification_service.py.
 
 def dispute_reason_label(reason_code):
     return DISPUTE_REASON_OPTIONS.get(reason_code, DISPUTE_REASON_OPTIONS["other"])
@@ -3571,20 +3485,18 @@ def inject_globals():
 @login_required
 def notifications():
     user = current_user()
-    try:
-        page = max(1, int(request.args.get("page", 1)))
-    except (TypeError, ValueError):
-        page = 1
     unread_only = (request.args.get("filter") or "all") == "unread"
-    notices, has_next = list_user_notifications(
-        user.get("id"), page=page, per_page=20, unread_only=unread_only
+    notices, _ = list_user_notifications(
+        user.get("id"), page=1, per_page=20, unread_only=unread_only
     )
     return render_template(
         "notifications.html",
         notifications=notices,
-        page=page,
-        has_next=has_next,
+        page=1,
+        has_next=False,
         notification_filter="unread" if unread_only else "all",
+        notification_retention_days=7,
+        notification_max_items=20,
     )
 
 
@@ -5055,13 +4967,15 @@ def redirect_admin(tab="overview"):
     return redirect(url_for("admin") + f"#{tab}")
 
 
-# Nạp dịch vụ theo thứ tự dependency: khóa -> kết quả -> phát lại -> xóa an toàn.
+# Nạp dịch vụ theo thứ tự dependency: thông báo -> khóa -> kết quả -> phát lại -> xóa an toàn.
+from modules import notification_service as _notification_service
 from modules import ranking_lock_service as _ranking_lock_service
 from modules import match_result_service as _match_result_service
 from modules import ranking_rebuild_service as _ranking_rebuild_service
 from modules import data_cleanup_service as _data_cleanup_service
 
 for _service_module in (
+    _notification_service,
     _ranking_lock_service,
     _match_result_service,
     _ranking_rebuild_service,

@@ -1,4 +1,4 @@
-"""Route Admin xử lý tranh chấp, sửa tỷ số/trạng thái và xác nhận trận.
+"""Route Admin xử lý tranh chấp và đổi trạng thái xác nhận/hủy trận.
 
 Module đăng ký route theo dependency của app.py để giữ nguyên endpoint và tránh import vòng.
 """
@@ -66,7 +66,7 @@ def register_routes(context):
     @login_required
     @admin_required
     def admin_update_match(match_id):
-        """Admin sửa tỷ số/trạng thái và tính lại BXH theo thời gian trận gốc."""
+        """Admin chỉ đổi trạng thái Đã xác nhận/Đã hủy, không sửa tỷ số."""
         actor = current_user()
         match = get_match(match_id)
         if not match:
@@ -75,54 +75,44 @@ def register_routes(context):
 
         old_signature = _match_state_signature(match)
         old_status = str(match.get("status") or "waiting_confirm")
-        new_status = str(request.form.get("status") or old_status).strip()
+        requested_status = str(request.form.get("status") or "").strip()
+        new_status = requested_status or old_status
         note = str(request.form.get("note") or "").strip()[:500]
-        allowed_statuses = {"playing", "waiting_confirm", "disputed", "confirmed", "cancelled"}
-        if new_status not in allowed_statuses:
-            flash("Trạng thái không hợp lệ.", "danger")
+
+        # Không cho client gửi trạng thái trung gian. Nếu form không gửi trạng thái,
+        # chỉ cho phép cập nhật ghi chú và giữ nguyên trạng thái hiện tại.
+        if new_status != old_status and new_status not in {"confirmed", "cancelled"}:
+            flash("Admin chỉ có thể chuyển trận sang Đã xác nhận hoặc Đã hủy.", "danger")
             return redirect_admin("matches")
 
-        try:
-            new_score1 = parse_score(request.form.get("score1"))
-            new_score2 = parse_score(request.form.get("score2"))
-        except ValueError as exc:
-            flash(str(exc), "danger")
-            return redirect_admin("matches")
-
-        if new_status == "confirmed" and not has_admin_permission(actor, "matches_confirm"):
-            abort(403)
-        if new_status == "cancelled" and not has_admin_permission(actor, "matches_cancel"):
-            abort(403)
-        if new_status not in {"confirmed", "cancelled"} and not (
-            has_admin_permission(actor, "matches_confirm")
-            or has_admin_permission(actor, "matches_cancel")
-        ):
-            abort(403)
-        if new_status == "confirmed" and (new_score1 is None or new_score2 is None):
-            flash("Trận xác nhận phải có đủ hai tỷ số.", "danger")
-            return redirect_admin("matches")
-
-        changed_score = score_changed(match, new_score1, new_score2)
         changed_status = new_status != old_status
         changed_note = note != str(match.get("note") or "")
-        if not (changed_score or changed_status or changed_note):
+        if not (changed_status or changed_note):
             flash("Không có thay đổi cần lưu.", "warning")
             return redirect_admin("matches")
 
+        if changed_status and new_status == "confirmed":
+            if not has_admin_permission(actor, "matches_confirm"):
+                abort(403)
+            if match.get("score1") is None or match.get("score2") is None:
+                flash("Không thể xác nhận vì trận chưa có đủ hai tỷ số.", "danger")
+                return redirect_admin("matches")
+        if changed_status and new_status == "cancelled":
+            if not has_admin_permission(actor, "matches_cancel"):
+                abort(403)
+
         override = {
-            "score1": new_score1,
-            "score2": new_score2,
             "status": new_status,
             "note": note or match.get("note") or (
-                "Đã xác nhận." if new_status == "confirmed" else "Admin đã cập nhật trận."
+                "Admin đã xác nhận trận." if new_status == "confirmed" else "Admin đã hủy trận."
             ),
         }
-        if changed_score or changed_status:
+        if changed_status:
             override["confirmed_by_id"] = actor.get("id") if new_status == "confirmed" else None
 
         lock_token = None
         try:
-            if changed_score or changed_status:
+            if changed_status:
                 lock_token = acquire_ranking_rebuild_lock(actor.get("id"), match_id)
                 fresh = get_match(match_id)
                 if not fresh or _match_state_signature(fresh) != old_signature:
@@ -132,32 +122,43 @@ def register_routes(context):
                 match = fresh
                 old_status = str(match.get("status") or old_status)
 
-            affects_ranking = old_status == "confirmed" or new_status == "confirmed"
-            if affects_ranking and (changed_score or changed_status):
+            affects_ranking = changed_status and (
+                old_status == "confirmed" or new_status == "confirmed"
+            )
+            if affects_ranking:
                 match_count, user_count = rebuild_rankings_after_admin_change(
                     match_id, override, lock_token=lock_token, actor_id=actor.get("id")
                 )
                 log_admin_action(
-                    "Sửa kết quả/trạng thái trận",
+                    "Đổi trạng thái trận",
                     "match",
                     match_id,
                     details=(
-                        f"{match.get('score1')}-{match.get('score2')} / {old_status} → "
-                        f"{new_score1}-{new_score2} / {new_status}; phát lại {match_count} trận, "
+                        f"{old_status} → {new_status}; giữ nguyên tỷ số "
+                        f"{match.get('score1')}-{match.get('score2')}; phát lại {match_count} trận, "
                         f"tính lại {user_count} tài khoản; giữ nguyên created_at"
                     ),
                 )
                 flash(
-                    "Đã lưu và tính lại RP, thắng/thua, streak, loss_streak theo đúng mốc thời gian cũ.",
+                    "Đã đổi trạng thái và tính lại RP, thắng/thua, streak, loss_streak theo thời gian gốc.",
                     "success",
                 )
                 return redirect_admin("matches")
 
             payload = {key: value for key, value in override.items() if key != "created_at"}
+            if changed_status and new_status == "cancelled":
+                payload.update({
+                    "delta1": 0,
+                    "delta2": 0,
+                    "winner_id": None,
+                    "loser_id": None,
+                    "rp_formula_version": None,
+                    "rp_details": None,
+                })
             payload["updated_at"] = now_iso()
             result = execute_query(
                 db.table("matches").update(payload).eq("id", match_id).eq("status", old_status),
-                "admin_update_match_without_rebuild",
+                "admin_update_match_status_only",
             )
             if not (result.data or []):
                 raise ValueError("Trạng thái trận đã thay đổi; chưa ghi đè dữ liệu mới.")
@@ -165,16 +166,16 @@ def register_routes(context):
             cache_delete("_rz_matches_all", "_rz_rooms_all")
             ttl_cache_delete("rooms_raw")
             log_admin_action(
-                "Cập nhật trận", "match", match_id,
-                details=f"{old_status} → {new_status}; giữ nguyên created_at",
+                "Cập nhật trạng thái/ghi chú trận", "match", match_id,
+                details=f"{old_status} → {new_status}; tỷ số và created_at được giữ nguyên",
             )
-            flash("Đã lưu tỷ số, trạng thái và ghi chú. Thời gian trận được giữ nguyên.", "success")
+            flash("Đã lưu trạng thái và ghi chú. Tỷ số, RP hiện tại và thời gian trận được giữ nguyên.", "success")
         except ValueError as exc:
             flash(str(exc), "warning")
         except Exception as exc:
             app.logger.exception("admin_update_match failed: %s", exc)
             flash(
-                "Không thể cập nhật hoàn chỉnh. Hệ thống đã dừng để tránh cộng/trừ RP sai.",
+                "Không thể đổi trạng thái an toàn. Hệ thống đã dừng và giữ nguyên dữ liệu cũ.",
                 "danger",
             )
         finally:

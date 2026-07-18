@@ -12,57 +12,11 @@ def register_routes(context):
     @admin_required
     @admin_permission_required("matches_delete")
     def admin_delete_match(match_id):
-        actor = current_user()
-        lock_token = None
-        try:
-            lock_token = acquire_ranking_rebuild_lock(actor.get("id"), match_id)
-            match = get_match(match_id)
-            if not match:
-                raise ValueError("Không tìm thấy trận.")
-
-            if match.get("status") == "confirmed":
-                rebuild_rankings_after_admin_change(
-                    match_id,
-                    {
-                        "status": "cancelled",
-                        "confirmed_by_id": None,
-                        "note": "Admin chuẩn bị xóa trận; đã hoàn tác trong lịch sử.",
-                    },
-                    lock_token=lock_token,
-                    actor_id=actor.get("id"),
-                )
-
-            remove_match_dispute_evidence(match_id)
-            execute_query(
-                db.table("match_rooms").update({
-                    "status": "cancelled",
-                    "match_id": None,
-                    "confirmed_by_id": None,
-                    "state_expires_at": None,
-                    "note": "Admin đã xóa trận liên kết.",
-                    "updated_at": now_iso(),
-                }).eq("match_id", match_id),
-                "admin_unlink_room_before_delete_match",
-                attempts=2,
-            )
-            execute_query(
-                db.table("matches").delete().eq("id", match_id),
-                "admin_delete_match_after_rebuild",
-            )
-            cache_delete("_rz_matches_all", "_rz_rooms_all")
-            ttl_cache_delete("rooms_raw")
-            log_admin_action(
-                "Xóa trận", "match", match_id,
-                details=f"Trạng thái cũ: {match.get('status')}; đã phát lại lịch sử trước khi xóa",
-            )
-            flash("Đã xóa trận và tính lại RP, streak, loss_streak theo lịch sử còn lại.", "success")
-        except ValueError as exc:
-            flash(str(exc), "warning")
-        except Exception as exc:
-            app.logger.exception("admin_delete_match failed: %s", exc)
-            flash("Không thể xóa trận an toàn; thao tác đã dừng để tránh sai lịch sử.", "danger")
-        finally:
-            release_ranking_rebuild_lock(lock_token)
+        """Giữ endpoint cũ nhưng khóa xóa trực tiếp để tránh làm lệch lịch sử."""
+        flash(
+            "Collap_V1.13.3a đã tắt xóa trực tiếp trận đấu. Admin chỉ được chuyển trạng thái sang Đã hủy.",
+            "warning",
+        )
         return redirect_admin("matches")
 
 

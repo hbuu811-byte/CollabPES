@@ -368,7 +368,7 @@
         <div class="admin-section-heading">
             <div>
                 <h2>🎮 Quản lý trận đấu gần đây</h2>
-                <p class="small">Admin có quyền được sửa tỷ số và trạng thái. Khi một trận đi vào hoặc rời trạng thái <strong>Đã xác nhận</strong>, hệ thống phát lại lịch sử theo thời gian gốc để tính lại RP, W-D-L, streak và loss_streak.</p>
+                <p class="small">Admin chỉ được chuyển trận sang <strong>Đã xác nhận</strong> hoặc <strong>Đã hủy</strong>. Tỷ số không thể chỉnh tại đây. Khi trận đi vào hoặc rời trạng thái Đã xác nhận, hệ thống phát lại lịch sử theo thời gian gốc để tính lại RP, W-D-L, streak và loss_streak.</p>
             </div>
             <span class="admin-count">{{ all_matches|length }}</span>
         </div>
@@ -383,20 +383,20 @@
                     <td class="match-player-cell"><strong>{{ m.player1_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta1 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta1 or 0) }}</td>
                     <td class="admin-score-edit-cell">
-                        <input {% if can_edit_match %}form="match-update-{{ m.id }}"{% endif %} name="score1" type="number" min="0" max="99" value="{{ m.score1 if m.score1 is not none else '' }}" aria-label="Tỷ số người chơi 1" {% if not can_admin('matches_confirm') %}disabled{% endif %}>
+                        <strong>{{ m.score1 if m.score1 is not none else '–' }}</strong>
                         <span>–</span>
-                        <input {% if can_edit_match %}form="match-update-{{ m.id }}"{% endif %} name="score2" type="number" min="0" max="99" value="{{ m.score2 if m.score2 is not none else '' }}" aria-label="Tỷ số người chơi 2" {% if not can_admin('matches_confirm') %}disabled{% endif %}>
+                        <strong>{{ m.score2 if m.score2 is not none else '–' }}</strong>
                     </td>
                     <td class="match-player-cell"><strong>{{ m.player2_name }}</strong></td>
                     <td class="rp-cell {{ 'rp-negative' if (m.delta2 or 0) < 0 else 'rp-positive' }}">{{ '%+d'|format(m.delta2 or 0) }}</td>
                     <td>
                         {% if can_edit_match %}
                         <select name="status" form="match-update-{{ m.id }}" class="admin-match-status-select">
-                            <option value="playing" {% if m.status == 'playing' %}selected{% endif %}>Đang thi đấu</option>
-                            <option value="waiting_confirm" {% if m.status == 'waiting_confirm' %}selected{% endif %}>Chờ xác nhận</option>
-                            <option value="disputed" {% if m.status == 'disputed' %}selected{% endif %}>Đang tranh chấp</option>
-                            <option value="confirmed" {% if m.status == 'confirmed' %}selected{% endif %} {% if not can_admin('matches_confirm') %}disabled{% endif %}>Đã xác nhận</option>
-                            <option value="cancelled" {% if m.status == 'cancelled' %}selected{% endif %} {% if not can_admin('matches_cancel') %}disabled{% endif %}>Đã hủy</option>
+                            {% if m.status not in ['confirmed', 'cancelled'] %}
+                            <option value="{{ m.status }}" selected disabled>Hiện tại: {{ m.status }}</option>
+                            {% endif %}
+                            <option value="confirmed" {% if m.status == 'confirmed' %}selected{% endif %} {% if not can_admin('matches_confirm') and m.status != 'confirmed' %}disabled{% endif %}>Đã xác nhận</option>
+                            <option value="cancelled" {% if m.status == 'cancelled' %}selected{% endif %} {% if not can_admin('matches_cancel') and m.status != 'cancelled' %}disabled{% endif %}>Đã hủy</option>
                         </select>
                         {% else %}
                         <span class="badge {{ m.status }}">{{ m.status }}</span>
@@ -409,9 +409,10 @@
                     </td>
                     <td>
                         <div class="match-actions">
-                            {% if can_edit_match %}<form id="match-update-{{ m.id }}" method="post" action="{{ url_for('admin_update_match', match_id=m.id) }}"></form><button class="btn green" type="submit" form="match-update-{{ m.id }}" onclick="return confirm('Lưu thay đổi? Nếu ảnh hưởng trận đã xác nhận, hệ thống sẽ tính lại toàn bộ lịch sử liên quan.')">Lưu</button>{% endif %}
-                            {% if can_admin('matches_delete') %}<form method="post" action="{{ url_for('admin_delete_match', match_id=m.id) }}" onsubmit="return confirm('Xóa trận này? Hệ thống sẽ phát lại lịch sử trước khi xóa.')"><button class="btn red" type="submit">Xóa</button></form>{% endif %}
-                            {% if not can_edit_match and not can_admin('matches_delete') %}<span class="admin-match-locked">Chỉ xem</span>{% endif %}
+                            {% if can_edit_match %}
+                            <form id="match-update-{{ m.id }}" method="post" action="{{ url_for('admin_update_match', match_id=m.id) }}"></form>
+                            <button class="btn green" type="submit" form="match-update-{{ m.id }}" onclick="return confirm('Lưu trạng thái? Nếu trận đi vào hoặc rời Đã xác nhận, hệ thống sẽ phát lại lịch sử liên quan.')">Lưu trạng thái</button>
+                            {% else %}<span class="admin-match-locked">Chỉ xem</span>{% endif %}
                         </div>
                     </td>
                 </tr>

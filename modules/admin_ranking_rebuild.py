@@ -234,8 +234,8 @@ def build_replay_plan(
             if match_id in overrides:
                 match_updates[match_id] = {
                     **{key: value for key, value in dict(overrides[match_id]).items() if key != "created_at"},
-                    "delta1": None,
-                    "delta2": None,
+                    "delta1": 0,
+                    "delta2": 0,
                     "winner_id": None,
                     "loser_id": None,
                     "rp_formula_version": None,

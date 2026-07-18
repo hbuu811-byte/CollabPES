@@ -214,16 +214,16 @@
     <div class="history-matchup">
         <div>
             <span class="match-player-inline">{{ player_avatar(name=m.left_player_name, avatar_url=m.left_avatar_url, achievement=m.left_achievement, size='xs') }}<strong>{{ m.left_player_name }}</strong></span>
-            <small>{{ m.left_team or '-' }}{% if m.status == 'confirmed' %} · <strong class="{{ 'positive' if m.left_result_code == 'win' else 'negative' if m.left_result_code == 'loss' else '' }}">{{ m.left_result_label }}</strong>{% endif %}</small>
+            <small>{{ m.left_team or '-' }}{% if m.status == 'confirmed' or m.is_forfeit %} · <strong class="{{ 'positive' if m.left_result_code == 'win' else 'negative' if m.left_result_code == 'loss' else '' }}">{{ m.left_result_label }}</strong>{% endif %}</small>
         </div>
         <strong>{{ m.score_display }}</strong>
         <div class="right">
             <a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.right_player_id) }}"><span>{{ m.right_player_name }}</span>{{ player_avatar(name=m.right_player_name, avatar_url=m.right_avatar_url, achievement=m.right_achievement, size='xs') }}</a>
-            <small>{{ m.right_team or '-' }}{% if m.status == 'confirmed' %} · <strong class="{{ 'positive' if m.right_result_code == 'win' else 'negative' if m.right_result_code == 'loss' else '' }}">{{ m.right_result_label }}</strong>{% endif %}</small>
+            <small>{{ m.right_team or '-' }}{% if m.status == 'confirmed' or m.is_forfeit %} · <strong class="{{ 'positive' if m.right_result_code == 'win' else 'negative' if m.right_result_code == 'loss' else '' }}">{{ m.right_result_label }}</strong>{% endif %}</small>
         </div>
     </div>
     <div class="history-points">
-        {% if m.status == 'confirmed' %}
+        {% if m.status == 'confirmed' or m.is_forfeit %}
         <strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>
         {% else %}<strong>Không tính điểm</strong>{% endif %}
         <small>{{ m.status_label }}</small>

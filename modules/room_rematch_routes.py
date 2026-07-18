@@ -53,17 +53,13 @@ def register_routes(context):
             return redirect(url_for("dashboard"))
 
         penalty_delta = apply_room_abandon_penalty(user["id"])
-        if room.get("match_id"):
-            execute_query(
-                db.table("matches").update({
-                    "status": "cancelled",
-                    "delta1": 0,
-                    "delta2": penalty_delta if penalty_delta is not None else -ROOM_ABANDON_PENALTY,
-                    "note": reason,
-                    "updated_at": now_iso(),
-                }).eq("id", room.get("match_id")),
-                "guest_forfeit_match",
-            )
+        record_room_forfeit_match(
+            room,
+            offender_role="guest",
+            penalty_delta=penalty_delta if penalty_delta is not None else -ROOM_ABANDON_PENALTY,
+            reason=reason,
+            event_type="guest_manual_forfeit",
+        )
 
         create_user_notification(
             room.get("host_user_id"),
@@ -133,17 +129,13 @@ def register_routes(context):
             return redirect(url_for("room_detail", room_id=room_id))
 
         penalty_delta = apply_room_abandon_penalty(user["id"])
-        if room.get("match_id"):
-            execute_query(
-                db.table("matches").update({
-                    "status": "cancelled",
-                    "delta1": penalty_delta if penalty_delta is not None else -ROOM_ABANDON_PENALTY,
-                    "delta2": 0,
-                    "note": reason,
-                    "updated_at": now_iso(),
-                }).eq("id", room.get("match_id")),
-                "host_forfeit_match",
-            )
+        record_room_forfeit_match(
+            room,
+            offender_role="host",
+            penalty_delta=penalty_delta if penalty_delta is not None else -ROOM_ABANDON_PENALTY,
+            reason=reason,
+            event_type="host_manual_forfeit",
+        )
 
         create_user_notification(
             room.get("guest_user_id"),

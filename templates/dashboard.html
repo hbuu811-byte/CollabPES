@@ -63,7 +63,7 @@
     <article class="dash-panel activity-panel">
         <div class="dash-panel-head"><div><h2>Hoạt động gần đây</h2><p>5 trận mới nhất</p></div><a href="{{ url_for('matches', view='mine') }}">Xem tất cả</a></div>
         <div class="dashboard-activity-list">
-            {% for m in recent_matches %}<div><span class="activity-result result-{{ m.result_code }}">{{ m.result_label[:1] }}</span><p><strong>{{ m.result_label }} trước {{ m.opponent_name }}</strong><small>{{ m.score_display }} • {{ m.created_at_display }}</small></p><em class="{{ 'positive' if (m.my_delta or 0) > 0 else 'negative' if (m.my_delta or 0) < 0 else '' }}">{{ "%+d"|format(m.my_delta) if m.my_delta is not none and m.status == 'confirmed' else '—' }} RP</em></div>{% else %}<div class="empty-state">Chưa có hoạt động thi đấu.</div>{% endfor %}
+            {% for m in recent_matches %}<div><span class="activity-result result-{{ m.result_code }}">{{ m.result_label[:1] }}</span><p><strong>{{ m.result_label }} trước {{ m.opponent_name }}</strong><small>{{ m.score_display }} • {{ m.created_at_display }}</small></p><em class="{{ 'positive' if (m.my_delta or 0) > 0 else 'negative' if (m.my_delta or 0) < 0 else '' }}">{{ "%+d"|format(m.my_delta) if m.my_delta is not none and (m.status == 'confirmed' or m.is_forfeit) else '—' }} RP</em></div>{% else %}<div class="empty-state">Chưa có hoạt động thi đấu.</div>{% endfor %}
         </div>
     </article>
 

@@ -15,7 +15,7 @@
         <option value="all">Mọi trạng thái</option>
         <option value="confirmed" {{ 'selected' if status_filter == 'confirmed' else '' }}>Đã xác nhận</option>
         <option value="disputed" {{ 'selected' if status_filter == 'disputed' else '' }}>Đang tranh chấp</option>
-        <option value="cancelled" {{ 'selected' if status_filter == 'cancelled' else '' }}>Đã hủy</option>
+        <option value="cancelled" {{ 'selected' if status_filter == 'cancelled' else '' }}>Đã hủy / Bỏ cuộc</option>
         <option value="waiting_confirm" {{ 'selected' if status_filter == 'waiting_confirm' else '' }}>Chờ xác nhận</option>
     </select>
     <button class="btn" type="submit">Lọc</button>
@@ -33,16 +33,16 @@
     <div class="history-matchup">
         <div>
             <a class="match-player-inline" href="{{ url_for('profile', user_id=m.left_player_id) }}">{{ player_avatar(name=m.left_player_name, avatar_url=m.left_avatar_url, achievement=m.left_achievement, size='xs') }}<span>{{ m.left_player_name }}</span></a>
-            <small>{{ m.left_team or '-' }}{% if m.status == 'confirmed' %} · <strong class="{{ 'positive' if m.left_result_code == 'win' else 'negative' if m.left_result_code == 'loss' else '' }}">{{ m.left_result_label }}</strong>{% endif %}</small>
+            <small>{{ m.left_team or '-' }}{% if m.status == 'confirmed' or m.is_forfeit %} · <strong class="{{ 'positive' if m.left_result_code == 'win' else 'negative' if m.left_result_code == 'loss' else '' }}">{{ m.left_result_label }}</strong>{% endif %}</small>
         </div>
         <strong>{{ m.score_display }}</strong>
         <div class="right">
             <a class="match-player-inline match-player-right" href="{{ url_for('profile', user_id=m.right_player_id) }}"><span>{{ m.right_player_name }}</span>{{ player_avatar(name=m.right_player_name, avatar_url=m.right_avatar_url, achievement=m.right_achievement, size='xs') }}</a>
-            <small>{{ m.right_team or '-' }}{% if m.status == 'confirmed' %} · <strong class="{{ 'positive' if m.right_result_code == 'win' else 'negative' if m.right_result_code == 'loss' else '' }}">{{ m.right_result_label }}</strong>{% endif %}</small>
+            <small>{{ m.right_team or '-' }}{% if m.status == 'confirmed' or m.is_forfeit %} · <strong class="{{ 'positive' if m.right_result_code == 'win' else 'negative' if m.right_result_code == 'loss' else '' }}">{{ m.right_result_label }}</strong>{% endif %}</small>
         </div>
     </div>
     <div class="history-points">
-        {% if m.status == 'confirmed' %}
+        {% if m.status == 'confirmed' or m.is_forfeit %}
             {% if m.is_mine %}<strong class="{{ 'positive' if m.my_delta > 0 else 'negative' if m.my_delta < 0 else '' }}">{{ "%+d"|format(m.my_delta) }} điểm</strong>
             {% else %}<strong>{{ "%+d"|format(m.left_delta or 0) }} / {{ "%+d"|format(m.right_delta or 0) }}</strong>{% endif %}
         {% else %}<strong>Không tính điểm</strong>{% endif %}

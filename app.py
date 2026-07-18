@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3h"
+APP_VERSION = "Collap_V1.13.3i"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1982,7 +1982,11 @@ def decorate_match_for_view(match, viewer_id=None):
     cannot make the UI show the wrong side.
     """
     item = dict(match or {})
-    item["status_label"] = match_status_label(item.get("status"))
+    item["is_forfeit"] = is_forfeit_match(item)
+    item["forfeit_loser_id"] = forfeit_loser_id(item) if item["is_forfeit"] else None
+    if item["is_forfeit"]:
+        item["note"] = forfeit_display_note(item)
+    item["status_label"] = "Bỏ cuộc" if item["is_forfeit"] else match_status_label(item.get("status"))
     item["created_at_display"] = format_vn_datetime(item.get("created_at"))
     item["is_cancelled"] = item.get("status") == "cancelled"
 
@@ -2060,7 +2064,9 @@ def decorate_match_for_view(match, viewer_id=None):
     item["right_score"] = right_score
     item["right_delta"] = _normalize_match_delta(right_delta)
 
-    if item["is_cancelled"]:
+    if item["is_forfeit"]:
+        item["score_display"] = "Bỏ cuộc"
+    elif item["is_cancelled"]:
         item["score_display"] = "Không tính"
     else:
         left_score_display = left_score if left_score is not None else "-"
@@ -2072,7 +2078,19 @@ def decorate_match_for_view(match, viewer_id=None):
     item["right_result_code"] = "neutral"
     item["right_result_label"] = item["status_label"]
 
-    if is_confirmed_result:
+    if item["is_forfeit"]:
+        left_is_loser = _same_user_id(item.get("forfeit_loser_id"), item.get("left_player_id"))
+        right_is_loser = _same_user_id(item.get("forfeit_loser_id"), item.get("right_player_id"))
+        if left_is_loser:
+            item["left_result_code"], item["left_result_label"] = "loss", "THUA BỎ CUỘC"
+            item["right_result_code"], item["right_result_label"] = "neutral", "ĐỐI THỦ BỎ CUỘC"
+        elif right_is_loser:
+            item["left_result_code"], item["left_result_label"] = "neutral", "ĐỐI THỦ BỎ CUỘC"
+            item["right_result_code"], item["right_result_label"] = "loss", "THUA BỎ CUỘC"
+        else:
+            item["left_result_code"] = item["right_result_code"] = "cancelled"
+            item["left_result_label"] = item["right_result_label"] = "BỎ CUỘC"
+    elif is_confirmed_result:
         if left_score > right_score:
             item["left_result_code"], item["left_result_label"] = "win", "THẮNG"
             item["right_result_code"], item["right_result_label"] = "loss", "THUA"
@@ -2431,6 +2449,8 @@ def apply_room_abandon_penalty(user_id, amount=ROOM_ABANDON_PENALTY):
         }).eq("id", user_id),
         "apply_room_abandon_penalty",
     )
+    cache_delete("_rz_users_map")
+    cache_delete("_rz_players_all")
     return -(old_points - new_points)
 
 
@@ -2456,21 +2476,13 @@ def close_room_with_timeout_penalty(room, offender_role, reason):
     room.update(update_data)
     penalty_amount = random.SystemRandom().randint(*ROOM_TIMEOUT_PENALTY_RANGE)
     penalty_delta = apply_room_abandon_penalty(offender_id, penalty_amount)
-    match_id = room.get("match_id")
-    if match_id:
-        match_update = {
-            "status": "cancelled",
-            "note": reason,
-            "updated_at": now_iso(),
-        }
-        if offender_role == "host":
-            match_update.update({"delta1": penalty_delta if penalty_delta is not None else -penalty_amount, "delta2": 0})
-        else:
-            match_update.update({"delta1": 0, "delta2": penalty_delta if penalty_delta is not None else -penalty_amount})
-        execute_query(
-            db.table("matches").update(match_update).eq("id", match_id),
-            "mark_timeout_match_cancelled",
-        )
+    record_room_forfeit_match(
+        room,
+        offender_role=offender_role,
+        penalty_delta=penalty_delta if penalty_delta is not None else -penalty_amount,
+        reason=reason,
+        event_type="timeout_forfeit",
+    )
 
     offender_name = room.get("host_name") if offender_role == "host" else room.get("guest_name")
     other_id = room.get("guest_user_id") if offender_role == "host" else room.get("host_user_id")
@@ -4662,7 +4674,9 @@ def profile(user_id):
 
     form = []
     for match in matches:
-        if match.get("status") != "confirmed":
+        is_ranked_result = match.get("status") == "confirmed"
+        is_forfeit_loss = bool(match.get("is_forfeit") and match.get("result_code") == "loss")
+        if not (is_ranked_result or is_forfeit_loss):
             continue
         form.append(match.get("result_code", "neutral"))
         if len(form) >= 5:
@@ -5025,6 +5039,7 @@ def redirect_admin(tab="overview"):
 
 # Nạp dịch vụ theo thứ tự dependency: thông báo -> khóa -> kết quả -> phát lại -> xóa an toàn.
 from modules import notification_service as _notification_service
+from modules import forfeit_history_service as _forfeit_history_service
 from modules import ranking_lock_service as _ranking_lock_service
 from modules import match_result_service as _match_result_service
 from modules import ranking_rebuild_service as _ranking_rebuild_service
@@ -5032,6 +5047,7 @@ from modules import data_cleanup_service as _data_cleanup_service
 
 for _service_module in (
     _notification_service,
+    _forfeit_history_service,
     _ranking_lock_service,
     _match_result_service,
     _ranking_rebuild_service,

@@ -4036,3 +4036,187 @@ html[data-theme="light"] .admin-switch-track{background:#cbd5df;border-color:#b9
 .notification-state{flex:0 0 auto;padding:4px 8px;border-radius:999px;font-size:10px;font-weight:900;text-transform:uppercase;background:rgba(148,163,184,.14);color:#cbd5e1}
 .is-unread .notification-state{background:rgba(56,189,248,.16);color:#7dd3fc}
 @media(max-width:700px){.notification-page-head,.notification-history-card{align-items:stretch;flex-direction:column}.notification-page-head form .btn,.notification-history-card .user-notification-actions,.notification-history-card .user-notification-actions form,.notification-history-card .user-notification-actions .btn{width:100%}.notification-history-title-row{align-items:flex-start}}
+
+/* ===== Collap V1.13.3c: modal xác nhận thoát phòng đồng bộ giao diện game ===== */
+body.room-action-modal-open{overflow:hidden}
+.room-action-modal[hidden]{display:none!important}
+.room-action-modal{
+    position:fixed;
+    inset:0;
+    z-index:10050;
+    display:grid;
+    place-items:center;
+    padding:18px;
+    background:rgba(1,7,14,.82);
+    backdrop-filter:blur(9px);
+    -webkit-backdrop-filter:blur(9px);
+    opacity:0;
+    transition:opacity .18s ease;
+}
+.room-action-modal.is-open{opacity:1}
+.room-action-modal-card{
+    position:relative;
+    width:min(520px,94vw);
+    overflow:hidden;
+    padding:30px 30px 26px;
+    border:1px solid rgba(245,185,40,.48);
+    border-radius:24px;
+    background:
+        radial-gradient(circle at 50% -15%,rgba(245,185,40,.18),transparent 42%),
+        linear-gradient(145deg,#0c1928 0%,#07111d 58%,#050d17 100%);
+    box-shadow:0 28px 100px rgba(0,0,0,.72),0 0 0 1px rgba(255,255,255,.035) inset;
+    text-align:center;
+    transform:translateY(18px) scale(.96);
+    transition:transform .2s ease;
+}
+.room-action-modal.is-open .room-action-modal-card{transform:translateY(0) scale(1)}
+.room-action-modal-card::before{
+    content:"";
+    position:absolute;
+    top:0;
+    left:12%;
+    right:12%;
+    height:3px;
+    border-radius:0 0 999px 999px;
+    background:linear-gradient(90deg,transparent,#f5b928,#ffe39a,#f5b928,transparent);
+    box-shadow:0 0 24px rgba(245,185,40,.65);
+}
+.room-action-modal-card::after{
+    content:"";
+    position:absolute;
+    inset:0;
+    pointer-events:none;
+    background:linear-gradient(120deg,transparent 25%,rgba(255,255,255,.035) 46%,transparent 67%);
+}
+.room-action-modal-close{
+    position:absolute;
+    top:13px;
+    right:15px;
+    z-index:2;
+    width:35px;
+    height:35px;
+    display:grid;
+    place-items:center;
+    border:1px solid rgba(255,255,255,.13);
+    border-radius:50%;
+    background:rgba(255,255,255,.045);
+    color:#9eacbc;
+    font-size:23px;
+    line-height:1;
+    cursor:pointer;
+    transition:.16s ease;
+}
+.room-action-modal-close:hover{color:#fff;border-color:rgba(255,255,255,.28);background:rgba(255,255,255,.09)}
+.room-action-modal-icon{
+    position:relative;
+    z-index:1;
+    width:72px;
+    height:72px;
+    margin:0 auto 16px;
+    display:grid;
+    place-items:center;
+    border:1px solid rgba(245,185,40,.55);
+    border-radius:22px;
+    background:linear-gradient(145deg,rgba(245,185,40,.24),rgba(245,185,40,.07));
+    box-shadow:0 14px 32px rgba(0,0,0,.34),0 0 24px rgba(245,185,40,.13);
+    color:#ffd762;
+    font-size:34px;
+    font-weight:900;
+}
+.room-action-modal-kicker{
+    position:relative;
+    z-index:1;
+    display:block;
+    margin-bottom:5px;
+    color:#f5b928;
+    font-size:11px;
+    font-weight:900;
+    letter-spacing:.22em;
+}
+.room-action-modal-copy h2{
+    position:relative;
+    z-index:1;
+    margin:0;
+    color:#fff;
+    font-size:27px;
+    line-height:1.2;
+    font-weight:950;
+    text-transform:uppercase;
+    text-shadow:0 3px 16px rgba(0,0,0,.45);
+}
+.room-action-modal-copy p{
+    position:relative;
+    z-index:1;
+    max-width:420px;
+    margin:13px auto 0;
+    color:#b9c6d4;
+    font-size:15px;
+    line-height:1.65;
+}
+.room-action-modal-note{
+    position:relative;
+    z-index:1;
+    width:max-content;
+    min-width:116px;
+    margin:20px auto 0;
+    padding:9px 17px;
+    border:1px solid rgba(245,185,40,.42);
+    border-radius:999px;
+    background:rgba(245,185,40,.1);
+    color:#ffd762;
+    font-size:17px;
+    font-weight:950;
+    letter-spacing:.04em;
+}
+.room-action-modal-actions{
+    position:relative;
+    z-index:1;
+    display:grid;
+    grid-template-columns:1fr 1fr;
+    gap:12px;
+    margin-top:24px;
+}
+.room-action-modal-button{
+    min-height:49px;
+    padding:12px 16px;
+    border-radius:13px;
+    font-size:14px;
+    font-weight:900;
+    cursor:pointer;
+    transition:transform .15s ease,filter .15s ease,border-color .15s ease;
+}
+.room-action-modal-button:hover{transform:translateY(-1px);filter:brightness(1.07)}
+.room-action-modal-button:active{transform:translateY(0)}
+.room-action-modal-button:disabled{cursor:wait;opacity:.72;transform:none}
+.room-action-modal-button.secondary{
+    border:1px solid #33475b;
+    background:#101f2f;
+    color:#d7e0e9;
+}
+.room-action-modal-button.primary{
+    border:1px solid #e3ad2c;
+    background:linear-gradient(180deg,#f5ce6a,#dba83e);
+    color:#171006;
+    box-shadow:0 10px 24px rgba(219,168,62,.2);
+}
+.room-action-modal[data-tone="danger"] .room-action-modal-card{border-color:rgba(255,93,99,.5);background:radial-gradient(circle at 50% -15%,rgba(255,56,76,.2),transparent 42%),linear-gradient(145deg,#1a111d 0%,#0b111b 58%,#060d16 100%)}
+.room-action-modal[data-tone="danger"] .room-action-modal-card::before{background:linear-gradient(90deg,transparent,#ff5d63,#ff9fa3,#ff5d63,transparent);box-shadow:0 0 24px rgba(255,93,99,.62)}
+.room-action-modal[data-tone="danger"] .room-action-modal-icon{border-color:rgba(255,93,99,.58);background:linear-gradient(145deg,rgba(255,93,99,.24),rgba(255,93,99,.06));color:#ff858a;box-shadow:0 14px 32px rgba(0,0,0,.34),0 0 24px rgba(255,93,99,.16)}
+.room-action-modal[data-tone="danger"] .room-action-modal-kicker{color:#ff7d83}
+.room-action-modal[data-tone="danger"] .room-action-modal-note{border-color:rgba(255,93,99,.52);background:rgba(255,93,99,.12);color:#ff858a}
+.room-action-modal[data-tone="danger"] .room-action-modal-button.primary{border-color:#ff7278;background:linear-gradient(180deg,#ff7b80,#d94d55);color:#fff;box-shadow:0 10px 24px rgba(217,77,85,.25)}
+.room-action-modal[data-tone="safe"] .room-action-modal-card{border-color:rgba(55,214,122,.46);background:radial-gradient(circle at 50% -15%,rgba(55,214,122,.17),transparent 42%),linear-gradient(145deg,#0c1b22 0%,#07131c 58%,#050d16 100%)}
+.room-action-modal[data-tone="safe"] .room-action-modal-card::before{background:linear-gradient(90deg,transparent,#37d67a,#9af0bd,#37d67a,transparent);box-shadow:0 0 24px rgba(55,214,122,.54)}
+.room-action-modal[data-tone="safe"] .room-action-modal-icon{border-color:rgba(55,214,122,.52);background:linear-gradient(145deg,rgba(55,214,122,.21),rgba(55,214,122,.06));color:#63e695;box-shadow:0 14px 32px rgba(0,0,0,.34),0 0 24px rgba(55,214,122,.14)}
+.room-action-modal[data-tone="safe"] .room-action-modal-kicker{color:#63e695}
+.room-action-modal[data-tone="safe"] .room-action-modal-note{border-color:rgba(55,214,122,.45);background:rgba(55,214,122,.1);color:#63e695}
+.room-action-modal[data-tone="safe"] .room-action-modal-button.primary{border-color:#4edb87;background:linear-gradient(180deg,#63e695,#32b96a);color:#03150b;box-shadow:0 10px 24px rgba(50,185,106,.22)}
+@media(max-width:560px){
+    .room-action-modal{padding:12px}
+    .room-action-modal-card{padding:27px 18px 20px;border-radius:20px}
+    .room-action-modal-icon{width:62px;height:62px;border-radius:19px;font-size:29px}
+    .room-action-modal-copy h2{font-size:22px}
+    .room-action-modal-copy p{font-size:14px}
+    .room-action-modal-actions{grid-template-columns:1fr}
+    .room-action-modal-button.primary{order:-1}
+}

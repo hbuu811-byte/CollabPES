@@ -173,11 +173,23 @@
                             </form>
                             {% endif %}
                             {% if room.guest_ready %}
-                            <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn đã Sẵn Sàng. Thoát phòng lúc này sẽ bị tính là bỏ cuộc và trừ 20 RP. Bạn có chắc chắn muốn tiếp tục?');">
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
+                                  data-modal-tone="danger"
+                                  data-modal-icon="⚠"
+                                  data-modal-title="Xác nhận bỏ cuộc"
+                                  data-modal-message="Bạn đã Sẵn Sàng. Thoát phòng lúc này sẽ bị tính là bỏ cuộc và hệ thống trừ 20 RP."
+                                  data-modal-note="−20 RP"
+                                  data-modal-confirm-label="Bỏ cuộc và thoát">
                                 <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
                             </form>
                             {% else %}
-                            <form method="post" action="{{ url_for('room_leave', room_id=room.id) }}" onsubmit="return confirm('Bạn chưa Sẵn Sàng nên có thể rời phòng mà không bị trừ RP. Bạn có chắc chắn muốn thoát?');">
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
+                                  data-modal-tone="safe"
+                                  data-modal-icon="🚪"
+                                  data-modal-title="Rời phòng đấu?"
+                                  data-modal-message="Bạn chưa Sẵn Sàng nên có thể rời phòng ngay. Phòng của chủ phòng vẫn được giữ lại."
+                                  data-modal-note="KHÔNG TRỪ RP"
+                                  data-modal-confirm-label="Rời phòng">
                                 <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
                             </form>
                             {% endif %}
@@ -204,7 +216,13 @@
                 {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
                 <div class="room-center-primary-actions">
                     <a class="btn gold room-center-action-btn" href="{{ url_for('players') }}">Mời Đấu</a>
-                    <form method="post" action="{{ url_for('room_leave', room_id=room.id) }}" onsubmit="return confirm('Bạn chắc chắn muốn thoát và đóng phòng?');">
+                    <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
+                          data-modal-tone="warning"
+                          data-modal-icon="🚪"
+                          data-modal-title="Đóng phòng đấu?"
+                          data-modal-message="Phòng hiện chưa có đối thủ. Khi bạn thoát, phòng này sẽ được đóng."
+                          data-modal-note="ĐÓNG PHÒNG"
+                          data-modal-confirm-label="Thoát và đóng phòng">
                         <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
                     </form>
                 </div>
@@ -355,7 +373,13 @@
         <p class="small">Chờ chủ phòng kết thúc giao hữu để quay trận tiếp theo.</p>
         {% endif %}
         {% if current_user.id == room.guest_user_id %}
-        <form class="inline-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn xác nhận Bỏ Cuộc và - 20 RP?');">
+        <form class="inline-form room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
+              data-modal-tone="danger"
+              data-modal-icon="⚠"
+              data-modal-title="Xác nhận bỏ cuộc"
+              data-modal-message="Trận đã bắt đầu. Thoát phòng lúc này được tính là bỏ cuộc."
+              data-modal-note="−20 RP"
+              data-modal-confirm-label="Bỏ cuộc và thoát">
             <button class="btn red" type="submit">🚪 Thoát Phòng</button>
         </form>
         <p class="small danger-text">Đã quay đội. Thoát phòng lúc này bị tính là bỏ cuộc và trừ 20 RP.</p>
@@ -369,7 +393,13 @@
 
     {% if room.status == "playing" and current_user.id == room.guest_user_id %}
     <div class="guest-forfeit-box">
-        <form class="inline-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn xác nhận Bỏ Cuộc và - 20 RP?');">
+        <form class="inline-form room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
+              data-modal-tone="danger"
+              data-modal-icon="⚠"
+              data-modal-title="Xác nhận bỏ cuộc"
+              data-modal-message="Trận đã bắt đầu. Thoát phòng lúc này được tính là bỏ cuộc."
+              data-modal-note="−20 RP"
+              data-modal-confirm-label="Bỏ cuộc và thoát">
             <button class="btn red" type="submit">🚪 Thoát Phòng</button>
         </form>
         <p class="small danger-text">Thoát phòng sau khi đã quay đội được tính là bỏ cuộc và bị trừ 20 RP.</p>
@@ -423,6 +453,23 @@
     {% endif %}
         </div>
 
+    </div>
+</div>
+
+<div id="roomExitConfirmModal" class="room-action-modal" hidden aria-hidden="true">
+    <div class="room-action-modal-card" role="dialog" aria-modal="true" aria-labelledby="roomActionModalTitle" aria-describedby="roomActionModalMessage">
+        <button class="room-action-modal-close" type="button" data-room-modal-cancel aria-label="Đóng">×</button>
+        <div id="roomActionModalIcon" class="room-action-modal-icon" aria-hidden="true">⚠</div>
+        <div class="room-action-modal-copy">
+            <span class="room-action-modal-kicker">PES ARENA</span>
+            <h2 id="roomActionModalTitle">Xác nhận thao tác</h2>
+            <p id="roomActionModalMessage"></p>
+        </div>
+        <div id="roomActionModalNote" class="room-action-modal-note">−20 RP</div>
+        <div class="room-action-modal-actions">
+            <button id="roomActionModalCancel" class="room-action-modal-button secondary" type="button" data-room-modal-cancel>Ở lại phòng</button>
+            <button id="roomActionModalConfirm" class="room-action-modal-button primary" type="button">Xác nhận</button>
+        </div>
     </div>
 </div>
 
@@ -776,6 +823,97 @@ window.addEventListener("DOMContentLoaded", function () {
             setTimeout(() => toast.remove(), 500);
         }, Math.max(1500, duration - 500));
     }
+})();
+</script>
+
+
+<script>
+(function initRoomExitConfirmModal() {
+    const modal = document.getElementById("roomExitConfirmModal");
+    if (!modal) return;
+
+    const title = document.getElementById("roomActionModalTitle");
+    const message = document.getElementById("roomActionModalMessage");
+    const note = document.getElementById("roomActionModalNote");
+    const icon = document.getElementById("roomActionModalIcon");
+    const confirmButton = document.getElementById("roomActionModalConfirm");
+    const cancelButtons = modal.querySelectorAll("[data-room-modal-cancel]");
+    const forms = document.querySelectorAll(".room-exit-confirm-form");
+
+    let pendingForm = null;
+    let returnFocus = null;
+    let submitting = false;
+
+    function closeModal() {
+        if (submitting) return;
+        modal.classList.remove("is-open");
+        modal.setAttribute("aria-hidden", "true");
+        window.setTimeout(function () {
+            modal.hidden = true;
+        }, 180);
+        document.body.classList.remove("room-action-modal-open");
+        pendingForm = null;
+        if (returnFocus && typeof returnFocus.focus === "function") returnFocus.focus();
+    }
+
+    function openModal(form) {
+        pendingForm = form;
+        returnFocus = document.activeElement;
+
+        const tone = form.dataset.modalTone || "warning";
+        modal.dataset.tone = tone;
+        icon.textContent = form.dataset.modalIcon || "⚠";
+        title.textContent = form.dataset.modalTitle || "Xác nhận thao tác";
+        message.textContent = form.dataset.modalMessage || "Bạn có chắc chắn muốn tiếp tục?";
+        note.textContent = form.dataset.modalNote || "";
+        note.hidden = !form.dataset.modalNote;
+        confirmButton.textContent = form.dataset.modalConfirmLabel || "Xác nhận";
+        confirmButton.disabled = false;
+        submitting = false;
+
+        modal.hidden = false;
+        modal.setAttribute("aria-hidden", "false");
+        document.body.classList.add("room-action-modal-open");
+        window.requestAnimationFrame(function () {
+            modal.classList.add("is-open");
+            confirmButton.focus();
+        });
+    }
+
+    forms.forEach(function (form) {
+        form.addEventListener("submit", function (event) {
+            event.preventDefault();
+            if (submitting) return;
+            openModal(form);
+        });
+    });
+
+    cancelButtons.forEach(function (button) {
+        button.addEventListener("click", closeModal);
+    });
+
+    modal.addEventListener("click", function (event) {
+        if (event.target === modal) closeModal();
+    });
+
+    document.addEventListener("keydown", function (event) {
+        if (!modal.classList.contains("is-open")) return;
+        if (event.key === "Escape") {
+            event.preventDefault();
+            closeModal();
+        }
+    });
+
+    confirmButton.addEventListener("click", function () {
+        if (!pendingForm || submitting) return;
+        submitting = true;
+        confirmButton.disabled = true;
+        confirmButton.textContent = "Đang xử lý...";
+        const formToSubmit = pendingForm;
+        window.setTimeout(function () {
+            HTMLFormElement.prototype.submit.call(formToSubmit);
+        }, 120);
+    });
 })();
 </script>
 

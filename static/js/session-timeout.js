@@ -20,6 +20,8 @@
     let countdownTimer = null;
     let checkInFlight = false;
     let activityInFlight = false;
+    let lifecyclePaused = false;
+    let destroyed = false;
 
     function ensureModal() {
         let root = document.getElementById("idleTimeoutModal");
@@ -69,25 +71,37 @@
     function schedule() {
         clearTimeout(warningTimer);
         clearTimeout(logoutTimer);
+        if (destroyed || lifecyclePaused) return;
         const elapsed = Date.now() - lastActivityAt;
         warningTimer = setTimeout(showWarning, Math.max(0, timeoutMs - warningMs - elapsed));
         logoutTimer = setTimeout(checkAndLogout, Math.max(0, timeoutMs - elapsed));
     }
 
     function syncActivity(force) {
-        if (!activityUrl || !navigator.onLine || document.hidden || activityInFlight) return;
+        if (destroyed || lifecyclePaused || !activityUrl || !navigator.onLine || document.hidden || activityInFlight) {
+            return Promise.resolve();
+        }
         const now = Date.now();
-        if (!force && now - lastSyncAt < syncMs) return;
-        lastSyncAt = now;
+        if (!force && now - lastSyncAt < syncMs) return Promise.resolve();
+
         activityInFlight = true;
-        fetch(activityUrl, {
-            method: "POST",
-            credentials: "same-origin",
-            cache: "no-store",
-            headers: {"X-Requested-With": "XMLHttpRequest"}
-        }).catch(function () {}).finally(function () {
-            activityInFlight = false;
-        });
+        const task = function () {
+            return fetch(activityUrl, {
+                method: "POST",
+                credentials: "same-origin",
+                cache: "no-store",
+                headers: {"X-Requested-With": "XMLHttpRequest"}
+            });
+        };
+        const request = global.PESNet && typeof global.PESNet.singleFlight === "function"
+            ? global.PESNet.singleFlight("api:session-activity", task)
+            : task();
+        return Promise.resolve(request)
+            .then(function (response) {
+                if (response && response.ok) lastSyncAt = Date.now();
+            })
+            .catch(function () {})
+            .finally(function () { activityInFlight = false; });
     }
 
     function recordActivity(forceSync) {
@@ -98,10 +112,19 @@
     }
 
     function checkAndLogout() {
-        if (checkInFlight || !timeoutCheckUrl) return;
+        if (destroyed || lifecyclePaused || checkInFlight || !timeoutCheckUrl) return;
         checkInFlight = true;
-        fetch(timeoutCheckUrl, {credentials: "same-origin", cache: "no-store"})
-            .then(function (res) { return res.json(); })
+        const task = function () {
+            return fetch(timeoutCheckUrl, {credentials: "same-origin", cache: "no-store"});
+        };
+        const request = global.PESNet && typeof global.PESNet.singleFlight === "function"
+            ? global.PESNet.singleFlight("api:session-timeout-check", task)
+            : task();
+        Promise.resolve(request)
+            .then(function (res) {
+                if (!res || !res.ok) throw new Error("timeout_check_failed");
+                return res.json();
+            })
             .then(function (data) {
                 if (data.protected === true) {
                     // Đang có trận cần hoàn tất: gia hạn 10 phút rồi kiểm tra lại.
@@ -114,7 +137,7 @@
             })
             .catch(function () {
                 // Nếu mất mạng, không ép đăng xuất ngay; thử lại sau 60 giây.
-                logoutTimer = setTimeout(checkAndLogout, 60_000);
+                if (!destroyed && !lifecyclePaused) logoutTimer = setTimeout(checkAndLogout, 60_000);
             })
             .finally(function () { checkInFlight = false; });
     }
@@ -127,19 +150,51 @@
         recordActivity(false);
     }
 
-    ["pointerdown", "keydown", "touchstart", "submit"].forEach(function (name) {
+    const activityEvents = ["pointerdown", "keydown", "touchstart", "submit"];
+    activityEvents.forEach(function (name) {
         document.addEventListener(name, onUserActivity, {passive: true, capture: true});
     });
-    document.addEventListener("visibilitychange", function () {
-        if (!document.hidden) recordActivity(false);
-    });
 
-    global.addEventListener("pagehide", function () {
+    function onVisibilityChange() {
+        if (!document.hidden && !lifecyclePaused && !destroyed) recordActivity(false);
+    }
+    document.addEventListener("visibilitychange", onVisibilityChange);
+
+    function pauseLifecycle() {
+        lifecyclePaused = true;
         clearTimeout(warningTimer);
         clearTimeout(logoutTimer);
         if (countdownTimer) clearInterval(countdownTimer);
+        countdownTimer = null;
+    }
+
+    function resumeLifecycle() {
+        if (destroyed) return;
+        lifecyclePaused = false;
+        lastActivityAt = Date.now();
+        hideModal();
+        schedule();
+    }
+
+    function destroyLifecycle() {
+        if (destroyed) return;
+        destroyed = true;
+        pauseLifecycle();
+        activityEvents.forEach(function (name) {
+            document.removeEventListener(name, onUserActivity, {capture: true});
+        });
+        document.removeEventListener("visibilitychange", onVisibilityChange);
         global.__PES_SESSION_TIMEOUT_RUNNING__ = false;
-    }, {once: true});
+    }
+
+    global.addEventListener("pagehide", function (event) {
+        if (event.persisted) pauseLifecycle();
+        else destroyLifecycle();
+    });
+    global.addEventListener("pageshow", function (event) {
+        if (event.persisted) resumeLifecycle();
+    });
+    global.addEventListener("beforeunload", destroyLifecycle, {once: true});
 
     schedule();
 })(window);

@@ -677,6 +677,22 @@ function showRoomAjaxNotice(message, tone) {
     }
 }
 
+function handleRoomSessionResponse(response) {
+    if (!response) return false;
+    const redirectedPath = response.redirected
+        ? new URL(response.url, window.location.origin).pathname
+        : "";
+    if ([401, 403].includes(response.status) || redirectedPath === "/login") {
+        stopRoomStatePolling();
+        showRoomAjaxNotice("Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại.", "warning");
+        window.setTimeout(function () {
+            window.location.href = redirectedPath || "/login";
+        }, 900);
+        return true;
+    }
+    return false;
+}
+
 function getFlashFromDocument(doc) {
     const alert = doc.querySelector(".player-main > .alert, main .alert");
     if (!alert) return null;
@@ -719,6 +735,9 @@ async function fetchRoomDocument(url, options) {
         cache: "no-store",
         headers: {"X-PES-Room-Ajax": "1"}
     }, options || {}));
+    if (handleRoomSessionResponse(response)) {
+        throw new Error("room_session_ended");
+    }
     const text = await response.text();
     const doc = new DOMParser().parseFromString(text, "text/html");
     return {response: response, doc: doc};
@@ -818,6 +837,7 @@ function checkRoomState() {
             cache: "no-store"
         })
         .then(function (res) {
+            if (handleRoomSessionResponse(res)) return null;
             const stopReason = res.headers.get("X-PES-Polling-Stop") || "";
             if (stopReason) {
                 stopRoomStatePolling();
@@ -1050,6 +1070,9 @@ function bindRoomChatForm() {
 
         request
             .then(function (res) {
+                if (handleRoomSessionResponse(res)) {
+                    return {ok: false, error: "Phiên đăng nhập đã kết thúc."};
+                }
                 if (res.status === 204 || res.headers.get("X-PES-Polling-Stop")) {
                     stopRoomChatPolling();
                     return {ok: false, error: "Phiên chat phòng đã kết thúc."};
@@ -1101,6 +1124,7 @@ function loadRoomChat() {
             cache: "no-store"
         })
         .then(function (res) {
+            if (handleRoomSessionResponse(res)) return null;
             if (res.status === 204 || res.headers.get("X-PES-Polling-Stop")) {
                 stopRoomChatPolling();
                 return null;
@@ -1150,6 +1174,16 @@ window.addEventListener("DOMContentLoaded", function () {
     bindRoomChatForm();
     startRoomChatPolling();
 });
+
+function stopRoomLiveWork() {
+    stopRoomStatePolling();
+    stopRoomChatPolling();
+}
+window.addEventListener("pagehide", function (event) {
+    // BFCache cần giữ controller để PESNet có thể resume khi người dùng quay lại.
+    if (!event.persisted) stopRoomLiveWork();
+}, {once: true});
+window.addEventListener("beforeunload", stopRoomLiveWork, {once: true});
 </script>
 {% endif %}
 

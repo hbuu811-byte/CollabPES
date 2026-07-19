@@ -211,7 +211,11 @@
                     response: response
                 };
             }
-            return response.json().then(function (data) {
+            const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+            const parsed = contentType.includes("application/json")
+                ? response.json().catch(function () { return null; })
+                : Promise.resolve(null);
+            return parsed.then(function (data) {
                 return {
                     ok: response.ok,
                     status: response.status,
@@ -224,16 +228,21 @@
         });
     }
 
-    global.addEventListener("pagehide", function (event) {
-        // BFCache giữ document để quay lại nhanh: chỉ tạm dừng. Khi rời hẳn
-        // trang, dừng và tháo toàn bộ listener/timer cũ.
-        if (event.persisted) pauseAllPollers();
-        else stopAllPollers();
-    });
-    global.addEventListener("pageshow", function (event) {
-        if (event.persisted) resumeAllPollers();
-    });
-    global.addEventListener("beforeunload", stopAllPollers, {once: true});
+    // File có thể bị trình duyệt hoặc một template cũ nạp lại. Chỉ đăng ký
+    // listener vòng đời trang đúng một lần để tránh pause/resume/stop lặp.
+    if (!global.__PES_POLLING_LIFECYCLE_BOUND__) {
+        global.__PES_POLLING_LIFECYCLE_BOUND__ = true;
+        global.addEventListener("pagehide", function (event) {
+            // BFCache giữ document để quay lại nhanh: chỉ tạm dừng. Khi rời hẳn
+            // trang, dừng và tháo toàn bộ listener/timer cũ.
+            if (event.persisted) pauseAllPollers();
+            else stopAllPollers();
+        });
+        global.addEventListener("pageshow", function (event) {
+            if (event.persisted) resumeAllPollers();
+        });
+        global.addEventListener("beforeunload", stopAllPollers, {once: true});
+    }
 
     global.PESNet = {
         createPoller: createPoller,

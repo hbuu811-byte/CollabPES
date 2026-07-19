@@ -14,7 +14,7 @@
         enabled: true,
         idleTimeoutSeconds: 3600,
         warningSeconds: 300,
-        activitySyncSeconds: 300,
+        activitySyncSeconds: 60,
         activityUrl: {{ url_for('api_session_activity')|tojson }},
         timeoutCheckUrl: {{ url_for('api_session_timeout_check')|tojson }},
         logoutUrl: {{ url_for('logout')|tojson }}
@@ -221,14 +221,16 @@ function toggleTheme(){
 {% endif %}
 
 <script>
-function postHeartbeat(signal) {
+let heartbeatRequestInFlight = false;
+function postHeartbeat() {
+    if (document.hidden || heartbeatRequestInFlight) return Promise.resolve();
+    heartbeatRequestInFlight = true;
     return fetch("{{ url_for('heartbeat') }}", {
         method: "POST",
         credentials: "same-origin",
-        cache: "no-store",
-        signal: signal
-    }).catch(function (error) {
-        if (!error || error.name !== "AbortError") return;
+        cache: "no-store"
+    }).catch(function () {}).finally(function () {
+        heartbeatRequestInFlight = false;
     });
 }
 
@@ -280,15 +282,15 @@ function renderInvitePopup(invite) {
 
 
 let lastKnownActiveRoomId = null;
+let activeRoomRequestInFlight = false;
 
-function checkActiveRoom(signal) {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+function checkActiveRoom() {
+    if (document.hidden || window.location.pathname.startsWith("/room/") || activeRoomRequestInFlight) return Promise.resolve();
+    activeRoomRequestInFlight = true;
 
     return fetch("{{ url_for('api_active_room') }}", {
         method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-        signal: signal
+        credentials: "same-origin"
     })
     .then(function (res) { return res.json(); })
     .then(function (data) {
@@ -311,57 +313,46 @@ function checkActiveRoom(signal) {
             window.location.replace(data.room_url);
         }
     })
-    .catch(function () {});
+    .catch(function () {})
+    .finally(function () { activeRoomRequestInFlight = false; });
 }
 
 
-function applyPendingInvitesData(data) {
-    if (!data || !data.invites || data.invites.length === 0) {
-        const backdrop = document.getElementById("inviteModalBackdrop");
-        if (backdrop) backdrop.style.display = "none";
-        if (inviteCountdownTimer) clearInterval(inviteCountdownTimer);
-        inviteCountdownTimer = null;
-        lastInviteId = null;
-        return;
-    }
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) checkActiveRoom();
+});
 
-    const invite = data.invites[0];
-    if (invite.id !== lastInviteId) {
-        renderInvitePopup(invite);
-    }
+let pendingInvitesRequestInFlight = false;
+function roomPageNeedsInvitePolling() {
+    const context = window.PES_ROOM_CONTEXT;
+    if (!window.location.pathname.startsWith("/room/")) return true;
+    return Boolean(context && context.status === "waiting_ready" && !context.hasGuest);
 }
 
-function checkPendingInvites(signal) {
-    if (document.hidden) return Promise.resolve();
-
-    const url = "{{ url_for('api_pending_invites') }}";
-    const options = {
+function checkPendingInvites() {
+    if (document.hidden || pendingInvitesRequestInFlight || !roomPageNeedsInvitePolling()) return Promise.resolve();
+    pendingInvitesRequestInFlight = true;
+    return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-        signal: signal
-    };
-
-    if (window.PESNet && typeof PESNet.fetchJsonOnce === "function") {
-        return PESNet.fetchJsonOnce("request:pending-invites", url, options, 12000)
-            .then(function (result) {
-                if (!result) return;
-                if (result.status === 401 || result.status === 403) return;
-                if (!result.ok) throw new Error("pending_invites_" + result.status);
-                applyPendingInvitesData(result.data || {});
-            })
-            .catch(function (error) {
-                if (!error || error.name !== "AbortError") return;
-            });
-    }
-
-    return fetch(url, options)
-        .then(function (res) {
-            if (!res.ok) throw new Error("pending_invites_" + res.status);
-            return res.json();
-        })
-        .then(applyPendingInvitesData)
-        .catch(function () {});
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (!data.invites || data.invites.length === 0) {
+            const backdrop = document.getElementById("inviteModalBackdrop");
+            if (backdrop) backdrop.style.display = "none";
+            if (inviteCountdownTimer) clearInterval(inviteCountdownTimer);
+            inviteCountdownTimer = null;
+            lastInviteId = null;
+            return;
+        }
+        const invite = data.invites[0];
+        if (invite.id !== lastInviteId) {
+            renderInvitePopup(invite);
+        }
+    })
+    .catch(function () {})
+    .finally(function () { pendingInvitesRequestInFlight = false; });
 }
 
 function escapeHtml(text) {
@@ -495,23 +486,23 @@ function toggleLobbyChat() {
     }
 }
 
-function loadBottomChatSmart(signal) {
+function loadBottomChatSmart() {
     if (document.hidden || !isLobbyChatOpen) return Promise.resolve();
-    return loadBottomChat(signal);
+    return loadBottomChat();
 }
 
-function checkAnnouncementSmart(signal) {
+function checkAnnouncementSmart() {
     if (document.hidden) return Promise.resolve();
-    return checkAnnouncement(signal);
+    return checkAnnouncement();
 }
 
-function updateOnlineFloatingCountSmart(signal) {
+function updateOnlineFloatingCountSmart() {
     if (document.hidden) return Promise.resolve();
-    return updateOnlineFloatingCount(signal);
+    return updateOnlineFloatingCount();
 }
 
-function loadBottomChat(signal) {
-    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin", cache: "no-store", signal: signal })
+function loadBottomChat() {
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -760,8 +751,11 @@ document.addEventListener("visibilitychange", function () {
     }
 });
 
-function checkAnnouncement(signal) {
-    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin", cache: "no-store", signal: signal })
+let announcementRequestInFlight = false;
+function checkAnnouncement() {
+    if (document.hidden || announcementRequestInFlight) return Promise.resolve();
+    announcementRequestInFlight = true;
+    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin", cache: "no-store" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -779,7 +773,8 @@ function checkAnnouncement(signal) {
             }
             playSystemEventQueue(items);
         })
-        .catch(function () {});
+        .catch(function () {})
+        .finally(function () { announcementRequestInFlight = false; });
 }
 
 function sendAdminAnnouncement() {
@@ -818,34 +813,73 @@ function sendAdminAnnouncement() {
     });
 }
 
-// V4.8: chỉ chạy polling thật sự cần cho trang hiện tại.
-window.addEventListener("DOMContentLoaded", function () {
+// V1.13.3l: mỗi endpoint chỉ có một poller và tuân theo trạng thái trang/tab.
+let globalInvitePoller = null;
+
+function configureInvitePolling() {
     if (!window.PESNet) return;
+    if (globalInvitePoller) {
+        globalInvitePoller.stop();
+        globalInvitePoller = null;
+    }
+
     const path = window.location.pathname;
     const isRoomPage = path.startsWith("/room/");
     const isPlayersPage = path === "/players";
     const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
+    if (isRoomPage && !roomPageNeedsInvitePolling()) return;
 
-    // Heartbeat 45 giây để khớp mốc online 90 giây; dừng hoàn toàn khi tab ẩn.
-    PESNet.createPoller({key: "global-heartbeat", task: postHeartbeat, visibleInterval: 45000, hiddenInterval: 120000, runWhenHidden: false, immediate: false, jitter: 3000, timeoutMs: 12000});
+    const interval = isPlayersPage ? 10000 : (isRoomPage ? 12000 : (isRankingPage ? 15000 : 15000));
+    globalInvitePoller = PESNet.createPoller({
+        key: "pending-invites",
+        task: checkPendingInvites,
+        visibleInterval: interval,
+        hiddenInterval: 60000,
+        runWhenHidden: false,
+        immediate: true,
+        jitter: 800
+    });
+}
+window.PESConfigureInvitePolling = configureInvitePolling;
 
-    // Lời mời: 15 giây ngoài phòng, 20 giây trong phòng để giảm request thừa.
-    if (!PESNet.hasPoller || !PESNet.hasPoller("pending-invites")) {
-        PESNet.createPoller({key: "pending-invites", task: checkPendingInvites, visibleInterval: isRoomPage ? 20000 : 15000, hiddenInterval: 120000, runWhenHidden: false, immediate: true, jitter: 1200, timeoutMs: 12000});
-    }
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return;
 
-    // Không kiểm tra active-room ở chính trang phòng. Mỗi loại polling chỉ có một singleton.
-    if (!isRoomPage) {
-        PESNet.createPoller({key: "active-room", task: checkActiveRoom, visibleInterval: isRankingPage ? 30000 : 20000, hiddenInterval: 120000, runWhenHidden: false, immediate: false, jitter: 2500, timeoutMs: 12000});
-    }
+    PESNet.createPoller({
+        key: "heartbeat",
+        task: postHeartbeat,
+        visibleInterval: 60000,
+        hiddenInterval: 90000,
+        runWhenHidden: false,
+        immediate: false,
+        jitter: 3000
+    });
 
-    // Chat sảnh chỉ tải khi khung chat đang mở; không polling ngầm toàn trang.
+    configureInvitePolling();
+
+    // active-room đã có dữ liệu server khi tải trang. Chỉ kiểm tra lại khi quay lại tab.
+
     if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
-        PESNet.createPoller({key: "lobby-chat", task: loadBottomChatSmart, visibleInterval: 20000, hiddenInterval: 120000, runWhenHidden: false, immediate: true, jitter: 2000, timeoutMs: 12000});
+        PESNet.createPoller({
+            key: "lobby-chat",
+            task: loadBottomChatSmart,
+            visibleInterval: 20000,
+            hiddenInterval: 120000,
+            runWhenHidden: false,
+            immediate: true,
+            jitter: 1500
+        });
     }
 
-    // Thông báo hệ thống mỗi 60 giây và dừng khi tab ẩn.
-    PESNet.createPoller({key: "system-announcement", task: checkAnnouncementSmart, visibleInterval: 60000, hiddenInterval: 180000, runWhenHidden: false, immediate: false, jitter: 4000, timeoutMs: 12000});
+    PESNet.createPoller({
+        key: "announcement",
+        task: checkAnnouncementSmart,
+        visibleInterval: 60000,
+        hiddenInterval: 120000,
+        runWhenHidden: false,
+        immediate: false,
+        jitter: 3000
+    });
 });
 
 document.addEventListener("visibilitychange", function () {
@@ -857,8 +891,8 @@ document.addEventListener("visibilitychange", function () {
 
 {% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
 <script>
-function updateOnlineFloatingCount(signal) {
-    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin", cache: "no-store", signal: signal })
+function updateOnlineFloatingCount() {
+    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
         .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
@@ -870,7 +904,7 @@ function updateOnlineFloatingCount(signal) {
 
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return updateOnlineFloatingCount();
-    PESNet.createPoller({key: "online-floating-count", task: updateOnlineFloatingCountSmart, visibleInterval: 60000, hiddenInterval: 180000, runWhenHidden: false, immediate: true, jitter: 3000, timeoutMs: 12000});
+    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 60000, hiddenInterval: 120000, runWhenHidden: false, immediate: true, jitter: 2500});
 });
 </script>
 {% endif %}

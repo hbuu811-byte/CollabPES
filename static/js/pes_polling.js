@@ -13,23 +13,77 @@
         return Math.max(1000, Number(resolved || fallback || 10000));
     }
 
-    function requestOnce(key, executor) {
-        const requestKey = String(key || "").trim();
-        if (!requestKey) return Promise.resolve().then(executor);
+    function abortError(reason) {
+        try {
+            return new DOMException(String(reason || "Request aborted"), "AbortError");
+        } catch (error) {
+            const fallback = new Error(String(reason || "Request aborted"));
+            fallback.name = "AbortError";
+            return fallback;
+        }
+    }
 
-        if (requestRegistry[requestKey]) {
-            return requestRegistry[requestKey];
+    function abortRequest(key, reason) {
+        const requestKey = String(key || "").trim();
+        const entry = requestKey ? requestRegistry[requestKey] : null;
+        if (!entry) return false;
+        try { entry.controller.abort(reason || "request-aborted"); } catch (error) {}
+        return true;
+    }
+
+    function abortRequestsByPrefix(prefix, reason) {
+        const normalized = String(prefix || "");
+        Object.keys(requestRegistry).forEach(function (key) {
+            if (key.indexOf(normalized) === 0) abortRequest(key, reason || "prefix-abort");
+        });
+    }
+
+    function abortAllRequests(reason) {
+        Object.keys(requestRegistry).forEach(function (key) {
+            abortRequest(key, reason || "abort-all");
+        });
+    }
+
+    function requestOnce(key, executor, options) {
+        const requestKey = String(key || "").trim();
+        const settings = options || {};
+        if (!requestKey) return Promise.resolve().then(function () { return executor(settings.signal); });
+
+        const existing = requestRegistry[requestKey];
+        // Tương thích nếu file script cũ từng lưu trực tiếp Promise trong registry.
+        if (existing && typeof existing.then === "function") return existing;
+        if (existing && existing.promise) return existing.promise;
+
+        const controller = new AbortController();
+        const externalSignal = settings.signal || null;
+        let detachExternalAbort = null;
+
+        if (externalSignal) {
+            const relayAbort = function () {
+                try { controller.abort(externalSignal.reason || "caller-aborted"); } catch (error) {}
+            };
+            if (externalSignal.aborted) relayAbort();
+            else {
+                externalSignal.addEventListener("abort", relayAbort, {once: true});
+                detachExternalAbort = function () {
+                    externalSignal.removeEventListener("abort", relayAbort);
+                };
+            }
         }
 
+        const entry = {controller: controller, promise: null};
         const tracked = Promise.resolve()
-            .then(executor)
+            .then(function () {
+                if (controller.signal.aborted) throw abortError(controller.signal.reason);
+                return executor(controller.signal);
+            })
             .finally(function () {
-                if (requestRegistry[requestKey] === tracked) {
-                    delete requestRegistry[requestKey];
-                }
+                if (detachExternalAbort) detachExternalAbort();
+                if (requestRegistry[requestKey] === entry) delete requestRegistry[requestKey];
             });
 
-        requestRegistry[requestKey] = tracked;
+        entry.promise = tracked;
+        requestRegistry[requestKey] = entry;
         return tracked;
     }
 
@@ -216,9 +270,11 @@
     }
 
     function stopAll(reason) {
+        const stopReason = reason || "stop-all";
         Array.from(allPollers).forEach(function (poller) {
-            try { poller.stop(reason || "stop-all"); } catch (error) {}
+            try { poller.stop(stopReason); } catch (error) {}
         });
+        abortAllRequests(stopReason);
     }
 
     function stopByPrefix(prefix, reason) {
@@ -270,9 +326,13 @@
     }
 
     function fetchJsonOnce(key, url, options, timeoutMs) {
-        return requestOnce(key, function () {
-            return fetchJson(url, options, timeoutMs);
-        });
+        const config = Object.assign({}, options || {});
+        const callerSignal = config.signal || null;
+        delete config.signal;
+        return requestOnce(key, function (sharedSignal) {
+            config.signal = sharedSignal;
+            return fetchJson(url, config, timeoutMs);
+        }, {signal: callerSignal});
     }
 
     function fetchText(url, options, timeoutMs) {
@@ -300,9 +360,13 @@
     }
 
     function fetchTextOnce(key, url, options, timeoutMs) {
-        return requestOnce(key, function () {
-            return fetchText(url, options, timeoutMs);
-        });
+        const config = Object.assign({}, options || {});
+        const callerSignal = config.signal || null;
+        delete config.signal;
+        return requestOnce(key, function (sharedSignal) {
+            config.signal = sharedSignal;
+            return fetchText(url, config, timeoutMs);
+        }, {signal: callerSignal});
     }
 
     global.PESNet = {
@@ -311,6 +375,9 @@
         stopByPrefix: stopByPrefix,
         hasPoller: hasPoller,
         requestOnce: requestOnce,
+        abortRequest: abortRequest,
+        abortRequestsByPrefix: abortRequestsByPrefix,
+        abortAllRequests: abortAllRequests,
         fetchJson: fetchJson,
         fetchJsonOnce: fetchJsonOnce,
         fetchText: fetchText,

@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3lv3.1"
+APP_VERSION = "Collap_V1.13.3lv3.2"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -4254,7 +4254,11 @@ def send_room_chat(room_id):
         flash("Không tìm thấy phòng.", "danger")
         return redirect(url_for("rooms"))
 
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
+    is_room_member = (
+        _same_user_id(user.get("id"), room.get("host_user_id"))
+        or _same_user_id(user.get("id"), room.get("guest_user_id"))
+    )
+    if not is_room_member and not is_admin_user(user):
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 

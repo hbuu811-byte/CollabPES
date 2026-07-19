@@ -1,102 +1,76 @@
-# Collap_V1.13.3lv3.1
+# Collap_V1.13.3lv3.2
 
-- Ngày giờ: 19/07/2026 01:22
-- Múi giờ: Asia/Bangkok
-- Bản nền: Collap_V1.13.3lv3 (mã nguồn hiện tại là Collap_V1.13.3l)
-- Phạm vi: sửa API chat, hợp nhất polling, khóa request và tăng cache file tĩnh.
-- Không thay đổi: công thức RP, luồng xác nhận kết quả, lịch sử trận, giao diện tỷ số phòng và cấu trúc Supabase.
-
-## Các lỗi phát hiện
-
-1. API chat trả 403 khi Admin vừa tắt chat phòng hoặc khi `guest_user_id` vừa bị xóa trong lúc trang cũ chưa kịp chuyển hướng.
-2. Kiểm tra quyền ở `/state`, `/view` và chat so sánh ID trực tiếp; có thể nhận sai khi một phía là số và phía còn lại là chuỗi.
-3. Poller cũ bị `stop()` nhưng vẫn giữ listener `visibilitychange`, `online`, `pagehide`, `pageshow` và `beforeunload`.
-4. Poller không có `key` không được lưu trong registry nên không thể dừng toàn bộ bằng một lệnh.
-5. Khi hai script cùng tạo một poller có cùng key trong cùng nhịp chạy, task immediate của poller cũ vẫn có thể lọt qua hàng đợi microtask.
-6. `/api/invites/pending` chỉ có khóa ở cấp poller; một lời gọi trực tiếp khác vẫn có thể tạo request thứ hai.
-7. Chat và `/state` chưa có khóa dùng chung theo endpoint, nên một script phụ vẫn có thể chạy chồng với poller chính.
-8. Ảnh giao diện và ảnh rank mới cache 30 ngày.
+- Ngày giờ: 19/07/2026 01:38, múi giờ Asia/Bangkok.
+- Bản nền: Collap_V1.13.3lv3.1.
+- Mục tiêu: ưu tiên trải nghiệm người dùng, giảm nguy cơ request cũ chạy ngầm và tránh lỗi 403 chat sai.
+- Phạm vi: chỉ sửa các file trực tiếp liên quan; không sửa RP, lịch sử đấu, giao diện lịch sử phòng, modal, cache hoặc SQL Supabase.
 
 ## Nội dung sửa
 
-### API chat
+### 1. Sửa gửi chat phòng bị từ chối nhầm
 
-- Khi chat phòng bị tắt: trả HTTP 200 với `disabled=true`, không lặp 403.
-- Khi phòng vừa đóng hoặc người chơi vừa rời: trả HTTP 200 với `closed=true` và danh sách rỗng.
-- Phòng đang hoạt động vẫn giữ kiểm tra quyền; tài khoản lạ không được đọc tin nhắn.
-- API chat chỉ đọc 4 cột phòng cần thiết thay vì gọi `get_room()` đầy đủ.
-- Client tự dừng poller chat khi nhận `disabled`, `closed`, 401, 403 hoặc 404.
+- Route gửi chat trước đây so sánh trực tiếp `user["id"]` với ID chủ/khách.
+- Khi một giá trị là số và giá trị còn lại là chuỗi, người đang ở đúng phòng vẫn có thể bị báo không thuộc phòng.
+- Đã đổi sang `_same_user_id()` giống API đọc chat.
+- Quyền bảo mật giữ nguyên: người ngoài phòng vẫn không thể gửi chat.
 
-### Polling phòng
+### 2. Không dừng toàn bộ hệ thống khi chỉ thao tác trong phòng
 
-- Chỉ giữ một poller `room-state:<room_id>`.
-- Trước khi tạo poller trạng thái/chat mới, dừng mọi poller cùng nhóm cũ.
-- Không dùng `window.location.reload()` để đồng bộ phòng.
-- Khi trạng thái thay đổi, chỉ thay `#roomLiveContent`.
-- Khi rời trang, gửi form phòng, xác nhận bỏ cuộc hoặc chuyển về sảnh: dừng toàn bộ poller và hủy request đang chạy.
-- Khi trang nằm trong Back/Forward Cache: tạm hủy request và chạy lại khi trang được phục hồi.
+- Các thao tác như Sẵn Sàng, Hủy Sẵn Sàng, quay đội, gửi kết quả, xác nhận kết quả và gửi chat chỉ dừng:
+  - polling trạng thái phòng;
+  - polling chat phòng;
+  - request `/state` hoặc chat đang chạy.
+- Heartbeat, lời mời và thông báo hệ thống không bị dừng sớm trong lúc server đang xử lý form.
+- Khi trình duyệt thực sự chuyển trang, `pagehide` sẽ dừng toàn bộ như trước.
 
-### Khóa request
+### 3. Hủy request đúng theo từng nhóm
 
-- Thêm registry `requestOnce`.
-- `/state`: khóa `request:room-state:<room_id>`.
-- Chat phòng: khóa `request:room-chat:<room_id>`.
-- Lời mời: khóa `request:pending-invites`.
-- Request cùng khóa dùng chung một Promise, không tạo kết nối thứ hai.
-- Poller cùng key thay thế poller cũ mà không để task immediate cũ chạy lọt.
+Bổ sung registry có `AbortController` cho request dùng chung:
 
-### Dọn polling cũ
+- `abortRequest(key)` — hủy một request.
+- `abortRequestsByPrefix(prefix)` — hủy nhóm request, ví dụ toàn bộ request phòng hiện tại.
+- `abortAllRequests()` — hủy toàn bộ request khi rời trang.
 
-- Theo dõi cả poller có key và không có key.
-- `stopAll()` dừng toàn bộ poller.
-- `stopByPrefix()` dừng một nhóm poller.
-- `stop()` xóa timer, abort request và gỡ toàn bộ event listener.
-- `hasPoller()` ngăn script thứ hai tạo lại polling lời mời.
+Giữ tương thích với API JavaScript cũ:
 
-### Cache
+- `requestOnce()` vẫn trả về Promise như trước.
+- `fetchJsonOnce()` và `fetchTextOnce()` vẫn giữ nguyên cách gọi.
+- Hỗ trợ registry cũ từng lưu Promise trực tiếp.
 
-- CSS/JS: 1 năm, immutable.
-- Font: 1 năm, immutable.
-- Ảnh PNG/JPG/JPEG/WebP/GIF/SVG/ICO, bao gồm ảnh rank và giao diện: 180 ngày.
-- `stale-while-revalidate`: 7 ngày.
-- API và heartbeat tiếp tục `no-store`.
+### 4. Thoát phòng vẫn dừng toàn bộ
+
+- Bấm xác nhận Bỏ cuộc/Thoát phòng: dừng toàn bộ poller và request trước khi gửi form.
+- Trang bị hủy, phòng đóng hoặc chuyển về sảnh: dừng toàn bộ.
+- Sự kiện `pagehide`: dừng toàn bộ với lý do rõ ràng, không truyền nhầm Event object làm lý do dừng.
 
 ## File đã sửa
 
 - `app.py`
-  - khoảng dòng 65: tăng phiên bản.
-  - khoảng dòng 1484–1496: cache ảnh 180 ngày.
-  - khoảng dòng 3800–3818: kiểm tra ID an toàn cho `/state`.
-  - khoảng dòng 4200–4250: sửa API chat 403 và giảm dữ liệu truy vấn.
-- `modules/room_access_routes.py`
-  - khoảng dòng 173–193: kiểm tra ID an toàn cho HTML động của phòng.
-- `templates/base.html`
-  - khoảng dòng 318–375: khóa request lời mời.
-  - khoảng dòng 830–840: chỉ tạo một poller lời mời.
-- `templates/room_detail.html`
-  - khoảng dòng 249–430: dừng polling cũ, khóa `/state`, xử lý lỗi quyền và không reload trang.
-  - khoảng dòng 477–535: khóa chat và tự dừng khi phòng/chat đóng.
-  - khoảng dòng 537–555, 730–745: dừng toàn bộ polling trước khi gửi form hoặc rời phòng.
+  - Khoảng dòng 65: tăng phiên bản lên `Collap_V1.13.3lv3.2`.
+  - Khoảng dòng 4247–4265: chuẩn hóa kiểm tra thành viên khi gửi chat.
 - `static/js/pes_polling.js`
-  - toàn file: singleton poller, request lock, stopAll, stopByPrefix, dọn listener và hỗ trợ BFCache.
-- `vercel.json`
-  - phần headers: tăng cache ảnh và bổ sung cache font.
+  - Khoảng dòng 16–95: registry request có khả năng hủy và chống request trùng.
+  - Khoảng dòng 270–280: `stopAll()` hủy cả poller và request.
+  - Khoảng dòng 325–370: truyền AbortSignal dùng chung cho `fetchJsonOnce()` và `fetchTextOnce()`.
+  - Khoảng dòng 370–390: xuất các hàm hủy request.
+- `templates/room_detail.html`
+  - Khoảng dòng 249–286: tách dừng polling phòng và dừng toàn bộ trang.
+  - Khoảng dòng 440–446: dừng toàn bộ khi `pagehide`.
+  - Khoảng dòng 550–570: form thông thường chỉ dừng polling phòng.
+  - Khoảng dòng 745–760: xác nhận thoát phòng vẫn dừng toàn bộ.
 
-## Kiểm tra
+## Kiểm tra kỹ thuật
 
-- Python compile `app.py` và module sửa: đạt.
-- Parse 25 template Jinja: đạt.
-- Node `--check` cho `pes_polling.js`: đạt.
-- Node `--check` cho 12 khối JavaScript trong `base.html` và `room_detail.html`: đạt sau khi thay biểu thức Jinja bằng dữ liệu kiểm tra.
-- Mô phỏng hai poller cùng key: chỉ task mới chạy 1 lần.
-- Mô phỏng gọi request cùng key: chỉ tạo 1 request.
-- Mô phỏng gọi `runNow()` liên tục: số request chạy đồng thời tối đa là 1.
-- Mô phỏng `stopAll()`: gỡ toàn bộ 10 listener thử nghiệm, registry còn 0 poller.
-- Số route trước và sau: 69 decorator route, không thêm hoặc mất route.
-- Trang phòng: 1 tham chiếu `/state`, 1 key poller trạng thái, 0 `location.reload()`.
-- Lời mời: 1 endpoint, 1 key request lock.
-- Không cần chạy SQL Supabase.
+- `python -m py_compile app.py`: đạt.
+- `node --check static/js/pes_polling.js`: đạt.
+- Parse `base.html` và `room_detail.html` bằng Jinja: đạt.
+- Số route trước/sau: giữ nguyên 43 decorator route trong gói vá.
+- `room_detail.html`: không có `location.reload()`.
+- Chỉ có một tham chiếu endpoint trạng thái phòng.
+- Mô phỏng hai lời gọi cùng request key: executor chỉ chạy một lần.
+- Mô phỏng hủy request theo prefix: nhận đúng `AbortError`.
+- Không có SQL Supabase mới.
 
 ## Cài đặt
 
-Chép đè các file trong gói này lên nhánh `Collap_V1.13.3lv3`.
+Chép đè ba file code lên bản `Collap_V1.13.3lv3.1`. Không cần chạy SQL.

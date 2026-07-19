@@ -6,8 +6,8 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.13.13">
-    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v=1.13.13" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION|urlencode }}">
+    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
     {% if current_user and not (auth_only|default(false)) %}
     <script>
     window.PES_SESSION_CONFIG = {
@@ -20,7 +20,7 @@
         logoutUrl: {{ url_for('logout')|tojson }}
     };
     </script>
-    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v=1.13.13-v4.9" defer></script>
+    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
     {% endif %}
 
 <script>
@@ -308,10 +308,6 @@ function checkActiveRoom() {
     .catch(function () {});
 }
 
-
-document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) checkActiveRoom();
-});
 
 function checkPendingInvites() {
     if (document.hidden) return Promise.resolve();
@@ -791,32 +787,74 @@ function sendAdminAnnouncement() {
     });
 }
 
-// V4.8: chỉ chạy polling thật sự cần cho trang hiện tại.
+// Chỉ chạy polling cần thiết cho đúng trang hiện tại. Mỗi poller có key duy nhất,
+// nên kể cả script bị khởi tạo lại cũng không tạo vòng lặp thứ hai.
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return;
     const path = window.location.pathname;
     const isRoomPage = path.startsWith("/room/");
     const isPlayersPage = path === "/players";
     const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
+    const isHistoryPage = path === "/matches";
+    const isGuidePage = path === "/guide";
+    const isPassivePage = isHistoryPage || isGuidePage;
 
-    // Heartbeat nhẹ, không chạy khi tab ẩn.
-    PESNet.createPoller({task: postHeartbeat, visibleInterval: 180000, hiddenInterval: 600000, runWhenHidden: false, immediate: false, jitter: 7000});
+    PESNet.createPoller({
+        key: "heartbeat",
+        task: postHeartbeat,
+        visibleInterval: 60000,
+        hiddenInterval: 120000,
+        runWhenHidden: false,
+        immediate: false,
+        jitter: 5000
+    });
 
-    // Lời mời cần trên toàn hệ thống, nhưng phòng đấu đã có polling trạng thái riêng nên giảm tần suất.
-    PESNet.createPoller({task: checkPendingInvites, visibleInterval: isRoomPage ? 15000 : 9000, hiddenInterval: 120000, immediate: true, jitter: 1200});
-
-    // Không kiểm tra active-room ở chính trang phòng. BXH kiểm tra thưa hơn để tránh request khi chuyển qua lại.
-    if (!isRoomPage) {
-        PESNet.createPoller({task: checkActiveRoom, visibleInterval: isRankingPage ? 30000 : 20000, hiddenInterval: 120000, immediate: false, jitter: 2500});
+    // Trong phòng đã có đủ hai người; Lịch sử/Hướng dẫn không cần dò lời mời.
+    if (!isRoomPage && !isPassivePage) {
+        PESNet.createPoller({
+            key: "pending-invites",
+            task: checkPendingInvites,
+            visibleInterval: isPlayersPage || isRankingPage ? 15000 : 20000,
+            hiddenInterval: 60000,
+            runWhenHidden: false,
+            immediate: true,
+            jitter: 1500
+        });
     }
 
-    // Chat sảnh chỉ tải khi khung chat đang mở; không polling ngầm toàn trang.
+    if (!isRoomPage && !isPassivePage) {
+        PESNet.createPoller({
+            key: "active-room",
+            task: checkActiveRoom,
+            visibleInterval: isRankingPage ? 30000 : 45000,
+            hiddenInterval: 120000,
+            runWhenHidden: false,
+            immediate: false,
+            jitter: 2500
+        });
+    }
+
     if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
-        PESNet.createPoller({task: loadBottomChatSmart, visibleInterval: 20000, hiddenInterval: 120000, immediate: true, jitter: 2000});
+        PESNet.createPoller({
+            key: "lobby-chat",
+            task: loadBottomChatSmart,
+            visibleInterval: 20000,
+            hiddenInterval: 120000,
+            runWhenHidden: false,
+            immediate: true,
+            jitter: 2000
+        });
     }
 
-    // Thông báo hệ thống kiểm tra thưa, lần đầu dùng dữ liệu server render sẵn.
-    PESNet.createPoller({task: checkAnnouncementSmart, visibleInterval: 300000, hiddenInterval: 600000, immediate: false, jitter: 7000});
+    PESNet.createPoller({
+        key: "announcement",
+        task: checkAnnouncementSmart,
+        visibleInterval: 120000,
+        hiddenInterval: 300000,
+        runWhenHidden: false,
+        immediate: false,
+        jitter: 7000
+    });
 });
 
 document.addEventListener("visibilitychange", function () {
@@ -841,7 +879,7 @@ function updateOnlineFloatingCount() {
 
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return updateOnlineFloatingCount();
-    PESNet.createPoller({task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, immediate: true, jitter: 5000});
+    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, runWhenHidden: false, immediate: true, jitter: 5000});
 });
 </script>
 {% endif %}

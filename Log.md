@@ -1,66 +1,160 @@
-# Collap_V1.13.3m — Lịch sử toàn hệ thống và bộ lọc bỏ cuộc
+# Collap_V1.13.3l — Tối ưu polling, reload phòng và cache static
 
-- Ngày giờ: 19/07/2026 — múi giờ Asia/Bangkok.
-- Bản nền chức năng: `Collap_V1.13.3k`.
-- Không gộp các nhánh `l/lv2/lv3` đang thử nghiệm Request.
-- Loại gói: trình vá tự động, chỉ sửa đúng các file liên quan trên nhánh được chọn.
-- SQL Supabase: không cần.
+- **Ngày giờ:** 19/07/2026 00:03 — múi giờ Asia/Bangkok.
+- **Bản nền:** `Collap_V1.13.3k`.
+- **Phạm vi:** chỉ sửa các file liên quan đến polling, cập nhật phòng và cache; không sửa RP, Supabase, lịch sử bỏ cuộc hoặc quyền Admin.
 
-## 1. Lịch sử trận — Toàn hệ thống
+## 1. Kết quả đối chiếu báo cáo
 
-- Thêm công tắc hệ thống `match_history_all_enabled`, mặc định bật.
-- Admin có quyền `system_features_manage` được bật/tắt tại:
-  - Admin → Bật/tắt tính năng hệ thống → `Xem lịch sử toàn hệ thống`.
-- Khi bật:
-  - Người chơi thấy tab `Toàn hệ thống` như hiện tại.
-- Khi tắt:
-  - Người chơi chỉ thấy `Trận của tôi`.
-  - Cố mở trực tiếp `/matches?view=all` cũng bị backend chuyển về dữ liệu của chính tài khoản.
-  - Admin vẫn xem được toàn hệ thống để quản lý và kiểm tra dữ liệu.
+Một số đề xuất trong báo cáo đã tồn tại ở bản nền và không được viết chồng lại:
 
-## 2. Bộ lọc Đã hủy / Bỏ cuộc
+- `/api/room/<id>/state` đã có biến khóa request đang chạy.
+- Polling phòng đã dùng chuỗi `setTimeout`, không dùng nhiều `setInterval` trạng thái phòng.
+- Ô tỷ số đã có bản nháp trong `sessionStorage`.
+- `pes_polling.js` đã tự dừng request khi tab ẩn.
 
-Bộ lọc `status=cancelled` được mở rộng để nhận:
+Các phần còn thiếu hoặc chưa triệt để đã được sửa trong bản này.
 
-- Mọi dòng có `status = cancelled`.
-- Dòng có marker hoặc ghi chú bỏ cuộc.
-- Dòng bị trừ RP (`delta1 < 0` hoặc `delta2 < 0`) nhưng không phải trận confirmed thua bình thường.
-- Không yêu cầu phải có đủ cả `player1_id` và `player2_id`.
+## 2. Phòng đấu không reload toàn trang khi trạng thái đổi
 
-Nhờ vậy các lần hệ thống đã trừ điểm vẫn xuất hiện trong `Toàn hệ thống`, kể cả bản ghi chỉ có một người chơi hoặc phòng chưa gắn đủ đối thủ.
+### Trước
 
-## 3. File được trình vá sửa
+Khi `state_key` thay đổi, template gọi:
 
-| File | Nội dung |
-|---|---|
-| `app.py` | Đổi version; thêm mặc định `match_history_all_enabled = True` |
-| `modules/match_history_routes.py` | Khóa xem toàn hệ thống ở backend; mở rộng bộ lọc hủy/bỏ cuộc; giữ góc nhìn cá nhân/toàn hệ thống |
-| `templates/matches.html` | Ẩn tab Toàn hệ thống khi bị tắt; đổi tên bộ lọc thành `Đã hủy / Bỏ cuộc` |
-| `templates/admin.html` | Thêm công tắc `Xem lịch sử toàn hệ thống` |
-
-## 4. An toàn khi áp dụng
-
-- Trình vá tạo backup tại `.collap_v1_13_3m_backup` trước khi ghi file.
-- Nếu Python compile thất bại, trình vá tự khôi phục file cũ.
-- Không sửa công thức RP.
-- Không sửa cơ chế bỏ cuộc/phạt điểm.
-- Không sửa polling, chat, trạng thái phòng hoặc file JavaScript.
-- Không cập nhật `created_at` và không sửa schema Supabase.
-
-## 5. Cách áp dụng
-
-1. Chọn đúng nhánh cần thử, dựa trên `Collap_V1.13.3k` hoặc nhánh Request đã gộp đủ chức năng đến 3k.
-2. Chép `apply_Collap_V1.13.3m.py` vào thư mục gốc, cùng cấp `app.py`.
-3. Chạy:
-
-```bash
-python apply_Collap_V1.13.3m.py
+```javascript
+window.location.reload();
 ```
 
-4. Commit bốn file được báo đã sửa.
-5. Không commit thư mục `.collap_v1_13_3m_backup`.
-6. Deploy nhánh test và kiểm tra:
-   - bật công tắc → người chơi thấy Toàn hệ thống;
-   - tắt công tắc → người chơi chỉ thấy Trận của tôi;
-   - Admin vẫn xem được Toàn hệ thống;
-   - lọc Đã hủy / Bỏ cuộc nhận các dòng delta âm và bản ghi thiếu một phía.
+Điều này làm tải lại HTML, CSS, JS và ảnh, gây nháy màn hình và tạo nhiều request bị hủy khi chuyển trạng thái nhanh.
+
+### Sau
+
+- Gọi `/api/room/<id>/state` để phát hiện thay đổi.
+- Khi có thay đổi, chỉ tải HTML phòng mới bằng `fetch`.
+- Chỉ thay khối `#roomLiveShell` trong DOM.
+- Không tải lại thanh menu, CSS, JavaScript và phần khung ứng dụng.
+- Tự gắn lại sự kiện cho:
+  - Copy link phòng.
+  - Ô nhập tỷ số.
+  - Modal thoát/bỏ cuộc.
+  - Các nút thao tác trong phòng.
+  - Chat phòng.
+
+Các thao tác sau được gửi bằng AJAX và cập nhật riêng phần phòng:
+
+- Sẵn sàng/Hủy sẵn sàng.
+- Quay đội.
+- Nhập kết quả.
+- Xác nhận kết quả.
+- Đá tiếp.
+- Quay lại/kết thúc giao hữu.
+- Chat phòng.
+
+Thoát phòng, bỏ cuộc hoặc thao tác cần chuyển sang trang khác vẫn điều hướng bình thường.
+
+## 3. Chỉ một request trạng thái phòng tại một thời điểm
+
+- Giữ khóa `roomStateRequestInFlight`.
+- Không tạo request mới khi:
+  - Request `/state` trước chưa xong.
+  - Một thao tác POST trong phòng đang chạy.
+  - Phần giao diện phòng đang được làm mới.
+- Bỏ `AbortController` khỏi polling trạng thái phòng để tránh tự tạo `ERR_ABORTED` khi rời trang.
+- Thêm `window.PESRoomStateController`; nếu script bị khởi tạo lại thì vòng cũ được dừng trước.
+- Khi `pagehide`, timer được dừng nhưng không hủy một request bằng AbortController.
+
+## 4. Bảo vệ ô nhập tỷ số
+
+- Polling không còn bị dừng toàn bộ chỉ vì người dùng đã nhập tỷ số.
+- Bản nháp tỷ số được giữ trong `sessionStorage`.
+- Nếu giao diện phòng cập nhật trong lúc đang nhập, bản nháp được khôi phục vào ô mới.
+- Chỉ xóa bản nháp sau khi server nhận thao tác nhập kết quả thành công.
+- Không còn tình trạng state mới ghi đè ô đang nhập về `0`.
+
+## 5. Chu kỳ polling phòng
+
+| Trạng thái | Chu kỳ mới |
+|---|---:|
+| Chờ sẵn sàng | khoảng 3 giây |
+| Đang thi đấu — phía khách | khoảng 5 giây |
+| Đang thi đấu — phía chủ | khoảng 12 giây |
+| Chờ xác nhận kết quả | khoảng 2 giây |
+| Đã xác nhận/chờ đá tiếp | khoảng 5 giây |
+| Tab bị ẩn | khoảng 60 giây |
+
+Khi quay lại tab, hệ thống kiểm tra ngay một lần.
+
+## 6. `pes_polling.js` chỉ còn một poller cho mỗi chức năng
+
+Thêm registry theo `key`:
+
+- `heartbeat`
+- `pending-invites`
+- `active-room`
+- `lobby-chat`
+- `announcement`
+- `online-count`
+
+Nếu một poller cùng key được tạo lại, poller cũ bị dừng trước. Khi rời trang, toàn bộ poller được dọn.
+
+## 7. Polling ngoài phòng
+
+| API | Cách chạy mới |
+|---|---|
+| `/api/invites/pending` | 15 giây tại Players/BXH, 20 giây ở trang khác cần thiết |
+| Trong phòng đấu | Không polling lời mời |
+| Trang Lịch sử | Không polling lời mời hoặc active-room |
+| Trang Hướng dẫn | Không polling lời mời hoặc active-room |
+| `/heartbeat` | khoảng 60 giây, dừng khi tab ẩn |
+| `/api/announcement/current` | khoảng 120 giây, dừng khi tab ẩn |
+| `/api/session/activity` | Chỉ gửi theo thao tác người dùng, giữ giới hạn cấu hình 300 giây và khóa request chồng |
+
+## 8. Cache CSS, JS và ảnh static
+
+- URL CSS/JS dùng `APP_VERSION`, nên mỗi phiên bản mới tự đổi URL cache.
+- Thêm header:
+
+```text
+Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+```
+
+- Áp dụng trong cả Flask `after_request` và `vercel.json`.
+- Không cache lâu API trạng thái phòng.
+
+## 9. File đã sửa
+
+| File | Vị trí gần đúng | Nội dung |
+|---|---:|---|
+| `app.py` | dòng 65; 1472–1490 | Tăng phiên bản; cache static |
+| `static/js/pes_polling.js` | toàn file | Registry singleton, khóa in-flight, dọn poller |
+| `static/js/session-timeout.js` | dòng 3–145 | Chặn khởi tạo hai lần; khóa request activity |
+| `templates/base.html` | dòng 9–23; 790–885 | Version static; polling theo từng trang và key |
+| `templates/room_detail.html` | dòng 4; khoảng 540–1190 | Soft refresh phòng, AJAX form, giữ bản nháp tỷ số, một vòng state polling |
+| `templates/maintenance.html` | dòng 7 | Version URL CSS |
+| `templates/public_ranking.html` | dòng 10 | Version URL CSS |
+| `vercel.json` | toàn file | Header cache `/static/*` |
+
+## 10. Kiểm tra đã thực hiện
+
+- `python -m py_compile app.py modules/*.py`: đạt.
+- Parse 24 template Jinja: đạt.
+- `node --check` cho `pes_polling.js`: đạt.
+- `node --check` cho `session-timeout.js`: đạt.
+- Kiểm tra cú pháp bốn khối JavaScript trong `room_detail.html`: đạt.
+- Test tạo hai poller cùng key: registry chỉ giữ một poller.
+- `vercel.json`: JSON hợp lệ.
+- Không còn `location.reload()` trong template phòng.
+- Không thêm SQL Supabase.
+
+## 11. Lưu ý kiểm thử thực tế
+
+Sau khi deploy nhánh test, nên dùng hai trình duyệt và kiểm tra:
+
+1. Khách vào phòng và bấm Sẵn Sàng.
+2. Chủ quay đội.
+3. Chủ nhập tỷ số trong khi polling vẫn chạy.
+4. Khách nhận màn hình xác nhận mà không cần F5.
+5. Khách xác nhận.
+6. Hai bên bấm Đá tiếp và thi đấu thêm 2–3 trận.
+7. Chuyển tab trong 60 giây rồi quay lại.
+8. Dùng Network lọc `state`, `pending`, `activity`, `heartbeat` để xác nhận không chạy chồng.

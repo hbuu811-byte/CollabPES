@@ -7,7 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Bảng xếp hạng công khai PES Arena">
     <title>Bảng xếp hạng • {{ APP_NAME }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION|default('collap')|urlencode }}">
     <script>
     (function initTheme(){
         const saved = localStorage.getItem('pes2026-theme');

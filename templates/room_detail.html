@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_avatar_macros.html" import player_avatar %}
 {% block content %}
-<div class="room-view-shell">
+<div id="roomLiveShell" class="room-view-shell" data-room-state-key="{{ initial_room_state_key|e }}" data-room-status="{{ room.status|e }}">
 
 <!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_BEGIN === -->
 {% if room.streak_event %}
@@ -541,15 +541,22 @@ async function copySharedRoomLink() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", function () {
+function bindRoomShareButton() {
     const shareButton = document.getElementById("copyRoomShareLink");
-    if (shareButton) shareButton.addEventListener("click", copySharedRoomLink);
-});
+    if (!shareButton || shareButton.dataset.roomShareBound === "1") return;
+    shareButton.dataset.roomShareBound = "1";
+    shareButton.addEventListener("click", copySharedRoomLink);
+}
 
 let currentRoomStateKey = {{ initial_room_state_key|tojson }};
 let currentRoomStatus = {{ room.status|tojson }};
 const currentRoomUserIsHost = {{ (current_user.id == room.host_user_id or current_user.role == 'admin')|tojson }};
 const currentRoomUserIsGuest = {{ (current_user.id == room.guest_user_id)|tojson }};
+const currentRoomPath = {{ url_for('room_detail', room_id=room.id)|tojson }};
+
+let roomCountdownSeconds = 0;
+let roomStartCountdownSeconds = 0;
+let roomStartCountdownMode = "down";
 
 function renderRoomCountdown(seconds) {
     const countdown = document.getElementById("roomCountdown");
@@ -560,11 +567,6 @@ function renderRoomCountdown(seconds) {
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
 
-let roomCountdownSeconds = Number(document.getElementById("roomCountdown")?.dataset.seconds || 0);
-const roomStartCountdownElement = document.getElementById("roomStartCountdown");
-let roomStartCountdownSeconds = Number(roomStartCountdownElement?.dataset.seconds || 0);
-const roomStartCountdownMode = roomStartCountdownElement?.dataset.mode || "down";
-
 function renderRoomStartCountdown(seconds) {
     const countdown = document.getElementById("roomStartCountdown");
     if (!countdown) return;
@@ -573,9 +575,19 @@ function renderRoomStartCountdown(seconds) {
     const remain = Math.floor(safeSeconds % 60);
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
-renderRoomCountdown(roomCountdownSeconds);
-renderRoomStartCountdown(roomStartCountdownSeconds);
-setInterval(function () {
+
+function syncRoomCountdownsFromDom() {
+    const roomCountdown = document.getElementById("roomCountdown");
+    const startCountdown = document.getElementById("roomStartCountdown");
+    roomCountdownSeconds = Number(roomCountdown?.dataset.seconds || 0);
+    roomStartCountdownSeconds = Number(startCountdown?.dataset.seconds || 0);
+    roomStartCountdownMode = startCountdown?.dataset.mode || "down";
+    renderRoomCountdown(roomCountdownSeconds);
+    renderRoomStartCountdown(roomStartCountdownSeconds);
+}
+
+syncRoomCountdownsFromDom();
+window.setInterval(function () {
     if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
     if (roomStartCountdownMode === "up") {
         roomStartCountdownSeconds += 1;
@@ -586,18 +598,10 @@ setInterval(function () {
     renderRoomStartCountdown(roomStartCountdownSeconds);
 }, 1000);
 
-function roomHasActiveInput() {
-    const active = document.activeElement;
-    if (!active) return false;
-    return active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT";
-}
-
-const roomScoreForm = document.querySelector(".room-score-form");
-const roomScoreInputs = roomScoreForm
-    ? Array.from(roomScoreForm.querySelectorAll('input[name="host_score"], input[name="guest_score"]'))
-    : [];
 const roomScoreDraftKey = "pes-room-score-draft:{{ room.id }}";
 let roomScoreFormDirty = false;
+let roomScoreForm = null;
+let roomScoreInputs = [];
 
 function saveRoomScoreDraft() {
     if (!roomScoreInputs.length) return;
@@ -622,32 +626,38 @@ function restoreRoomScoreDraft() {
     } catch (error) {}
 }
 
-restoreRoomScoreDraft();
-roomScoreInputs.forEach(function (input) { input.addEventListener("input", saveRoomScoreDraft); });
-if (roomScoreForm) {
-    roomScoreForm.addEventListener("submit", function () {
-        roomScoreFormDirty = false;
-        try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
+function clearRoomScoreDraft() {
+    roomScoreFormDirty = false;
+    try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
+}
+
+function bindRoomScoreDraft() {
+    roomScoreForm = document.querySelector(".room-score-form");
+    roomScoreInputs = roomScoreForm
+        ? Array.from(roomScoreForm.querySelectorAll('input[name="host_score"], input[name="guest_score"]'))
+        : [];
+    roomScoreInputs.forEach(function (input) {
+        if (input.dataset.roomDraftBound === "1") return;
+        input.dataset.roomDraftBound = "1";
+        input.addEventListener("input", saveRoomScoreDraft);
     });
+    restoreRoomScoreDraft();
 }
 
 let roomStateRequestInFlight = false;
 let roomStateTimer = null;
 let roomStateStopped = false;
-let roomStateAbortController = null;
+let roomViewRefreshInFlight = false;
+let roomActionRequestInFlight = false;
 
 function getRoomStateInterval() {
-    if (document.hidden) return 15000;
-
-    // Khách cần phát hiện lúc chủ vừa gửi kết quả nhanh hơn chủ phòng.
-    if (currentRoomStatus === "playing") {
-        return currentRoomUserIsGuest ? 2200 : 8000;
-    }
-    if (currentRoomStatus === "friendly_playing") return 8000;
-    if (currentRoomStatus === "waiting_result_confirm") return 1000;
-    if (currentRoomStatus === "waiting_ready") return 2500;
-    if (currentRoomStatus === "confirmed") return 3000;
-    return 6000;
+    if (document.hidden) return 60000;
+    if (currentRoomStatus === "playing") return currentRoomUserIsGuest ? 5000 : 12000;
+    if (currentRoomStatus === "friendly_playing") return 12000;
+    if (currentRoomStatus === "waiting_result_confirm") return 2000;
+    if (currentRoomStatus === "waiting_ready") return 3000;
+    if (currentRoomStatus === "confirmed") return 5000;
+    return 10000;
 }
 
 function scheduleRoomStateCheck(delay) {
@@ -658,6 +668,137 @@ function scheduleRoomStateCheck(delay) {
     roomStateTimer = window.setTimeout(runRoomStateCheck, baseDelay + jitter);
 }
 
+function showRoomAjaxNotice(message, tone) {
+    if (!message) return;
+    if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
+        window.PESRoomActionModal.showNotice({
+            tone: tone || "warning",
+            icon: tone === "danger" ? "⚠" : "ℹ",
+            title: tone === "danger" ? "Không thể thực hiện" : "Thông báo phòng đấu",
+            message: message,
+            note: "PES ARENA",
+            confirmLabel: "Đã hiểu"
+        });
+    }
+}
+
+function getFlashFromDocument(doc) {
+    const alert = doc.querySelector(".player-main > .alert, main .alert");
+    if (!alert) return null;
+    return {
+        message: (alert.textContent || "").trim(),
+        tone: alert.classList.contains("danger") ? "danger" : (alert.classList.contains("success") ? "success" : "warning")
+    };
+}
+
+function rebindRoomDynamicUi() {
+    bindRoomShareButton();
+    bindRoomScoreDraft();
+    bindRoomAjaxForms();
+    syncRoomCountdownsFromDom();
+    if (window.PESRoomActionModal && typeof window.PESRoomActionModal.refreshForms === "function") {
+        window.PESRoomActionModal.refreshForms();
+    }
+    if (typeof currentRoomChatKey !== "undefined") currentRoomChatKey = "";
+    if (typeof loadRoomChat === "function" && !document.hidden) loadRoomChat();
+}
+
+function replaceRoomShellFromDocument(doc) {
+    const currentShell = document.getElementById("roomLiveShell");
+    const nextShell = doc.getElementById("roomLiveShell");
+    if (!currentShell || !nextShell) return false;
+
+    currentShell.replaceWith(nextShell);
+    currentRoomStateKey = nextShell.dataset.roomStateKey || currentRoomStateKey;
+    currentRoomStatus = nextShell.dataset.roomStatus || currentRoomStatus;
+    rebindRoomDynamicUi();
+    return true;
+}
+
+async function fetchRoomDocument(url, options) {
+    const response = await fetch(url, Object.assign({
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"X-PES-Room-Ajax": "1"}
+    }, options || {}));
+    const text = await response.text();
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    return {response: response, doc: doc};
+}
+
+async function refreshRoomView() {
+    if (roomViewRefreshInFlight || roomStateStopped) return false;
+    roomViewRefreshInFlight = true;
+    try {
+        const result = await fetchRoomDocument(currentRoomPath);
+        if (!result.response.ok) return false;
+        return replaceRoomShellFromDocument(result.doc);
+    } catch (error) {
+        return false;
+    } finally {
+        roomViewRefreshInFlight = false;
+    }
+}
+
+function shouldAjaxRoomForm(form) {
+    if (!form || String(form.method || "get").toLowerCase() !== "post") return false;
+    if (form.classList.contains("room-exit-confirm-form")) return false;
+    if (form.querySelector('input[type="file"]')) return false;
+    const action = String(form.action || "");
+    if (!action.includes(currentRoomPath)) return false;
+    return !/(\/leave|\/forfeit|\/rematch\/decline|\/dispute|\/withdraw-dispute)(?:$|\?)/.test(action);
+}
+
+function bindRoomAjaxForms() {
+    const shell = document.getElementById("roomLiveShell");
+    if (!shell) return;
+    shell.querySelectorAll("form").forEach(function (form) {
+        if (!shouldAjaxRoomForm(form) || form.dataset.roomAjaxBound === "1") return;
+        form.dataset.roomAjaxBound = "1";
+        form.addEventListener("submit", async function (event) {
+            event.preventDefault();
+            if (roomActionRequestInFlight) return;
+            roomActionRequestInFlight = true;
+
+            const submitter = event.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
+            const oldText = submitter ? submitter.textContent : "";
+            if (submitter) {
+                submitter.disabled = true;
+                submitter.textContent = "Đang xử lý...";
+            }
+
+            try {
+                const body = new FormData(form);
+                if (submitter && submitter.name && !body.has(submitter.name)) body.append(submitter.name, submitter.value || "");
+                const result = await fetchRoomDocument(form.action, {method: "POST", body: body});
+                const responsePath = new URL(result.response.url, window.location.origin).pathname;
+
+                if (!responsePath.startsWith(currentRoomPath)) {
+                    window.location.href = result.response.url;
+                    return;
+                }
+
+                const flash = getFlashFromDocument(result.doc);
+                const updated = replaceRoomShellFromDocument(result.doc);
+                if (updated && form.classList.contains("room-score-form") && (!flash || flash.tone !== "danger")) {
+                    clearRoomScoreDraft();
+                }
+                if (flash && flash.message) showRoomAjaxNotice(flash.message, flash.tone);
+                if (!updated && !flash) showRoomAjaxNotice("Không thể cập nhật phòng. Vui lòng thử lại sau vài giây.", "warning");
+            } catch (error) {
+                showRoomAjaxNotice("Kết nối phòng đấu bị gián đoạn. Vui lòng thử lại.", "danger");
+            } finally {
+                roomActionRequestInFlight = false;
+                if (submitter && document.contains(submitter)) {
+                    submitter.disabled = false;
+                    submitter.textContent = oldText;
+                }
+                scheduleRoomStateCheck(500);
+            }
+        });
+    });
+}
+
 function runRoomStateCheck() {
     if (roomStateStopped) return;
     checkRoomState().finally(function () {
@@ -666,26 +807,22 @@ function runRoomStateCheck() {
 }
 
 function checkRoomState() {
-    if (roomStateRequestInFlight || roomHasActiveInput() || roomScoreFormDirty) {
-        return Promise.resolve();
-    }
+    if (roomStateRequestInFlight || roomActionRequestInFlight || roomViewRefreshInFlight) return Promise.resolve();
 
     roomStateRequestInFlight = true;
-    roomStateAbortController = new AbortController();
     const stateUrl = new URL("{{ url_for('api_room_state', room_id=room.id) }}", window.location.origin);
     if (currentRoomStateKey) stateUrl.searchParams.set("since", currentRoomStateKey);
 
     return fetch(stateUrl.toString(), {
         method: "GET",
         credentials: "same-origin",
-        cache: "no-store",
-        signal: roomStateAbortController.signal
+        cache: "no-store"
     })
     .then(function (res) {
         if (res.status === 204 || res.status === 304) return null;
         return res.json();
     })
-    .then(function (data) {
+    .then(async function (data) {
         if (!data || !data.ok) return;
         currentRoomStatus = data.status || currentRoomStatus;
         if (data.status === "cancelled") {
@@ -734,38 +871,42 @@ function checkRoomState() {
             return;
         }
         if (data.state_key !== currentRoomStateKey) {
-            currentRoomStateKey = data.state_key;
-            roomStateStopped = true;
-            window.location.reload();
+            await refreshRoomView();
         }
     })
-    .catch(function (error) {
-        if (error && error.name === "AbortError") return;
-    })
+    .catch(function () {})
     .finally(function () {
         roomStateRequestInFlight = false;
-        roomStateAbortController = null;
     });
 }
-
-window.addEventListener("DOMContentLoaded", function () {
-    scheduleRoomStateCheck(300);
-});
 
 function requestImmediateRoomStateCheck() {
     if (document.hidden || roomStateStopped) return;
     scheduleRoomStateCheck(100);
 }
 
-document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) requestImmediateRoomStateCheck();
-});
-window.addEventListener("focus", requestImmediateRoomStateCheck);
-window.addEventListener("pagehide", function () {
+function stopRoomStatePolling() {
     roomStateStopped = true;
     if (roomStateTimer) window.clearTimeout(roomStateTimer);
-    if (roomStateAbortController) roomStateAbortController.abort();
+    roomStateTimer = null;
+}
+
+if (window.PESRoomStateController && typeof window.PESRoomStateController.stop === "function") {
+    window.PESRoomStateController.stop();
+}
+window.PESRoomStateController = {stop: stopRoomStatePolling, runNow: requestImmediateRoomStateCheck};
+
+document.addEventListener("DOMContentLoaded", function () {
+    rebindRoomDynamicUi();
+    scheduleRoomStateCheck(300);
 });
+
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden) scheduleRoomStateCheck(60000);
+    else requestImmediateRoomStateCheck();
+});
+window.addEventListener("focus", requestImmediateRoomStateCheck);
+window.addEventListener("pagehide", stopRoomStatePolling, {once: true});
 </script>
 
 {% if system_features.room_chat_enabled %}
@@ -889,7 +1030,6 @@ window.addEventListener("DOMContentLoaded", function () {
     const cancelButton = document.getElementById("roomActionModalCancel");
     const closeButton = modal.querySelector(".room-action-modal-close");
     const cancelButtons = modal.querySelectorAll("[data-room-modal-cancel]");
-    const forms = document.querySelectorAll(".room-exit-confirm-form");
 
     let pendingForm = null;
     let returnFocus = null;
@@ -972,7 +1112,7 @@ window.addEventListener("DOMContentLoaded", function () {
         submitting = false;
         noticeMode = true;
         noticeRedirectUrl = settings.redirectUrl || "";
-        setDismissControlsVisible(false);
+        setDismissControlsVisible(!noticeRedirectUrl);
 
         modal.dataset.tone = settings.tone || "warning";
         icon.textContent = settings.icon || "ℹ";
@@ -990,13 +1130,19 @@ window.addEventListener("DOMContentLoaded", function () {
         }
     }
 
-    forms.forEach(function (form) {
-        form.addEventListener("submit", function (event) {
-            event.preventDefault();
-            if (submitting || noticeMode) return;
-            openModal(form);
+    function refreshForms() {
+        document.querySelectorAll(".room-exit-confirm-form").forEach(function (form) {
+            if (form.dataset.roomExitModalBound === "1") return;
+            form.dataset.roomExitModalBound = "1";
+            form.addEventListener("submit", function (event) {
+                event.preventDefault();
+                if (submitting || noticeMode) return;
+                openModal(form);
+            });
         });
-    });
+    }
+
+    refreshForms();
 
     cancelButtons.forEach(function (button) {
         button.addEventListener("click", closeModal);
@@ -1016,7 +1162,12 @@ window.addEventListener("DOMContentLoaded", function () {
 
     confirmButton.addEventListener("click", function () {
         if (noticeMode) {
-            redirectNotice();
+            if (noticeRedirectUrl) {
+                redirectNotice();
+            } else {
+                noticeMode = false;
+                closeModal();
+            }
             return;
         }
         if (!pendingForm || submitting) return;
@@ -1030,7 +1181,8 @@ window.addEventListener("DOMContentLoaded", function () {
     });
 
     window.PESRoomActionModal = {
-        showNotice: showNotice
+        showNotice: showNotice,
+        refreshForms: refreshForms
     };
 })();
 </script>

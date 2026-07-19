@@ -3,6 +3,8 @@
 
     const cfg = global.PES_SESSION_CONFIG || {};
     if (!cfg.enabled) return;
+    if (global.__PES_SESSION_TIMEOUT_RUNNING__) return;
+    global.__PES_SESSION_TIMEOUT_RUNNING__ = true;
 
     const timeoutMs = Math.max(60_000, Number(cfg.idleTimeoutSeconds || 3600) * 1000);
     const warningMs = Math.max(30_000, Number(cfg.warningSeconds || 300) * 1000);
@@ -17,6 +19,7 @@
     let logoutTimer = null;
     let countdownTimer = null;
     let checkInFlight = false;
+    let activityInFlight = false;
 
     function ensureModal() {
         let root = document.getElementById("idleTimeoutModal");
@@ -72,16 +75,19 @@
     }
 
     function syncActivity(force) {
-        if (!activityUrl || !navigator.onLine) return;
+        if (!activityUrl || !navigator.onLine || document.hidden || activityInFlight) return;
         const now = Date.now();
         if (!force && now - lastSyncAt < syncMs) return;
         lastSyncAt = now;
+        activityInFlight = true;
         fetch(activityUrl, {
             method: "POST",
             credentials: "same-origin",
             cache: "no-store",
             headers: {"X-Requested-With": "XMLHttpRequest"}
-        }).catch(function () {});
+        }).catch(function () {}).finally(function () {
+            activityInFlight = false;
+        });
     }
 
     function recordActivity(forceSync) {
@@ -127,6 +133,13 @@
     document.addEventListener("visibilitychange", function () {
         if (!document.hidden) recordActivity(false);
     });
+
+    global.addEventListener("pagehide", function () {
+        clearTimeout(warningTimer);
+        clearTimeout(logoutTimer);
+        if (countdownTimer) clearInterval(countdownTimer);
+        global.__PES_SESSION_TIMEOUT_RUNNING__ = false;
+    }, {once: true});
 
     schedule();
 })(window);

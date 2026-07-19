@@ -10,7 +10,7 @@
         <div class="guide-hero-actions">
             <a class="guide-zalo-card" href="https://zalo.me/g/b21i20icbmhxks1rl3ks" target="_blank" rel="noopener noreferrer" aria-label="Tham gia Nhóm Zalo PES 21 Parsec">
                 <span>Tham gia Nhóm Zalo</span>
-                <img src="{{ url_for('static', filename='zalo_group_qr.png') }}" alt="Mã QR tham gia Nhóm Zalo PES 21 Parsec">
+                <img src="{{ url_for('static', filename='zalo_group_qr.png') }}?v={{ APP_VERSION }}" alt="Mã QR tham gia Nhóm Zalo PES 21 Parsec">
                 <small>Quét mã hoặc bấm vào đây</small>
             </a>
             <a class="btn gold guide-start-button" href="{{ url_for('players') }}">Tìm đối thủ ngay</a>
@@ -87,7 +87,7 @@
         <div class="rank-system-grid">
             {% for rank in RANKS %}
             <article class="rank-system-card">
-                <img src="{{ url_for('static', filename='ranks/' ~ rank.slug ~ '-card.png') }}" alt="{{ rank.name }}" loading="lazy">
+                <img src="{{ url_for('static', filename='ranks/' ~ rank.slug ~ '-card.png') }}?v={{ APP_VERSION }}" alt="{{ rank.name }}" loading="lazy">
                 <div class="rank-system-copy">
                     <strong>{{ rank.name }}</strong>
                     <small>{{ rank.min }}{% if rank.max is not none %}–{{ rank.max }}{% else %}+{% endif %} RP</small>

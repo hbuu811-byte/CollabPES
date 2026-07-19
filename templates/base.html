@@ -818,9 +818,22 @@ document.addEventListener("visibilitychange", function () {
 });
 
 function checkAnnouncement() {
-    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
-        .then(function (res) { return res.json(); })
+    const task = function () {
+        return fetch("{{ url_for('api_current_announcement') }}", {
+            credentials: "same-origin",
+            cache: "no-store"
+        })
+        .then(function (res) {
+            if (res.status === 204 || !res.ok) return null;
+            return res.json().catch(function () { return null; });
+        });
+    };
+    const request = window.PESNet && typeof PESNet.singleFlight === "function"
+        ? PESNet.singleFlight("api:announcement-current", task)
+        : task();
+    return Promise.resolve(request)
         .then(function (data) {
+            if (!data) return;
             if (!data.ok) return;
             const items = Array.isArray(data.announcements)
                 ? data.announcements
@@ -943,10 +956,22 @@ document.addEventListener("visibilitychange", function () {
 {% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
 <script>
 function updateOnlineFloatingCount() {
-    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
-        .then(function (res) { return res.json(); })
+    const task = function () {
+        return fetch("{{ url_for('api_online_count') }}", {
+            credentials: "same-origin",
+            cache: "no-store"
+        })
+        .then(function (res) {
+            if (!res.ok) return null;
+            return res.json().catch(function () { return null; });
+        });
+    };
+    const request = window.PESNet && typeof PESNet.singleFlight === "function"
+        ? PESNet.singleFlight("api:online-count", task)
+        : task();
+    return Promise.resolve(request)
         .then(function (data) {
-            if (!data.ok) return;
+            if (!data || !data.ok) return;
             const el = document.getElementById("onlineFloatingCount");
             if (el) el.innerText = data.online_count;
         })

@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% from "_avatar_macros.html" import player_avatar %}
 {% block content %}
+<!-- ROOM_LIVE_PARTIAL_BEGIN -->
 <div id="roomLiveShell" class="room-view-shell" data-room-state-key="{{ initial_room_state_key|e }}" data-room-status="{{ room.status|e }}">
 
+<div data-room-fragment="events">
 <!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_BEGIN === -->
 {% if room.streak_event %}
 <div id="winStreakToast"
@@ -31,8 +33,9 @@
 </div>
 {% endif %}
 <!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_END === -->
+</div>
 
-    <div class="room-stage-topbar panel">
+    <div class="room-stage-topbar panel" data-room-fragment="topbar">
         <div class="room-stage-title-wrap">
             <div>
                 <h1 class="room-stage-title">PHÒNG ĐẤU <span class="room-code-badge">#{{ room.room_code }}</span></h1>
@@ -58,7 +61,7 @@
     </div>
 
     <div class="room-match-shell">
-        <section class="room-side-card room-team-card home">
+        <section class="room-side-card room-team-card home" data-room-fragment="home">
             <div class="room-player-heading-plain">
                 {{ player_avatar(name=room.host_name, avatar_url=room.host_avatar_url, achievement=room.host_achievement, size='sm') }}
                 <div class="room-player-name">{{ room.host_name }}</div>
@@ -86,7 +89,7 @@
             </div>
         </section>
 
-        <section class="room-center-stage-plain">
+        <section class="room-center-stage-plain" data-room-fragment="center">
             {% if room.has_guest %}
                 {% if room.status == 'waiting_ready' %}
                 <div class="room-center-countdown-label">Thời gian còn lại để bắt đầu</div>
@@ -269,7 +272,7 @@
             {% endif %}
         </section>
 
-        <section class="room-side-card room-team-card away">
+        <section class="room-side-card room-team-card away" data-room-fragment="away">
             <div class="room-player-heading-plain">
                 {{ player_avatar(name=room.guest_name, avatar_url=room.guest_avatar_url, achievement=room.guest_achievement, size='sm') }}
                 <div class="room-player-name">{{ room.guest_name }}</div>
@@ -307,7 +310,7 @@
         </section>
 
         <aside class="room-side-rail">
-            <section class="panel room-side-info-panel">
+            <section class="panel room-side-info-panel" data-room-fragment="info">
                 <h3>Thông tin phòng đấu</h3>
                 <div class="room-side-info-list">
                     <div><span>Mã phòng</span><strong>#{{ room.room_code }}</strong></div>
@@ -316,6 +319,7 @@
                 </div>
             </section>
 
+            <div data-room-fragment="history">
             {% if room_head_to_head and room_head_to_head.available %}
             <section class="panel room-session-h2h room-session-h2h-rail room-score-history-panel" aria-label="Lịch sử tỷ số trong phòng">
                 <div class="room-score-history-title">
@@ -344,6 +348,7 @@
                 {% endif %}
             </section>
             {% endif %}
+            </div>
 
             {% if system_features.room_chat_enabled %}<section class="panel room-chat-side">
                 <h2>Chat phòng</h2>
@@ -357,7 +362,7 @@
         </aside>
     </div>
 
-    <div class="panel room-extra-controls">
+    <div class="panel room-extra-controls" data-room-fragment="controls">
     <h2 class="room-control-title">Điều khiển phòng</h2>
 
     {% if system_features.friendly_enabled and room.status == "waiting_ready" %}
@@ -489,6 +494,7 @@
 
     </div>
 </div>
+<!-- ROOM_LIVE_PARTIAL_END -->
 
 <div id="roomExitConfirmModal" class="room-action-modal" hidden aria-hidden="true">
     <div class="room-action-modal-card" role="dialog" aria-modal="true" aria-labelledby="roomActionModalTitle" aria-describedby="roomActionModalMessage">
@@ -665,7 +671,6 @@ function bindRoomScoreDraft() {
 
 let roomStateRequestInFlight = false;
 let roomStateController = null;
-let roomStateImmediateTimer = null;
 let roomStateStopped = false;
 let roomViewRefreshInFlight = false;
 let roomActionRequestInFlight = false;
@@ -745,54 +750,105 @@ function getFlashFromDocument(doc) {
     };
 }
 
-function rebindRoomDynamicUi() {
-    bindRoomShareButton();
-    bindRoomScoreDraft();
-    bindRoomAjaxForms();
+function rebindRoomDynamicUi(changedFragments) {
+    const changed = new Set(changedFragments || []);
+    if (!changed.size || changed.has("topbar")) bindRoomShareButton();
+    if (!changed.size || changed.has("center") || changed.has("controls")) bindRoomScoreDraft();
+    if (!changed.size || changed.has("center") || changed.has("controls")) bindRoomAjaxForms();
     if (typeof bindRoomChatForm === "function") bindRoomChatForm();
-    syncRoomCountdownsFromDom();
+    if (!changed.size || changed.has("center")) syncRoomCountdownsFromDom();
     if (window.PESRoomActionModal && typeof window.PESRoomActionModal.refreshForms === "function") {
         window.PESRoomActionModal.refreshForms();
     }
-    if (typeof currentRoomChatKey !== "undefined") currentRoomChatKey = "";
-    if (typeof requestImmediateRoomChatRefresh === "function" && !document.hidden) {
-        requestImmediateRoomChatRefresh();
+    if (changed.has("events") && typeof window.PESInitWinStreakEvent === "function") {
+        window.PESInitWinStreakEvent();
     }
 }
 
-function replaceRoomShellFromDocument(doc) {
-    const currentShell = document.getElementById("roomLiveShell");
-    const nextShell = doc.getElementById("roomLiveShell");
-    if (!currentShell || !nextShell) return false;
+const roomFragmentNames = ["events", "topbar", "home", "center", "away", "info", "history", "controls"];
 
-    currentShell.replaceWith(nextShell);
-    currentRoomStateKey = nextShell.dataset.roomStateKey || currentRoomStateKey;
-    currentRoomStatus = nextShell.dataset.roomStatus || currentRoomStatus;
-    rebindRoomDynamicUi();
-    return true;
+function parseRoomPartialHtml(html) {
+    const doc = new DOMParser().parseFromString(String(html || ""), "text/html");
+    return doc.getElementById("roomLiveShell");
 }
 
-async function fetchRoomDocument(url, options) {
+function patchRoomFragments(nextShell) {
+    const currentShell = document.getElementById("roomLiveShell");
+    if (!currentShell || !nextShell) return {ok: false, changed: []};
+
+    const changed = [];
+    const nextStateKey = nextShell.dataset.roomStateKey || currentRoomStateKey;
+    const nextStatus = nextShell.dataset.roomStatus || currentRoomStatus;
+
+    roomFragmentNames.forEach(function (name) {
+        const selector = '[data-room-fragment="' + name + '"]';
+        const currentFragment = currentShell.querySelector(selector);
+        const nextFragment = nextShell.querySelector(selector);
+        if (!currentFragment || !nextFragment) return;
+
+        // Không đụng vào DOM nếu khối không đổi. Nhờ vậy ảnh, input, focus,
+        // animation và các listener của phần còn lại được giữ nguyên.
+        if (currentFragment.outerHTML === nextFragment.outerHTML) return;
+        if (name === "center" || name === "controls") saveRoomScoreDraft();
+        currentFragment.replaceWith(nextFragment.cloneNode(true));
+        changed.push(name);
+    });
+
+    currentShell.dataset.roomStateKey = nextStateKey;
+    currentShell.dataset.roomStatus = nextStatus;
+    currentRoomStateKey = nextStateKey;
+    currentRoomStatus = nextStatus;
+
+    if (changed.length) rebindRoomDynamicUi(changed);
+    return {ok: true, changed: changed};
+}
+
+async function fetchRoomPartial(url, options) {
+    const headers = Object.assign({
+        "X-PES-Room-Ajax": "1",
+        "X-PES-Room-Partial": "1",
+        "Accept": "application/json"
+    }, (options && options.headers) || {});
     const response = await fetch(url, Object.assign({
         credentials: "same-origin",
-        cache: "no-store",
-        headers: {"X-PES-Room-Ajax": "1"}
-    }, options || {}));
-    if (handleRoomSessionResponse(response)) {
-        throw new Error("room_session_ended");
+        cache: "no-cache",
+        headers: headers
+    }, options || {}, {headers: headers}));
+    if (handleRoomSessionResponse(response)) throw new Error("room_session_ended");
+
+    const responsePath = new URL(response.url, window.location.origin).pathname;
+    const contentType = String(response.headers.get("content-type") || "").toLowerCase();
+    if (!contentType.includes("application/json")) {
+        const text = await response.text();
+        const doc = new DOMParser().parseFromString(text, "text/html");
+        const shell = doc.getElementById("roomLiveShell");
+        return {
+            response: response,
+            responsePath: responsePath,
+            payload: shell ? {
+                ok: response.ok,
+                html: shell.outerHTML,
+                state_key: shell.dataset.roomStateKey || "",
+                status: shell.dataset.roomStatus || "",
+                flash: getFlashFromDocument(doc)
+            } : null
+        };
     }
-    const text = await response.text();
-    const doc = new DOMParser().parseFromString(text, "text/html");
-    return {response: response, doc: doc};
+    const payload = await response.json().catch(function () { return null; });
+    return {response: response, responsePath: responsePath, payload: payload};
 }
 
-async function refreshRoomView() {
+async function refreshRoomFragments() {
     if (roomViewRefreshInFlight || roomStateStopped) return false;
     roomViewRefreshInFlight = true;
     try {
-        const result = await fetchRoomDocument(currentRoomPath);
-        if (!result.response.ok) return false;
-        return replaceRoomShellFromDocument(result.doc);
+        const result = await fetchRoomPartial(currentRoomPath);
+        if (!result.response.ok || !result.payload || !result.payload.ok) return false;
+        const nextShell = parseRoomPartialHtml(result.payload.html);
+        const patched = patchRoomFragments(nextShell);
+        if (result.payload.state_key) currentRoomStateKey = result.payload.state_key;
+        if (result.payload.status) currentRoomStatus = result.payload.status;
+        return patched.ok;
     } catch (error) {
         return false;
     } finally {
@@ -830,23 +886,26 @@ function bindRoomAjaxForms() {
             try {
                 const body = new FormData(form);
                 if (submitter && submitter.name && !body.has(submitter.name)) body.append(submitter.name, submitter.value || "");
-                const result = await fetchRoomDocument(form.action, {method: "POST", body: body});
-                const responsePath = new URL(result.response.url, window.location.origin).pathname;
+                const result = await fetchRoomPartial(form.action, {method: "POST", body: body});
 
-                if (!responsePath.startsWith(currentRoomPath)) {
+                if (!result.responsePath.startsWith(currentRoomPath)) {
                     window.location.href = result.response.url;
                     return;
                 }
 
-                const flash = getFlashFromDocument(result.doc);
-                const updated = replaceRoomShellFromDocument(result.doc);
-                if (updated && form.classList.contains("room-score-form") && (!flash || flash.tone !== "danger")) {
+                const payload = result.payload;
+                const flash = payload ? payload.flash : null;
+                const nextShell = payload ? parseRoomPartialHtml(payload.html) : null;
+                const patched = patchRoomFragments(nextShell);
+                if (payload && payload.state_key) currentRoomStateKey = payload.state_key;
+                if (payload && payload.status) currentRoomStatus = payload.status;
+                if (patched.ok && form.classList.contains("room-score-form") && (!flash || flash.tone !== "danger")) {
                     clearRoomScoreDraft();
                 }
                 if (shouldShowRoomAjaxNotice(flash)) {
                     showRoomAjaxNotice(flash.message, flash.tone);
                 }
-                if (!updated && !flash) showRoomAjaxNotice("Không thể cập nhật phòng. Vui lòng thử lại sau vài giây.", "warning");
+                if (!patched.ok && !flash) showRoomAjaxNotice("Không thể cập nhật phòng. Vui lòng thử lại sau vài giây.", "warning");
             } catch (error) {
                 showRoomAjaxNotice("Kết nối phòng đấu bị gián đoạn. Vui lòng thử lại.", "danger");
             } finally {
@@ -855,8 +914,6 @@ function bindRoomAjaxForms() {
                     submitter.disabled = false;
                     submitter.textContent = oldText;
                 }
-                if (roomStateImmediateTimer) window.clearTimeout(roomStateImmediateTimer);
-                roomStateImmediateTimer = window.setTimeout(requestImmediateRoomStateCheck, 500);
             }
         });
     });
@@ -944,7 +1001,7 @@ function checkRoomState() {
                 return;
             }
             if (data.state_key !== currentRoomStateKey) {
-                await refreshRoomView();
+                await refreshRoomFragments();
             }
         })
         .catch(function () {})
@@ -967,8 +1024,6 @@ function requestImmediateRoomStateCheck() {
 
 function stopRoomStatePolling() {
     roomStateStopped = true;
-    if (roomStateImmediateTimer) window.clearTimeout(roomStateImmediateTimer);
-    roomStateImmediateTimer = null;
     if (roomStateController && typeof roomStateController.stop === "function") {
         roomStateController.stop();
     } else if (window.PESNet && typeof PESNet.stop === "function") {
@@ -988,7 +1043,7 @@ function startRoomStatePolling() {
             task: checkRoomState,
             visibleInterval: getRoomStateInterval,
             hiddenInterval: 60000,
-            runWhenHidden: true,
+            runWhenHidden: false,
             immediate: false,
             jitter: 350
         });
@@ -1029,6 +1084,7 @@ document.addEventListener("DOMContentLoaded", function () {
 {% if system_features.room_chat_enabled %}
 <script>
 let currentRoomChatKey = "";
+let currentRoomChatRenderKey = "";
 let roomChatPoller = null;
 let roomChatRequestInFlight = false;
 let roomChatSendInFlight = false;
@@ -1056,8 +1112,8 @@ function renderRoomChat(messages) {
     const nextKey = (messages || []).map(function (msg) {
         return [msg.id || "", msg.created_at || "", msg.message || ""].join(":");
     }).join("|");
-    if (nextKey === currentRoomChatKey) return;
-    currentRoomChatKey = nextKey;
+    if (nextKey === currentRoomChatRenderKey) return;
+    currentRoomChatRenderKey = nextKey;
 
     box.innerHTML = messages.map(function (msg) {
         const adminBadge = msg.user_role === "admin" ? '<span class="badge gold">ADMIN</span>' : '';
@@ -1164,16 +1220,19 @@ function loadRoomChat() {
     const task = function () {
         if (roomStateStopped || roomChatRequestInFlight) return Promise.resolve();
         roomChatRequestInFlight = true;
-        return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", {
+        const chatUrl = new URL("{{ url_for('api_room_chat', room_id=room.id) }}", window.location.origin);
+        if (currentRoomChatKey) chatUrl.searchParams.set("since", currentRoomChatKey);
+        return fetch(chatUrl.toString(), {
             credentials: "same-origin",
-            cache: "no-store"
+            cache: "no-cache"
         })
         .then(function (res) {
             if (handleRoomSessionResponse(res)) return null;
-            if (res.status === 204 || res.headers.get("X-PES-Polling-Stop")) {
+            if (res.headers.get("X-PES-Polling-Stop")) {
                 stopRoomChatPolling();
                 return null;
             }
+            if (res.status === 204 || res.status === 304) return null;
             if (!res.ok) {
                 if ([401, 403, 404, 410].includes(res.status)) stopRoomChatPolling();
                 return null;
@@ -1181,7 +1240,10 @@ function loadRoomChat() {
             return res.json();
         })
         .then(function (data) {
-            if (data && data.ok) renderRoomChat(data.messages);
+            if (data && data.ok) {
+                currentRoomChatKey = data.chat_key || currentRoomChatKey;
+                renderRoomChat(data.messages);
+            }
         })
         .catch(function () {})
         .finally(function () {
@@ -1233,7 +1295,7 @@ window.addEventListener("beforeunload", stopRoomLiveWork, {once: true});
 {% endif %}
 
 <script>
-(function initWinStreakEvent(){
+window.PESInitWinStreakEvent = function initWinStreakEvent(){
     const announcement = document.getElementById("winStreakAnnouncement");
     const toast = document.getElementById("winStreakToast");
     const source = announcement || toast;
@@ -1267,7 +1329,8 @@ window.addEventListener("beforeunload", stopRoomLiveWork, {once: true});
             setTimeout(() => toast.remove(), 500);
         }, Math.max(1500, duration - 500));
     }
-})();
+};
+window.PESInitWinStreakEvent();
 </script>
 
 

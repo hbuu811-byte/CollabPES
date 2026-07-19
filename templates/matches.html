@@ -6,7 +6,9 @@
 
 <div class="history-tabs">
     <a class="{{ 'active' if history_view == 'mine' else '' }}" href="{{ url_for('matches', view='mine') }}">Trận của tôi</a>
+    {% if can_view_all_history %}
     <a class="{{ 'active' if history_view == 'all' else '' }}" href="{{ url_for('matches', view='all') }}">Toàn hệ thống</a>
+    {% endif %}
 </div>
 <form class="filter-bar" method="get">
     <input type="hidden" name="view" value="{{ history_view }}">

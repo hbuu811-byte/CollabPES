@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3k"
+APP_VERSION = "Collap_V1.13.3o"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -592,6 +592,8 @@ SYSTEM_FEATURE_DEFAULTS = {
     "dashboard_enabled": False,
     "friendly_enabled": True, "lobby_chat_enabled": True, "room_chat_enabled": True,
     "registration_codes_enabled": True, "announcements_enabled": True,
+    "match_history_all_enabled": True,
+    "public_ranking_enabled": True,
 }
 
 def _admin_permissions(user):
@@ -3787,52 +3789,12 @@ def api_room_state(room_id):
 # =========================
 @app.route("/")
 def index():
-    # Trang chủ công khai luôn mở thẳng Bảng xếp hạng.
-    # Người dùng chỉ được chuyển tới màn hình đăng nhập khi chủ động bấm Đăng nhập.
-    return redirect(url_for("ranking"))
-
-
-@app.route("/admin-login", methods=["GET", "POST"])
-def admin_login():
-    get_device_id()
-
-    existing = current_user() if session.get("user_id") else None
-    if existing and is_admin_user(existing):
-        return redirect(url_for("admin"))
-
-    if request.method == "POST":
-        username = request.form.get("username", "").strip()
-        password = request.form.get("password", "").strip()
-        try:
-            user = get_user_by_username(username)
-        except Exception as exc:
-            app.logger.warning("Admin login database warning: %s", exc)
-            flash("Máy chủ dữ liệu đang bận. Vui lòng thử lại sau vài giây.", "warning")
-            return redirect(url_for("admin_login"))
-
-        if not user or user.get("password_hash") != hash_password(password):
-            flash("Sai tài khoản hoặc mật khẩu Admin.", "danger")
-            return redirect(url_for("admin_login"))
-        if user.get("account_status", "approved") != "approved" or not is_admin_user(user):
-            flash("Tài khoản này không có quyền truy cập trang quản trị.", "danger")
-            return redirect(url_for("admin_login"))
-
-        session.clear()
-        session["user_id"] = user["id"]
-        session["username"] = user.get("username", "")
-        session["display_name"] = user.get("display_name", "")
-        session["avatar_url"] = user.get("avatar_url")
-        session["role"] = user.get("role", "player")
-        session["account_status"] = user.get("account_status", "approved")
-        session["admin_level"] = user.get("admin_level", "none")
-        execute_query(
-            db.table("users").update({"is_online": True, "last_seen_at": now_iso()}).eq("id", user["id"]),
-            "admin_login_mark_online",
-            attempts=2,
-        )
-        return redirect(url_for("admin"))
-
-    return render_template("admin_login.html", auth_only=True)
+    # Khi BXH công khai bị tắt, khách chưa đăng nhập phải vào màn hình đăng nhập.
+    # Người đã đăng nhập vẫn được chuyển thẳng tới BXH như bình thường.
+    user = current_user()
+    if user or system_feature_enabled("public_ranking_enabled"):
+        return redirect(url_for("ranking"))
+    return redirect(url_for("login"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -4476,6 +4438,10 @@ def _build_recent_form_map(matches, player_ids=None, limit=5):
 @app.route("/ranking")
 @app.route("/bxh")
 def ranking():
+    user = current_user()
+    if not user and not system_feature_enabled("public_ranking_enabled"):
+        flash("Bảng xếp hạng chỉ dành cho người chơi đã đăng nhập.", "warning")
+        return redirect(url_for("login"))
     # BXH là trang công khai: khách chưa đăng nhập vẫn xem được.
     # Khi đã đăng nhập, hệ thống vẫn hiển thị thêm vị trí cá nhân như trước.
     try:
@@ -4485,7 +4451,6 @@ def ranking():
         print(f"ranking list_players warning: {exc}")
         player_rows = []
 
-    user = current_user()
     query = (request.args.get("q") or "").strip().casefold()
     rank_filter = (request.args.get("rank") or "all").strip()
 

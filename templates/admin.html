@@ -479,7 +479,15 @@
 {% if can_admin('system_features_manage') or can_admin('announcements_manage') %}
 <section class="admin-tab-panel" data-admin-panel="system">
     {% if can_admin('system_features_manage') %}
-    <div class="panel"><h2>🎛️ Bật/tắt tính năng hệ thống</h2><form method="post" action="{{ url_for('admin_update_system_features') }}" class="system-toggle-grid">{% for key,label in {'friendly_enabled':'Giao hữu','lobby_chat_enabled':'Chat Sảnh','room_chat_enabled':'Chat Phòng','registration_codes_enabled':'Mã đăng ký','announcements_enabled':'Thông báo'}.items() %}<label class="admin-permission-option"><span>{{ label }}</span><span class="admin-switch"><input type="checkbox" name="{{ key }}" value="1" {% if system_features.get(key) %}checked{% endif %}><span class="admin-switch-track"></span></span></label>{% endfor %}<button class="btn green" type="submit">Lưu cài đặt</button></form></div>
+    <div class="panel"><h2>🎛️ Bật/tắt tính năng hệ thống</h2><form method="post" action="{{ url_for('admin_update_system_features') }}" class="system-toggle-grid">{% for key,label in {'friendly_enabled':'Giao hữu','lobby_chat_enabled':'Chat Sảnh','room_chat_enabled':'Chat Phòng','registration_codes_enabled':'Mã đăng ký','announcements_enabled':'Thông báo','match_history_all_enabled':'Xem lịch sử toàn hệ thống'}.items() %}<label class="admin-permission-option"><span>{{ label }}</span><span class="admin-switch"><input type="checkbox" name="{{ key }}" value="1" {% if system_features.get(key) %}checked{% endif %}><span class="admin-switch-track"></span></span></label>{% endfor %}
+<label class="admin-permission-option admin-public-ranking-option">
+    <span>BXH công khai (không cần đăng nhập)</span>
+    <span class="admin-switch">
+        <input type="checkbox" name="public_ranking_enabled" value="1" {% if system_features.get('public_ranking_enabled', true) %}checked{% endif %}>
+        <span class="admin-switch-track"></span>
+    </span>
+</label>
+<button class="btn green" type="submit">Lưu cài đặt</button></form></div>
     {% endif %}
     {% if can_admin('announcements_manage') %}
     <div class="panel">

@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3l"
+APP_VERSION = "Collap_V1.13.3lv3.1"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1482,13 +1482,13 @@ def set_device_cookie(response):
         )
 
     # Cache file tĩnh theo loại. CSS/JS luôn gắn APP_VERSION vào URL nên có thể
-    # cache dài và immutable; ảnh không có version dùng cache ngắn hơn.
+    # cache dài và immutable; ảnh rank/giao diện dùng 180 ngày kèm tái xác thực nền.
     path = str(request.path or "").lower()
     if path.startswith("/static/"):
         if path.endswith((".css", ".js")):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         elif path.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico")):
-            response.headers["Cache-Control"] = "public, max-age=2592000, stale-while-revalidate=86400"
+            response.headers["Cache-Control"] = "public, max-age=15552000, stale-while-revalidate=604800"
         elif path.endswith((".woff", ".woff2", ".ttf", ".otf")):
             response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         response.headers.setdefault("Vary", "Accept-Encoding")
@@ -3807,7 +3807,11 @@ def api_room_state(room_id):
     if not room:
         return jsonify({"ok": False, "error": "room_not_found"}), 404
 
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
+    is_room_member = (
+        _same_user_id(user.get("id"), room.get("host_user_id"))
+        or _same_user_id(user.get("id"), room.get("guest_user_id"))
+    )
+    if not is_room_member and not is_admin_user(user):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     state_key = build_room_state_key(room)
@@ -4198,15 +4202,42 @@ def api_global_chat_status():
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
-    if not system_feature_enabled("room_chat_enabled"):
-        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
+    """Chat phòng nhẹ và an toàn cho polling.
+
+    Khi Admin vừa tắt chat hoặc phòng vừa đóng/rời thành viên, client nhận phản
+    hồi 200 có cờ ``disabled``/``closed`` để tự dừng poller thay vì lặp 403.
+    Phòng đang hoạt động vẫn giữ kiểm tra quyền, không làm lộ tin nhắn.
+    """
     user = current_user()
-    room = get_room(room_id)
+    if not system_feature_enabled("room_chat_enabled"):
+        return jsonify({"ok": True, "messages": [], "disabled": True})
 
+    try:
+        result = execute_query(
+            db.table("match_rooms")
+            .select("id,host_user_id,guest_user_id,status")
+            .eq("id", room_id)
+            .limit(1),
+            "api_room_chat_membership",
+            attempts=2,
+        )
+    except Exception as exc:
+        app.logger.warning("Room chat membership load failed room=%s: %s", room_id, exc)
+        return jsonify({"ok": False, "error": "temporary_db_error"}), 503
+
+    room = dict(result.data[0]) if result.data else None
     if not room:
-        return jsonify({"ok": False, "error": "room_not_found"}), 404
+        return jsonify({"ok": True, "messages": [], "closed": True})
 
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
+    is_room_member = (
+        _same_user_id(user.get("id"), room.get("host_user_id"))
+        or _same_user_id(user.get("id"), room.get("guest_user_id"))
+    )
+    if not is_room_member and not is_admin_user(user):
+        # Khi khách vừa rời phòng, guest_user_id đã bị xóa trước khi trang cũ
+        # chuyển hướng. Trả danh sách rỗng để request cuối không tạo lỗi 403.
+        if not room.get("guest_user_id") or room.get("status") == "cancelled":
+            return jsonify({"ok": True, "messages": [], "closed": True})
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     messages = list_chat_messages("room", room_id=room_id, limit=20)

@@ -182,7 +182,11 @@ def register_routes(context):
 
         if not room:
             return "", 404
-        if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
+        is_room_member = (
+            _same_user_id(user.get("id"), room.get("host_user_id"))
+            or _same_user_id(user.get("id"), room.get("guest_user_id"))
+        )
+        if not is_room_member and not is_admin_user(user):
             return "", 403
 
         response = make_response(

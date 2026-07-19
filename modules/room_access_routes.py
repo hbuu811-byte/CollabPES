@@ -3,8 +3,6 @@
 Module đăng ký route theo dependency của app.py để giữ nguyên endpoint và tránh import vòng.
 """
 
-from flask import get_flashed_messages
-
 def register_routes(context):
     """Đăng ký nhóm route vào Flask app hiện tại."""
     globals().update(context)
@@ -140,6 +138,15 @@ def register_routes(context):
         return redirect(url_for("room_detail", room_id=room_id))
 
 
+    def build_room_template_context(room):
+        return {
+            "room": room,
+            "initial_room_state_key": build_room_state_key(room),
+            "friendly_tiers": get_available_team_tiers(),
+            "room_head_to_head": build_room_head_to_head(room),
+        }
+
+
     @app.route("/room/<room_id>")
     @login_required
 
@@ -160,49 +167,34 @@ def register_routes(context):
             flash("Bạn không thuộc phòng này.", "danger")
             return redirect(url_for("rooms"))
 
-        room_head_to_head = build_room_head_to_head(room)
-        state_key = build_room_state_key(room)
-        is_partial_request = request.headers.get("X-PES-Room-Partial") == "1"
-        partial_flashes = get_flashed_messages(with_categories=True) if is_partial_request else []
-        page_html = render_template(
-            "room_detail.html",
-            room=room,
-            initial_room_state_key=state_key,
-            friendly_tiers=get_available_team_tiers(),
-            room_head_to_head=room_head_to_head,
+        return render_template("room_detail.html", **build_room_template_context(room))
+
+
+    @app.route("/api/room/<room_id>/view")
+    @login_required
+    def api_room_view(room_id):
+        """HTML động của phòng, chỉ tải khi state_key thật sự thay đổi."""
+        user = current_user()
+        try:
+            room = get_room(room_id)
+        except Exception:
+            return "", 503
+
+        if not room:
+            return "", 404
+        is_room_member = (
+            _same_user_id(user.get("id"), room.get("host_user_id"))
+            or _same_user_id(user.get("id"), room.get("guest_user_id"))
         )
+        if not is_room_member and not is_admin_user(user):
+            return "", 403
 
-        if is_partial_request:
-            begin_marker = "<!-- ROOM_LIVE_PARTIAL_BEGIN -->"
-            end_marker = "<!-- ROOM_LIVE_PARTIAL_END -->"
-            begin_at = page_html.find(begin_marker)
-            end_at = page_html.find(end_marker)
-            if begin_at >= 0 and end_at > begin_at:
-                partial_html = page_html[begin_at + len(begin_marker):end_at].strip()
-            else:
-                app.logger.warning("Room partial markers missing room=%s", room_id)
-                partial_html = page_html
-
-            flash_payload = None
-            if partial_flashes:
-                category, message = partial_flashes[-1]
-                flash_payload = {
-                    "tone": "danger" if category == "danger" else ("success" if category == "success" else "warning"),
-                    "message": str(message or "").strip(),
-                }
-
-            response = jsonify({
-                "ok": True,
-                "state_key": state_key,
-                "status": room.get("status"),
-                "html": partial_html,
-                "flash": flash_payload,
-            })
-            response.headers["Cache-Control"] = "private, no-store, max-age=0"
-            response.headers["X-Room-State-Key"] = state_key
-            return response
-
-        return page_html
+        response = make_response(
+            render_template("_room_live_content.html", **build_room_template_context(room))
+        )
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["X-PES-Room-Partial"] = "1"
+        return response
 
 
     @app.route("/room/<room_id>/leave", methods=["POST"])

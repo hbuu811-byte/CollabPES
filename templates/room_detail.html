@@ -2,62 +2,7 @@
 {% from "_avatar_macros.html" import player_avatar %}
 {% block content %}
 <div class="room-view-shell">
-
-<!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_BEGIN === -->
-{% if room.streak_event %}
-<div id="winStreakToast"
-     class="win-streak-toast {{ room.streak_event.kind }}"
-     data-event-id="{{ room.streak_event.id }}"
-     data-duration="{{ room.streak_event.toast_duration or 6000 }}">
-    <div class="win-streak-toast-icon">🔔</div>
-    <div class="win-streak-toast-copy">
-        <strong>{{ room.streak_event.toast_title or 'THÔNG BÁO HỆ THỐNG' }}</strong>
-        <span><b>{{ room.streak_event.title }}</b> {{ room.streak_event.subtitle }}</span>
-    </div>
-    <button type="button" aria-label="Đóng thông báo" onclick="this.parentElement.remove()">×</button>
-</div>
-
-<div id="winStreakAnnouncement"
-     class="win-streak-announcement {{ room.streak_event.kind }}"
-     data-event-id="{{ room.streak_event.id }}"
-     data-duration="{{ room.streak_event.overlay_duration or 4000 }}">
-    <div class="win-streak-announcement-crown">🏆</div>
-    <div class="win-streak-announcement-flare left"></div>
-    <div class="win-streak-announcement-flare right"></div>
-    <div class="win-streak-announcement-inner">
-        <strong>{{ room.streak_event.title }}</strong>
-        <span>{{ room.streak_event.subtitle }}</span>
-    </div>
-</div>
-{% endif %}
-<!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_END === -->
-
-    <div class="room-stage-topbar panel">
-        <div class="room-stage-title-wrap">
-            <div>
-                <h1 class="room-stage-title">PHÒNG ĐẤU <span class="room-code-badge">#{{ room.room_code }}</span></h1>
-                <p class="room-stage-subtitle">{{ room.match_mode_label }} • 1 vs 1</p>
-            </div>
-        </div>
-        {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
-        <div id="roomStageShareWrap" class="room-stage-share-wrap"{% if room.status != 'waiting_ready' or room.has_guest %} hidden{% endif %}>
-            <button id="copyRoomShareLink"
-                    class="room-share-button"
-                    type="button"
-                    data-share-path="{{ url_for('room_join_shared', room_id=room.id) }}"
-                    aria-label="Copy link chia sẻ phòng đấu">
-                <span class="room-share-icon" aria-hidden="true">🔗</span>
-                <span class="room-share-copy">
-                    <strong>Chia sẻ phòng</strong>
-                    <small>Copy link tham gia</small>
-                </span>
-            </button>
-            <span id="roomShareStatus" class="room-share-status" role="status" aria-live="polite"></span>
-        </div>
-        {% endif %}
-    </div>
-
-    <div id="roomLiveContent" class="room-match-shell">
+    <div id="roomLiveContent" class="room-live-content" data-room-live-content>
         {% include "_room_live_content.html" %}
     </div>
 </div>
@@ -130,22 +75,24 @@ async function copySharedRoomLink() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", function () {
-    const shareButton = document.getElementById("copyRoomShareLink");
-    if (shareButton) shareButton.addEventListener("click", copySharedRoomLink);
+document.addEventListener("click", function (event) {
+    const shareButton = event.target.closest ? event.target.closest("#copyRoomShareLink") : null;
+    if (!shareButton) return;
+    event.preventDefault();
+    copySharedRoomLink();
 });
 
 let currentRoomStateKey = {{ initial_room_state_key|tojson }};
 let currentRoomStatus = {{ room.status|tojson }};
-let currentRoomHasGuest = {{ room.has_guest|tojson }};
 const currentRoomUserIsHost = {{ (current_user.id == room.host_user_id or current_user.role == 'admin')|tojson }};
 const currentRoomUserIsGuest = {{ (current_user.id == room.guest_user_id)|tojson }};
-const roomStateRequestKey = "room-state:{{ room.id }}";
-window.PES_ROOM_CONTEXT = {
-    status: currentRoomStatus,
-    hasGuest: currentRoomHasGuest,
-    roomId: {{ room.id|tojson }}
-};
+const roomScoreDraftKey = "pes-room-score-draft:{{ room.id }}";
+let roomScoreFormDirty = false;
+let roomCountdownSeconds = 0;
+let roomStartCountdownSeconds = 0;
+let roomStartCountdownMode = "down";
+let roomStatePoller = null;
+let roomViewRefreshInFlight = false;
 
 function renderRoomCountdown(seconds) {
     const countdown = document.getElementById("roomCountdown");
@@ -156,11 +103,6 @@ function renderRoomCountdown(seconds) {
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
 
-let roomCountdownSeconds = 0;
-let roomStartCountdownSeconds = 0;
-let roomStartCountdownMode = "down";
-let roomCountdownTimer = null;
-
 function renderRoomStartCountdown(seconds) {
     const countdown = document.getElementById("roomStartCountdown");
     if (!countdown) return;
@@ -170,42 +112,30 @@ function renderRoomStartCountdown(seconds) {
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
 
-function syncRoomCountdownFromDom() {
+function syncRoomCountdownsFromDom() {
     const roomCountdown = document.getElementById("roomCountdown");
     const startCountdown = document.getElementById("roomStartCountdown");
-    roomCountdownSeconds = Number(roomCountdown?.dataset.seconds || roomCountdownSeconds || 0);
+    roomCountdownSeconds = Number(roomCountdown?.dataset.seconds || 0);
     roomStartCountdownSeconds = Number(startCountdown?.dataset.seconds || 0);
     roomStartCountdownMode = startCountdown?.dataset.mode || "down";
     renderRoomCountdown(roomCountdownSeconds);
     renderRoomStartCountdown(roomStartCountdownSeconds);
 }
 
-function startRoomCountdownClock() {
-    if (roomCountdownTimer) window.clearInterval(roomCountdownTimer);
-    roomCountdownTimer = window.setInterval(function () {
-        if (document.hidden) return;
-        if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
-        if (roomStartCountdownMode === "up") {
-            roomStartCountdownSeconds += 1;
-        } else if (roomStartCountdownSeconds > 0) {
-            roomStartCountdownSeconds -= 1;
-        }
-        renderRoomCountdown(roomCountdownSeconds);
-        renderRoomStartCountdown(roomStartCountdownSeconds);
-    }, 1000);
-}
-
-syncRoomCountdownFromDom();
-startRoomCountdownClock();
-
-const roomScoreDraftKey = "pes-room-score-draft:{{ room.id }}";
-let roomScoreFormDirty = false;
+window.setInterval(function () {
+    if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
+    if (roomStartCountdownMode === "up") {
+        roomStartCountdownSeconds += 1;
+    } else if (roomStartCountdownSeconds > 0) {
+        roomStartCountdownSeconds -= 1;
+    }
+    renderRoomCountdown(roomCountdownSeconds);
+    renderRoomStartCountdown(roomStartCountdownSeconds);
+}, 1000);
 
 function getRoomScoreInputs() {
-    const form = document.querySelector("#roomLiveContent .room-score-form");
-    return form
-        ? Array.from(form.querySelectorAll('input[name="host_score"], input[name="guest_score"]'))
-        : [];
+    const form = document.querySelector(".room-score-form");
+    return form ? Array.from(form.querySelectorAll('input[name="host_score"], input[name="guest_score"]')) : [];
 }
 
 function saveRoomScoreDraft() {
@@ -221,10 +151,7 @@ function saveRoomScoreDraft() {
 
 function restoreRoomScoreDraft() {
     const inputs = getRoomScoreInputs();
-    if (!inputs.length) {
-        roomScoreFormDirty = false;
-        return;
-    }
+    if (!inputs.length) return;
     try {
         const raw = sessionStorage.getItem(roomScoreDraftKey);
         if (!raw) return;
@@ -236,218 +163,164 @@ function restoreRoomScoreDraft() {
     } catch (error) {}
 }
 
-document.addEventListener("input", function (event) {
-    if (event.target && event.target.closest("#roomLiveContent .room-score-form")) saveRoomScoreDraft();
-});
-document.addEventListener("submit", function (event) {
-    if (event.target && event.target.matches("#roomLiveContent .room-score-form")) {
-        roomScoreFormDirty = false;
-        try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
+function bindRoomScoreDraft() {
+    const form = document.querySelector(".room-score-form");
+    const inputs = getRoomScoreInputs();
+    inputs.forEach(function (input) {
+        if (input.dataset.roomDraftBound === "1") return;
+        input.dataset.roomDraftBound = "1";
+        input.addEventListener("input", saveRoomScoreDraft);
+    });
+    if (form && form.dataset.roomDraftBound !== "1") {
+        form.dataset.roomDraftBound = "1";
+        form.addEventListener("submit", function () {
+            roomScoreFormDirty = false;
+            try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
+        });
     }
-}, true);
-restoreRoomScoreDraft();
-
-let roomStateRequestInFlight = false;
-let roomStateAbortController = null;
-let roomFragmentRequestInFlight = false;
-let roomFragmentAbortController = null;
-let roomStateTimer = null;
-let roomStateStopped = false;
-let roomStateRunAgain = false;
-const roomFragmentRequestKey = "room-fragment:{{ room.id }}";
-
-function getRoomStateInterval() {
-    if (document.hidden) return 12000;
-    if (currentRoomStatus === "waiting_result_confirm") return 2000;
-    if (currentRoomStatus === "playing") return currentRoomUserIsGuest ? 3000 : 5000;
-    if (currentRoomStatus === "friendly_playing") return 5000;
-    if (currentRoomStatus === "waiting_ready") return currentRoomHasGuest ? 3000 : 5000;
-    if (currentRoomStatus === "confirmed") return 3000;
-    return 6000;
+    restoreRoomScoreDraft();
 }
 
-function syncRoomShareButton() {
-    const wrapper = document.getElementById("roomStageShareWrap");
-    if (!wrapper) return;
-    wrapper.hidden = !(currentRoomUserIsHost && currentRoomStatus === "waiting_ready" && !currentRoomHasGuest);
+function fieldPreserveKey(field, index) {
+    return field.id || field.name || (field.tagName + ":" + index);
 }
 
-function updateRoomPollingContext(data) {
-    currentRoomStatus = data.status || currentRoomStatus;
-    if (typeof data.has_guest !== "undefined") currentRoomHasGuest = Boolean(data.has_guest);
-    window.PES_ROOM_CONTEXT = {
-        status: currentRoomStatus,
-        hasGuest: currentRoomHasGuest,
-        roomId: {{ room.id|tojson }}
-    };
-    syncRoomShareButton();
-    if (typeof window.PESConfigureInvitePolling === "function") {
-        window.PESConfigureInvitePolling();
-    }
-}
-
-function scheduleRoomStateCheck(delay) {
-    if (roomStateStopped) return;
-    if (roomStateTimer) window.clearTimeout(roomStateTimer);
-    const baseDelay = typeof delay === "number" ? delay : getRoomStateInterval();
-    const jitter = document.hidden ? 0 : Math.floor(Math.random() * 250);
-    roomStateTimer = window.setTimeout(checkRoomState, baseDelay + jitter);
-    window.roomStateTimer = roomStateTimer;
-}
-
-function captureRoomChatDraft() {
-    const input = document.querySelector("#roomLiveContent .chat-form input[name='message']");
+function captureRoomFormState() {
+    const root = document.getElementById("roomLiveContent");
+    if (!root) return {fields: {}, activeKey: "", selectionStart: null, selectionEnd: null};
+    const fields = {};
+    const elements = Array.from(root.querySelectorAll("input, textarea, select"));
+    elements.forEach(function (field, index) {
+        if (field.type === "file" || field.type === "submit" || field.type === "button") return;
+        const key = fieldPreserveKey(field, index);
+        fields[key] = {
+            value: field.value,
+            checked: Boolean(field.checked),
+            type: field.type || field.tagName
+        };
+    });
+    const active = root.contains(document.activeElement) ? document.activeElement : null;
     return {
-        value: input ? input.value : "",
-        focused: Boolean(input && document.activeElement === input),
-        selectionStart: input ? input.selectionStart : null,
-        selectionEnd: input ? input.selectionEnd : null
+        fields: fields,
+        activeKey: active ? fieldPreserveKey(active, elements.indexOf(active)) : "",
+        selectionStart: active && typeof active.selectionStart === "number" ? active.selectionStart : null,
+        selectionEnd: active && typeof active.selectionEnd === "number" ? active.selectionEnd : null
     };
 }
 
-function restoreRoomChatDraft(draft) {
-    if (!draft) return;
-    const input = document.querySelector("#roomLiveContent .chat-form input[name='message']");
-    if (!input) return;
-    input.value = draft.value || "";
-    if (draft.focused) {
-        input.focus({preventScroll: true});
-        if (Number.isInteger(draft.selectionStart) && Number.isInteger(draft.selectionEnd)) {
-            try { input.setSelectionRange(draft.selectionStart, draft.selectionEnd); } catch (error) {}
+function restoreRoomFormState(snapshot) {
+    if (!snapshot || !snapshot.fields) return;
+    const root = document.getElementById("roomLiveContent");
+    if (!root) return;
+    const elements = Array.from(root.querySelectorAll("input, textarea, select"));
+    let focusTarget = null;
+    elements.forEach(function (field, index) {
+        if (field.type === "file" || field.type === "submit" || field.type === "button") return;
+        const key = fieldPreserveKey(field, index);
+        const saved = snapshot.fields[key];
+        if (!saved) return;
+        if (field.type === "checkbox" || field.type === "radio") field.checked = saved.checked;
+        else field.value = saved.value;
+        if (snapshot.activeKey === key) focusTarget = field;
+    });
+    if (focusTarget) {
+        focusTarget.focus({preventScroll: true});
+        if (snapshot.selectionStart !== null && typeof focusTarget.setSelectionRange === "function") {
+            try { focusTarget.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd); } catch (error) {}
         }
     }
 }
 
-function refreshRoomLiveContent(data) {
-    const liveRoot = document.getElementById("roomLiveContent");
-    if (!liveRoot || typeof data.html !== "string") return;
-
-    // Chat không thuộc trạng thái thi đấu. Giữ nguyên DOM cũ để không làm mất
-    // nội dung đang gõ, vị trí cuộn hoặc tạo thêm request chat mỗi lần đội/nút đổi.
-    const existingChatPanel = liveRoot.querySelector(".room-chat-side");
-    const chatDraft = existingChatPanel ? null : captureRoomChatDraft();
-    liveRoot.innerHTML = data.html;
-    const renderedChatPanel = liveRoot.querySelector(".room-chat-side");
-    let chatPanelPreserved = false;
-    if (existingChatPanel && renderedChatPanel) {
-        renderedChatPanel.replaceWith(existingChatPanel);
-        chatPanelPreserved = true;
-    }
-
-    syncRoomCountdownFromDom();
-    restoreRoomScoreDraft();
-    if (!chatPanelPreserved) restoreRoomChatDraft(chatDraft);
-    syncRoomShareButton();
-
-    if (!renderedChatPanel && existingChatPanel && typeof window.PESStopRoomChatPolling === "function") {
-        window.PESStopRoomChatPolling();
-    } else if (!chatPanelPreserved && renderedChatPanel && typeof window.PESRefreshRoomChat === "function") {
-        window.PESRefreshRoomChat();
-    }
-    document.dispatchEvent(new CustomEvent("pes:room-state-updated", {detail: data}));
+function bindRoomLiveControls() {
+    bindRoomScoreDraft();
+    syncRoomCountdownsFromDom();
+    if (typeof window.PESInitWinStreakEvent === "function") window.PESInitWinStreakEvent();
 }
 
-function abortRoomStateRequest() {
-    if (roomStateAbortController) roomStateAbortController.abort();
-    roomStateAbortController = null;
-    if (roomFragmentAbortController) roomFragmentAbortController.abort();
-    roomFragmentAbortController = null;
-    roomFragmentRequestInFlight = false;
-    if (window.PESNet) {
-        PESNet.abortRequest(roomStateRequestKey);
-        PESNet.abortRequest(roomFragmentRequestKey);
+function getRoomStateInterval() {
+    if (currentRoomStatus === "waiting_result_confirm") return currentRoomUserIsGuest ? 1500 : 3500;
+    if (currentRoomStatus === "playing") return currentRoomUserIsGuest ? 2500 : 6000;
+    if (currentRoomStatus === "friendly_playing") return 6000;
+    if (currentRoomStatus === "waiting_ready") return 3000;
+    if (currentRoomStatus === "confirmed") return 4000;
+    return 7000;
+}
+
+function stopRoomStatePolling() {
+    if (roomStatePoller) roomStatePoller.stop("room-state-stop");
+    roomStatePoller = null;
+}
+
+function stopRoomChatPolling() {
+    if (window.PESRoomChatPoller && typeof window.PESRoomChatPoller.stop === "function") {
+        window.PESRoomChatPoller.stop("room-chat-stop");
+    }
+    window.PESRoomChatPoller = null;
+}
+
+function stopAllRoomPolling() {
+    stopRoomStatePolling();
+    stopRoomChatPolling();
+    if (window.PESNet && typeof PESNet.stopAll === "function") {
+        PESNet.stopAll("leave-room-page");
+    } else if (window.PESNet && typeof PESNet.stopByPrefix === "function") {
+        PESNet.stopByPrefix("room-state:", "leave-room-page");
+        PESNet.stopByPrefix("room-chat:", "leave-room-page");
     }
 }
 
-function stopRoomRealtime() {
-    roomStateStopped = true;
-    roomStateRunAgain = false;
-    if (roomStateTimer) window.clearTimeout(roomStateTimer);
-    roomStateTimer = null;
-    window.roomStateTimer = null;
-    abortRoomStateRequest();
-    if (typeof window.PESStopRoomChatPolling === "function") window.PESStopRoomChatPolling();
-    if (typeof window.PESStopInvitePolling === "function") window.PESStopInvitePolling();
+window.PESStopRoomPolling = stopAllRoomPolling;
+
+function showRoomRedirectNotice(options) {
+    stopAllRoomPolling();
+    if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
+        window.PESRoomActionModal.showNotice(options);
+    } else if (options.redirectUrl) {
+        window.location.href = options.redirectUrl;
+    }
 }
-window.PESStopRoomRealtime = stopRoomRealtime;
 
-async function loadRoomLiveFragment(snapshot) {
-    if (roomStateStopped || roomFragmentRequestInFlight) return false;
-    const fragmentUrl = snapshot && snapshot.fragment_url;
-    if (!fragmentUrl) return false;
+function refreshRoomLiveContent(nextStateKey, signal) {
+    if (roomViewRefreshInFlight) return Promise.resolve(false);
+    const target = document.getElementById("roomLiveContent");
+    if (!target) return Promise.resolve(false);
 
-    roomFragmentRequestInFlight = true;
-    roomFragmentAbortController = new AbortController();
-    const options = {
+    roomViewRefreshInFlight = true;
+    const preserved = captureRoomFormState();
+    return fetch("{{ url_for('api_room_view', room_id=room.id) }}", {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
-    };
-
-    try {
-        let result;
-        if (window.PESNet) {
-            result = await PESNet.fetchJson(
-                fragmentUrl, options, 15000, roomFragmentRequestKey,
-                roomFragmentAbortController.signal
-            );
-        } else {
-            const response = await fetch(fragmentUrl, Object.assign({}, options, {signal: roomFragmentAbortController.signal}));
-            const text = await response.text();
-            let data = null;
-            try { data = text ? JSON.parse(text) : null; } catch (error) {}
-            result = {
-                ok: response.ok,
-                status: response.status,
-                redirected: Boolean(response.redirected),
-                url: response.url || "",
-                contentType: response.headers.get("content-type") || "",
-                data: data
-            };
-        }
-
-        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-            stopRoomRealtime();
-            window.location.href = "{{ url_for('login') }}";
-            return false;
-        }
-        if ([403, 404].includes(result.status)) {
-            stopRoomRealtime();
+        headers: {"X-Requested-With": "XMLHttpRequest"},
+        signal: signal
+    })
+    .then(function (response) {
+        if (response.status === 401 || response.status === 403 || response.status === 404) {
+            stopAllRoomPolling();
             window.location.href = "{{ url_for('dashboard') }}";
-            return false;
+            return "";
         }
-        if (!result.ok || !result.data || !result.data.ok || typeof result.data.html !== "string") {
-            return false;
+        if (!response.ok) throw new Error("room_view_" + response.status);
+        return response.text();
+    })
+    .then(function (html) {
+        if (!html) return false;
+        target.innerHTML = html;
+        restoreRoomFormState(preserved);
+        bindRoomLiveControls();
+        if (typeof currentRoomChatKey !== "undefined") currentRoomChatKey = "";
+        if (window.PESRoomChatPoller && typeof window.PESRoomChatPoller.runNow === "function") {
+            window.PESRoomChatPoller.runNow();
         }
-
-        refreshRoomLiveContent(result.data);
-        currentRoomStateKey = result.data.state_key || snapshot.state_key || currentRoomStateKey;
-        updateRoomPollingContext(result.data);
+        currentRoomStateKey = nextStateKey || currentRoomStateKey;
         return true;
-    } catch (error) {
-        return false;
-    } finally {
-        roomFragmentRequestInFlight = false;
-        roomFragmentAbortController = null;
-    }
+    })
+    .finally(function () {
+        roomViewRefreshInFlight = false;
+    });
 }
 
-async function checkRoomState() {
-    if (roomStateStopped) return;
-    if (roomStateRequestInFlight) {
-        roomStateRunAgain = true;
-        return;
-    }
-    // Chỉ tạm hoãn khi người dùng đang nhập tỷ số chưa gửi. Ô chat được giữ lại
-    // qua mỗi lần cập nhật nên không còn làm polling trạng thái bị đứng.
-    if (roomScoreFormDirty) {
-        scheduleRoomStateCheck(1200);
-        return;
-    }
-
-    roomStateRequestInFlight = true;
-    roomStateAbortController = new AbortController();
+function checkRoomState(signal) {
     const stateUrl = new URL("{{ url_for('api_room_state', room_id=room.id) }}", window.location.origin);
     if (currentRoomStateKey) stateUrl.searchParams.set("since", currentRoomStateKey);
 
@@ -455,77 +328,61 @@ async function checkRoomState() {
         method: "GET",
         credentials: "same-origin",
         cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
+        headers: {"X-Requested-With": "XMLHttpRequest"},
+        signal: signal
     };
+    const stateRequest = window.PESNet && typeof PESNet.fetchJsonOnce === "function"
+        ? PESNet.fetchJsonOnce("request:room-state:{{ room.id }}", stateUrl.toString(), requestOptions, 12000)
+        : fetch(stateUrl.toString(), requestOptions).then(function (res) {
+            if (res.status === 204 || res.status === 304) {
+                return {ok: res.ok, status: res.status, data: null};
+            }
+            return res.json().then(function (data) {
+                return {ok: res.ok, status: res.status, data: data};
+            });
+        });
 
-    try {
-        let result;
-        if (window.PESNet) {
-            result = await PESNet.fetchJson(
-                stateUrl.toString(),
-                requestOptions,
-                12000,
-                roomStateRequestKey,
-                roomStateAbortController.signal
-            );
-        } else {
-            const res = await fetch(stateUrl.toString(), Object.assign({}, requestOptions, {signal: roomStateAbortController.signal}));
-            const text = res.status === 204 ? "" : await res.text();
-            let data = null;
-            try { data = text ? JSON.parse(text) : null; } catch (error) {}
-            result = {
-                ok: res.ok,
-                status: res.status,
-                redirected: Boolean(res.redirected),
-                url: res.url || "",
-                contentType: res.headers.get("content-type") || "",
-                data: data
-            };
-        }
-
-        if (result.status === 204 || result.status === 304) return;
-        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-            stopRoomRealtime();
-            window.location.href = "{{ url_for('login') }}";
-            return;
-        }
-        if ([403, 404].includes(result.status)) {
-            stopRoomRealtime();
+    return stateRequest
+    .then(function (result) {
+        if (!result || result.status === 204 || result.status === 304) return null;
+        if (result.status === 401 || result.status === 403 || result.status === 404) {
+            stopAllRoomPolling();
             window.location.href = "{{ url_for('dashboard') }}";
-            return;
+            return null;
         }
-        if (!result.ok) return;
-        const data = result.data;
+        if (!result.ok) throw new Error("room_state_" + result.status);
+        return result.data;
+    })
+    .then(function (data) {
         if (!data || !data.ok) return;
-        updateRoomPollingContext(data);
+        currentRoomStatus = data.status || currentRoomStatus;
 
         if (data.status === "cancelled") {
-            stopRoomRealtime();
+            stopAllRoomPolling();
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
         if (data.rematch_expired) {
-            stopRoomRealtime();
-            if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
-                window.PESRoomActionModal.showNotice({
-                    tone: "warning",
-                    icon: "⌛",
-                    title: "Yêu cầu đá tiếp đã hết hạn",
-                    message: "Yêu cầu đá tiếp đã hết hạn sau 60 giây. Bạn sẽ được đưa về sảnh chính.",
-                    note: "VỀ SẢNH CHÍNH",
-                    confirmLabel: "Về sảnh chính",
-                    redirectUrl: "{{ url_for('dashboard') }}",
-                    autoRedirectMs: 4500
-                });
-            } else {
-                window.location.href = "{{ url_for('dashboard') }}";
-            }
+            showRoomRedirectNotice({
+                tone: "warning",
+                icon: "⌛",
+                title: "Yêu cầu đá tiếp đã hết hạn",
+                message: "Yêu cầu đá tiếp đã hết hạn sau 60 giây. Bạn sẽ được đưa về sảnh chính.",
+                note: "VỀ SẢNH CHÍNH",
+                confirmLabel: "Về sảnh chính",
+                redirectUrl: "{{ url_for('dashboard') }}",
+                autoRedirectMs: 4500
+            });
             return;
         }
+        if (typeof data.timeout_seconds !== "undefined") {
+            roomCountdownSeconds = Number(data.timeout_seconds) || 0;
+            renderRoomCountdown(roomCountdownSeconds);
+        }
         if (data.rematch_declined) {
-            stopRoomRealtime();
-            if (!data.rematch_declined_by_me && window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
-                window.PESRoomActionModal.showNotice({
+            stopAllRoomPolling();
+            if (!data.rematch_declined_by_me) {
+                showRoomRedirectNotice({
                     tone: "warning",
                     icon: "🚪",
                     title: "Đối thủ đã rời phòng",
@@ -540,105 +397,41 @@ async function checkRoomState() {
             }
             return;
         }
-        if (typeof data.timeout_seconds !== "undefined") {
-            roomCountdownSeconds = Number(data.timeout_seconds) || 0;
-            renderRoomCountdown(roomCountdownSeconds);
-        }
         if (data.state_key && data.state_key !== currentRoomStateKey) {
-            const updated = await loadRoomLiveFragment(data);
-            if (!updated) {
-                // Không đổi state_key khi fragment chưa tải được. Chu kỳ bình thường
-                // kế tiếp sẽ nhận lại cùng thay đổi; tránh retry dồn dập làm tăng request.
-            }
+            return refreshRoomLiveContent(data.state_key, signal);
         }
-    } catch (error) {
-        if (!(error && error.name === "AbortError")) {
-            // Mất mạng tạm thời: giữ nguyên giao diện và thử lại ở chu kỳ sau.
-        }
-    } finally {
-        roomStateRequestInFlight = false;
-        roomStateAbortController = null;
-        if (roomStateStopped) return;
-        if (roomStateRunAgain) {
-            roomStateRunAgain = false;
-            scheduleRoomStateCheck(100);
-        } else {
-            scheduleRoomStateCheck();
-        }
+    })
+    .catch(function (error) {
+        if (error && error.name === "AbortError") return;
+        throw error;
+    });
+}
+
+window.addEventListener("DOMContentLoaded", function () {
+    bindRoomLiveControls();
+    if (!window.PESNet) return;
+
+    if (typeof PESNet.stopByPrefix === "function") {
+        PESNet.stopByPrefix("room-state:", "replace-room-state");
     }
-}
-
-function requestImmediateRoomStateCheck() {
-    if (document.hidden || roomStateStopped) return;
-    if (roomStateRequestInFlight) {
-        roomStateRunAgain = true;
-        return;
-    }
-    scheduleRoomStateCheck(80);
-}
-
-function startRoomRealtime() {
-    roomStateStopped = false;
-    syncRoomShareButton();
-    scheduleRoomStateCheck(120);
-}
-window.PESStartRoomRealtime = startRoomRealtime;
-if (document.readyState === "loading") {
-    window.addEventListener("DOMContentLoaded", startRoomRealtime, {once: true});
-} else {
-    startRoomRealtime();
-}
-document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) requestImmediateRoomStateCheck();
-});
-window.addEventListener("online", requestImmediateRoomStateCheck);
-window.addEventListener("pagehide", function () {
-    stopRoomRealtime();
-    if (roomCountdownTimer) window.clearInterval(roomCountdownTimer);
-    roomCountdownTimer = null;
-});
-window.addEventListener("beforeunload", stopRoomRealtime);
-window.addEventListener("pageshow", function (event) {
-    if (!event.persisted) return;
-    roomStateStopped = false;
-    startRoomCountdownClock();
-    if (typeof window.PESStartRoomChatPolling === "function") window.PESStartRoomChatPolling();
-    if (typeof window.PESConfigureInvitePolling === "function") window.PESConfigureInvitePolling();
-    scheduleRoomStateCheck(80);
+    roomStatePoller = PESNet.createPoller({
+        key: "room-state:{{ room.id }}",
+        task: checkRoomState,
+        interval: getRoomStateInterval,
+        hiddenInterval: 60000,
+        runWhenHidden: false,
+        immediate: true,
+        jitter: 250,
+        timeoutMs: 12000
+    });
 });
 
-// Các form làm server chuyển trang phải dừng timer/request cũ ngay khi gửi.
-// Form chat được gửi AJAX; form xác nhận bỏ cuộc chỉ dừng sau khi người dùng
-// bấm nút xác nhận trong modal.
-document.addEventListener("submit", function (event) {
-    const form = event.target && event.target.closest ? event.target.closest("#roomLiveContent form") : null;
-    if (!form || form.matches(".chat-form") || form.matches(".room-exit-confirm-form")) return;
-    stopRoomRealtime();
-}, true);
-
-// Dừng timer/request ngay từ lúc bấm liên kết nội bộ, không đợi đến pagehide.
-document.addEventListener("click", function (event) {
-    const link = event.target && event.target.closest ? event.target.closest("a[href]") : null;
-    if (!link || event.defaultPrevented || event.button !== 0) return;
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (link.target && link.target !== "_self") return;
-    if (link.hasAttribute("download")) return;
-    const href = link.getAttribute("href") || "";
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
-    let targetUrl;
-    try { targetUrl = new URL(link.href, window.location.href); } catch (error) { return; }
-    if (targetUrl.origin !== window.location.origin) return;
-    stopRoomRealtime();
-}, true);
-
+window.addEventListener("pagehide", stopAllRoomPolling, {once: true});
 </script>
 
+{% if system_features.room_chat_enabled %}
 <script>
 let currentRoomChatKey = "";
-let roomChatPoller = null;
-let roomChatStopped = false;
-const roomChatRequestKey = "room-chat:{{ room.id }}";
-const roomChatSendRequestKey = "room-chat-send:{{ room.id }}";
 
 function escapeRoomHtml(text) {
     const div = document.createElement("div");
@@ -656,22 +449,17 @@ function renderRoomAvatar(url, name, achievement) {
     return `<span class="player-avatar avatar-xs"><span>${initial}</span>${badge}</span>`;
 }
 
-function setRoomChatStatus(message) {
-    const status = document.getElementById("roomChatStatus");
-    if (status && message) status.textContent = message;
-}
-
 function renderRoomChat(messages) {
     const box = document.getElementById("roomChatBox");
     if (!box) return;
-    const safeMessages = Array.isArray(messages) ? messages : [];
-    const nextKey = safeMessages.map(function (msg) {
+
+    const nextKey = (messages || []).map(function (msg) {
         return [msg.id || "", msg.created_at || "", msg.message || ""].join(":");
     }).join("|");
     if (nextKey === currentRoomChatKey) return;
     currentRoomChatKey = nextKey;
 
-    box.innerHTML = safeMessages.map(function (msg) {
+    box.innerHTML = messages.map(function (msg) {
         const adminBadge = msg.user_role === "admin" ? '<span class="badge gold">ADMIN</span>' : '';
         const adminClass = msg.user_role === "admin" ? 'admin' : '';
         return `
@@ -683,182 +471,86 @@ function renderRoomChat(messages) {
             </div>
         `;
     }).join("");
+
     box.scrollTop = box.scrollHeight;
 }
 
-function stopRoomChatPolling() {
-    roomChatStopped = true;
-    if (roomChatPoller) roomChatPoller.stop();
-    roomChatPoller = null;
-    if (window.PESNet) {
-        PESNet.abortRequest(roomChatRequestKey);
-        PESNet.abortRequest(roomChatSendRequestKey);
-    }
-}
-window.PESStopRoomChatPolling = stopRoomChatPolling;
-
 function loadRoomChat(signal) {
-    if (document.hidden || roomChatStopped || !document.getElementById("roomChatBox")) return Promise.resolve();
+    if (document.hidden) return Promise.resolve();
+
+    const url = "{{ url_for('api_room_chat', room_id=room.id) }}";
     const options = {
         credentials: "same-origin",
         cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
+        signal: signal
     };
-    const requestPromise = window.PESNet
-        ? PESNet.fetchJson(
-            "{{ url_for('api_room_chat', room_id=room.id) }}",
-            options,
-            10000,
-            roomChatRequestKey,
-            signal
-        )
-        : fetch("{{ url_for('api_room_chat', room_id=room.id) }}", Object.assign({}, options, {signal: signal}))
-            .then(function (res) {
-                return res.text().then(function (text) {
-                    let data = null;
-                    try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                    return {
-                        ok: res.ok,
-                        status: res.status,
-                        redirected: Boolean(res.redirected),
-                        url: res.url || "",
-                        contentType: res.headers.get("content-type") || "",
-                        data: data
-                    };
-                });
+    const request = window.PESNet && typeof PESNet.fetchJsonOnce === "function"
+        ? PESNet.fetchJsonOnce("request:room-chat:{{ room.id }}", url, options, 12000)
+        : fetch(url, options).then(function (res) {
+            return res.json().then(function (data) {
+                return {ok: res.ok, status: res.status, data: data};
             });
+        });
 
-    return requestPromise
+    return request
         .then(function (result) {
             if (!result) return;
-            if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-                stopRoomChatPolling();
-                setRoomChatStatus("Phiên đăng nhập đã hết hạn.");
-                return;
-            }
-            if ([403, 404].includes(result.status)) {
+            const data = result.data || {};
+
+            if (data.disabled || data.closed || result.status === 404) {
                 stopRoomChatPolling();
                 return;
             }
-            const data = result.data;
-            if (data && data.stop_polling) {
+            if (result.status === 401 || result.status === 403) {
                 stopRoomChatPolling();
                 return;
             }
-            if (result.ok && data && data.ok) renderRoomChat(data.messages);
+            if (!result.ok) throw new Error("room_chat_" + result.status);
+            if (data.ok) renderRoomChat(data.messages || []);
         })
         .catch(function (error) {
-            if (!(error && error.name === "AbortError")) setRoomChatStatus("Chat đang kết nối lại...");
+            if (!error || error.name !== "AbortError") return;
         });
 }
 
-function startRoomChatPolling() {
-    if (!document.getElementById("roomChatBox")) {
-        stopRoomChatPolling();
-        return;
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return loadRoomChat();
+
+    if (typeof PESNet.stopByPrefix === "function") {
+        PESNet.stopByPrefix("room-chat:", "replace-room-chat");
     }
-    roomChatStopped = false;
-    if (!window.PESNet) {
-        loadRoomChat();
-        return;
-    }
-    if (roomChatPoller) roomChatPoller.stop();
-    roomChatPoller = PESNet.createPoller({
-        key: "room-chat",
+    window.PESRoomChatPoller = PESNet.createPoller({
+        key: "room-chat:{{ room.id }}",
         task: loadRoomChat,
-        visibleInterval: 12000,
+        visibleInterval: 15000,
         hiddenInterval: 60000,
         runWhenHidden: false,
         immediate: true,
-        jitter: 1000
+        jitter: 1000,
+        timeoutMs: 12000
     });
-}
-window.PESStartRoomChatPolling = startRoomChatPolling;
+});
+</script>
+{% endif %}
 
-function refreshRoomChat() {
-    if (!document.getElementById("roomChatBox")) {
-        stopRoomChatPolling();
-        return;
-    }
-    currentRoomChatKey = "";
-    if (!roomChatPoller) startRoomChatPolling();
-    else roomChatPoller.runNow();
-}
-window.PESRefreshRoomChat = refreshRoomChat;
-
-function submitRoomChat(form) {
-    const input = form.querySelector('input[name="message"]');
-    const button = form.querySelector('button[type="submit"]');
-    const message = input ? input.value.trim() : "";
-    if (!message) return Promise.resolve();
-    if (button) button.disabled = true;
-    setRoomChatStatus("Đang gửi tin nhắn...");
-
-    const options = {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
-        body: new FormData(form)
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.fetchJson(form.action, options, 12000, roomChatSendRequestKey)
-        : fetch(form.action, options).then(function (res) {
-            return res.text().then(function (text) {
-                let data = null;
-                try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                return {
-                    status: res.status,
-                    ok: res.ok,
-                    redirected: Boolean(res.redirected),
-                    url: res.url || "",
-                    contentType: res.headers.get("content-type") || "",
-                    data: data
-                };
-            });
-        });
-
-    return requestPromise.then(function (result) {
-        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-            stopRoomChatPolling();
-            setRoomChatStatus("Phiên đăng nhập đã hết hạn.");
-            return;
-        }
-        if (result.status === 403 || result.status === 404) {
-            stopRoomChatPolling();
-            setRoomChatStatus((result.data && result.data.error) || "Bạn không còn quyền chat trong phòng này.");
-            return;
-        }
-        if (result.data && result.data.stop_polling) stopRoomChatPolling();
-        if (!result.ok || !result.data || !result.data.ok) {
-            setRoomChatStatus((result.data && result.data.error) || "Không gửi được tin nhắn.");
-            return;
-        }
-        if (input) input.value = "";
-        setRoomChatStatus("Đã gửi.");
-        currentRoomChatKey = "";
-        if (roomChatPoller) roomChatPoller.runNow();
-        else loadRoomChat();
-    }).catch(function (error) {
-        if (!(error && error.name === "AbortError")) setRoomChatStatus("Lỗi kết nối chat. Hãy thử lại.");
-    }).finally(function () {
-        if (button) button.disabled = false;
-        if (input && document.body.contains(input)) input.focus();
-    });
-}
-
+<script>
 document.addEventListener("submit", function (event) {
-    const form = event.target && event.target.closest ? event.target.closest("#roomLiveContent .chat-form") : null;
-    if (!form) return;
-    event.preventDefault();
-    submitRoomChat(form);
-}, true);
+    const form = event.target;
+    if (!form || form.classList.contains("room-exit-confirm-form")) return;
 
-window.addEventListener("DOMContentLoaded", startRoomChatPolling);
+    let actionPath = "";
+    try {
+        actionPath = new URL(form.action || window.location.href, window.location.origin).pathname;
+    } catch (error) {}
+
+    if (actionPath.indexOf("/room/{{ room.id }}/") === 0) {
+        stopAllRoomPolling();
+    }
+}, true);
 </script>
 
 <script>
-(function initWinStreakEvent(){
+function initWinStreakEvent(){
     const announcement = document.getElementById("winStreakAnnouncement");
     const toast = document.getElementById("winStreakToast");
     const source = announcement || toast;
@@ -892,7 +584,9 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
             setTimeout(() => toast.remove(), 500);
         }, Math.max(1500, duration - 500));
     }
-})();
+}
+window.PESInitWinStreakEvent = initWinStreakEvent;
+initWinStreakEvent();
 </script>
 
 
@@ -909,6 +603,7 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
     const cancelButton = document.getElementById("roomActionModalCancel");
     const closeButton = modal.querySelector(".room-action-modal-close");
     const cancelButtons = modal.querySelectorAll("[data-room-modal-cancel]");
+
     let pendingForm = null;
     let returnFocus = null;
     let submitting = false;
@@ -1009,14 +704,12 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
     }
 
     document.addEventListener("submit", function (event) {
-        const form = event.target && event.target.closest
-            ? event.target.closest(".room-exit-confirm-form")
-            : null;
+        const form = event.target && event.target.closest ? event.target.closest(".room-exit-confirm-form") : null;
         if (!form) return;
         event.preventDefault();
         if (submitting || noticeMode) return;
         openModal(form);
-    }, true);
+    });
 
     cancelButtons.forEach(function (button) {
         button.addEventListener("click", closeModal);
@@ -1044,7 +737,7 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
         confirmButton.disabled = true;
         confirmButton.textContent = "Đang xử lý...";
         const formToSubmit = pendingForm;
-        if (typeof window.PESStopRoomRealtime === "function") window.PESStopRoomRealtime();
+        stopAllRoomPolling();
         window.setTimeout(function () {
             HTMLFormElement.prototype.submit.call(formToSubmit);
         }, 120);

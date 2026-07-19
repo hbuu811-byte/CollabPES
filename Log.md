@@ -1,106 +1,102 @@
-# Collap_V1.13.3lv3.4 — Cập nhật phòng theo sự kiện
+# Collap_V1.13.3lv3.1
 
-- Ngày giờ: 19/07/2026, múi giờ Asia/Bangkok.
-- Bản nền bắt buộc: `Collap_V1.13.3lv3.3`.
-- Loại gói: trình vá an toàn, chỉ sửa file liên quan.
-- SQL Supabase: không cần.
+- Ngày giờ: 19/07/2026 01:22
+- Múi giờ: Asia/Bangkok
+- Bản nền: Collap_V1.13.3lv3 (mã nguồn hiện tại là Collap_V1.13.3l)
+- Phạm vi: sửa API chat, hợp nhất polling, khóa request và tăng cache file tĩnh.
+- Không thay đổi: công thức RP, luồng xác nhận kết quả, lịch sử trận, giao diện tỷ số phòng và cấu trúc Supabase.
 
-## Mục tiêu
+## Các lỗi phát hiện
 
-- Không reload toàn bộ trang sau thao tác trong phòng.
-- Không thay toàn bộ `#roomLiveContent` khi chỉ một nội dung nhỏ đổi.
-- Ưu tiên cập nhật ngay sau sự kiện người dùng.
-- Giữ cache HTML hiện tại và không tải lại CSS, JavaScript hoặc ảnh không đổi.
-- Giảm polling thường xuyên nhưng vẫn có kiểm tra dự phòng để hai máy không bị lệch trạng thái khi mất tín hiệu.
+1. API chat trả 403 khi Admin vừa tắt chat phòng hoặc khi `guest_user_id` vừa bị xóa trong lúc trang cũ chưa kịp chuyển hướng.
+2. Kiểm tra quyền ở `/state`, `/view` và chat so sánh ID trực tiếp; có thể nhận sai khi một phía là số và phía còn lại là chuỗi.
+3. Poller cũ bị `stop()` nhưng vẫn giữ listener `visibilitychange`, `online`, `pagehide`, `pageshow` và `beforeunload`.
+4. Poller không có `key` không được lưu trong registry nên không thể dừng toàn bộ bằng một lệnh.
+5. Khi hai script cùng tạo một poller có cùng key trong cùng nhịp chạy, task immediate của poller cũ vẫn có thể lọt qua hàng đợi microtask.
+6. `/api/invites/pending` chỉ có khóa ở cấp poller; một lời gọi trực tiếp khác vẫn có thể tạo request thứ hai.
+7. Chat và `/state` chưa có khóa dùng chung theo endpoint, nên một script phụ vẫn có thể chạy chồng với poller chính.
+8. Ảnh giao diện và ảnh rank mới cache 30 ngày.
 
 ## Nội dung sửa
 
-### 1. Thao tác phòng bằng AJAX
+### API chat
 
-Các thao tác Sẵn sàng, Hủy sẵn sàng, quay đội, gửi kết quả, xác nhận, tranh chấp, đá tiếp và gửi chat không còn đi theo redirect để tải lại toàn trang.
+- Khi chat phòng bị tắt: trả HTTP 200 với `disabled=true`, không lặp 403.
+- Khi phòng vừa đóng hoặc người chơi vừa rời: trả HTTP 200 với `closed=true` và danh sách rỗng.
+- Phòng đang hoạt động vẫn giữ kiểm tra quyền; tài khoản lạ không được đọc tin nhắn.
+- API chat chỉ đọc 4 cột phòng cần thiết thay vì gọi `get_room()` đầy đủ.
+- Client tự dừng poller chat khi nhận `disabled`, `closed`, 401, 403 hoặc 404.
 
-Backend nhận header `X-PES-Room-Action: 1` và trả JSON gồm:
+### Polling phòng
 
-- HTML động mới nhất của phòng;
-- `state_key` mới;
-- thông báo lỗi/cảnh báo cần hiển thị;
-- URL chuyển trang nếu người chơi thật sự rời phòng.
+- Chỉ giữ một poller `room-state:<room_id>`.
+- Trước khi tạo poller trạng thái/chat mới, dừng mọi poller cùng nhóm cũ.
+- Không dùng `window.location.reload()` để đồng bộ phòng.
+- Khi trạng thái thay đổi, chỉ thay `#roomLiveContent`.
+- Khi rời trang, gửi form phòng, xác nhận bỏ cuộc hoặc chuyển về sảnh: dừng toàn bộ poller và hủy request đang chạy.
+- Khi trang nằm trong Back/Forward Cache: tạm hủy request và chạy lại khi trang được phục hồi.
 
-### 2. Chỉ vá node giao diện thay đổi
+### Khóa request
 
-Client không còn dùng:
+- Thêm registry `requestOnce`.
+- `/state`: khóa `request:room-state:<room_id>`.
+- Chat phòng: khóa `request:room-chat:<room_id>`.
+- Lời mời: khóa `request:pending-invites`.
+- Request cùng khóa dùng chung một Promise, không tạo kết nối thứ hai.
+- Poller cùng key thay thế poller cũ mà không để task immediate cũ chạy lọt.
 
-```text
-target.innerHTML = html
-```
+### Dọn polling cũ
 
-Thay vào đó, bộ vá DOM so sánh node, thuộc tính và nội dung chữ. Chỉ node khác mới được cập nhật. Các phần không đổi giữ nguyên:
+- Theo dõi cả poller có key và không có key.
+- `stopAll()` dừng toàn bộ poller.
+- `stopByPrefix()` dừng một nhóm poller.
+- `stop()` xóa timer, abort request và gỡ toàn bộ event listener.
+- `hasPoller()` ngăn script thứ hai tạo lại polling lời mời.
 
-- ảnh đã tải;
-- focus và vị trí con trỏ;
-- tỷ số đang nhập;
-- trạng thái mở của khung chi tiết;
-- animation và vị trí cuộn.
+### Cache
 
-### 3. Cache phía trình duyệt
+- CSS/JS: 1 năm, immutable.
+- Font: 1 năm, immutable.
+- Ảnh PNG/JPG/JPEG/WebP/GIF/SVG/ICO, bao gồm ảnh rank và giao diện: 180 ngày.
+- `stale-while-revalidate`: 7 ngày.
+- API và heartbeat tiếp tục `no-store`.
 
-- HTML động gần nhất lưu trong `sessionStorage` theo ID phòng.
-- `state_key` gần nhất cũng được lưu riêng.
-- Nếu server trả cùng HTML, không vá DOM lần nữa.
-- CSS/JS/ảnh tiếp tục dùng cache dài của nhánh `lv3.1`–`lv3.3`.
+## File đã sửa
 
-### 4. Event-first
+- `app.py`
+  - khoảng dòng 65: tăng phiên bản.
+  - khoảng dòng 1484–1496: cache ảnh 180 ngày.
+  - khoảng dòng 3800–3818: kiểm tra ID an toàn cho `/state`.
+  - khoảng dòng 4200–4250: sửa API chat 403 và giảm dữ liệu truy vấn.
+- `modules/room_access_routes.py`
+  - khoảng dòng 173–193: kiểm tra ID an toàn cho HTML động của phòng.
+- `templates/base.html`
+  - khoảng dòng 318–375: khóa request lời mời.
+  - khoảng dòng 830–840: chỉ tạo một poller lời mời.
+- `templates/room_detail.html`
+  - khoảng dòng 249–430: dừng polling cũ, khóa `/state`, xử lý lỗi quyền và không reload trang.
+  - khoảng dòng 477–535: khóa chat và tự dừng khi phòng/chat đóng.
+  - khoảng dòng 537–555, 730–745: dừng toàn bộ polling trước khi gửi form hoặc rời phòng.
+- `static/js/pes_polling.js`
+  - toàn file: singleton poller, request lock, stopAll, stopByPrefix, dọn listener và hỗ trợ BFCache.
+- `vercel.json`
+  - phần headers: tăng cache ảnh và bổ sung cache font.
 
-Cập nhật ngay khi có:
+## Kiểm tra
 
-- thao tác phòng thành công;
-- tab trở lại hiển thị;
-- cửa sổ được focus;
-- kết nối mạng trở lại;
-- trang được phục hồi từ BFCache;
-- sự kiện từ tab khác cùng phòng qua `BroadcastChannel`.
-
-Không còn poller `/state` của `PESNet` chạy liên tục.
-
-### 5. Kiểm tra dự phòng
-
-Hạ tầng hiện tại chưa bật Supabase Realtime trực tiếp ở trình duyệt. Để tránh máy khách không nhận được thao tác của đối thủ khi mất sự kiện, giữ một watchdog nhẹ:
-
-| Trạng thái | Chu kỳ dự phòng |
-|---|---:|
-| Chờ xác nhận kết quả | 8–15 giây |
-| Chờ sẵn sàng / Đá tiếp | 15 giây |
-| Đang thi đấu | 60 giây |
-| Trạng thái khác | 30 giây |
-
-Tab bị ẩn không gửi request.
-
-### 6. Chat theo thay đổi
-
-- Client gửi `since=<chat_key>`.
-- Không có tin mới: API trả HTTP 204, không gửi danh sách và không render lại chat.
-- Có tin mới: chỉ cập nhật khung chat.
-- Chat kiểm tra ngay sau thao tác, khi tab hiện lại và có watchdog 60 giây.
-
-## File được sửa sau khi chạy
-
-| File | Nội dung |
-|---|---|
-| `app.py` | Version; JSON response cho thao tác phòng; chat `since/chat_key` |
-| `templates/room_detail.html` | AJAX form; event sync; cache; vá DOM theo node; watchdog nhẹ |
-
-## Không thay đổi
-
-- Không sửa RP, công thức Rank hoặc phạt bỏ cuộc.
-- Không sửa lịch sử trận và lịch sử tỷ số trong phòng.
-- Không sửa Admin, CSS, `vercel.json` hoặc cấu trúc Supabase.
-- Không thêm thư viện JavaScript bên ngoài.
+- Python compile `app.py` và module sửa: đạt.
+- Parse 25 template Jinja: đạt.
+- Node `--check` cho `pes_polling.js`: đạt.
+- Node `--check` cho 12 khối JavaScript trong `base.html` và `room_detail.html`: đạt sau khi thay biểu thức Jinja bằng dữ liệu kiểm tra.
+- Mô phỏng hai poller cùng key: chỉ task mới chạy 1 lần.
+- Mô phỏng gọi request cùng key: chỉ tạo 1 request.
+- Mô phỏng gọi `runNow()` liên tục: số request chạy đồng thời tối đa là 1.
+- Mô phỏng `stopAll()`: gỡ toàn bộ 10 listener thử nghiệm, registry còn 0 poller.
+- Số route trước và sau: 69 decorator route, không thêm hoặc mất route.
+- Trang phòng: 1 tham chiếu `/state`, 1 key poller trạng thái, 0 `location.reload()`.
+- Lời mời: 1 endpoint, 1 key request lock.
+- Không cần chạy SQL Supabase.
 
 ## Cài đặt
 
-1. Chép ba file trong ZIP vào thư mục gốc dự án `Collap_V1.13.3lv3.3`.
-2. Nhấp đúp `APPLY_Collap_V1.13.3lv3.4.bat`.
-3. Commit đúng:
-   - `app.py`;
-   - `templates/room_detail.html`.
-4. Không commit `.collap_v1_13_3lv3_4_backup`.
+Chép đè các file trong gói này lên nhánh `Collap_V1.13.3lv3`.

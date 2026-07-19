@@ -26,29 +26,20 @@
       ]
     },
     {
-      "source": "/static/ranks/(.*)",
+      "source": "/static/(.*)\\.(png|jpg|jpeg|webp|gif|svg|ico)",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=2592000, stale-while-revalidate=604800"
+          "value": "public, max-age=15552000, stale-while-revalidate=604800"
         }
       ]
     },
     {
-      "source": "/static/(.*)\\.(png|jpg|jpeg|webp|svg|gif|ico)",
+      "source": "/static/(.*)\\.(woff|woff2|ttf|otf)",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "public, max-age=2592000, stale-while-revalidate=604800"
-        }
-      ]
-    },
-    {
-      "source": "/static/(.*)",
-      "headers": [
-        {
-          "key": "Cache-Control",
-          "value": "public, max-age=604800, stale-while-revalidate=86400"
+          "value": "public, max-age=31536000, immutable"
         }
       ]
     }

@@ -1,23 +1,36 @@
 (function (global) {
     "use strict";
 
-    // Một registry chung cho toàn bộ document. Cùng một key luôn chỉ có một
-    // poller; poller cũ được dừng trước khi poller mới được đăng ký.
-    const pollers = global.__PES_POLLERS__ || new Map();
-    const requests = global.__PES_REQUEST_LOCKS__ || new Map();
-    global.__PES_POLLERS__ = pollers;
-    global.__PES_REQUEST_LOCKS__ = requests;
+    const registry = global.__PES_POLLERS__ || (global.__PES_POLLERS__ = Object.create(null));
+    const allPollers = global.__PES_ALL_POLLERS__ || (global.__PES_ALL_POLLERS__ = new Set());
+    const requestRegistry = global.__PES_REQUESTS__ || (global.__PES_REQUESTS__ = Object.create(null));
 
-    let pagePaused = false;
-
-    function resolveInterval(value, fallback) {
+    function numericInterval(value, fallback) {
         let resolved = value;
-        if (typeof resolved === "function") {
-            try { resolved = resolved(); } catch (error) { resolved = fallback; }
+        if (typeof value === "function") {
+            try { resolved = value(); } catch (error) { resolved = fallback; }
         }
-        resolved = Number(resolved);
-        if (!Number.isFinite(resolved)) resolved = Number(fallback || 10000);
-        return Math.max(1000, resolved);
+        return Math.max(1000, Number(resolved || fallback || 10000));
+    }
+
+    function requestOnce(key, executor) {
+        const requestKey = String(key || "").trim();
+        if (!requestKey) return Promise.resolve().then(executor);
+
+        if (requestRegistry[requestKey]) {
+            return requestRegistry[requestKey];
+        }
+
+        const tracked = Promise.resolve()
+            .then(executor)
+            .finally(function () {
+                if (requestRegistry[requestKey] === tracked) {
+                    delete requestRegistry[requestKey];
+                }
+            });
+
+        requestRegistry[requestKey] = tracked;
+        return tracked;
     }
 
     function createPoller(options) {
@@ -26,231 +39,281 @@
         if (typeof task !== "function") throw new Error("PESNet.createPoller requires task");
 
         const key = String(options.key || "").trim();
-        if (key && pollers.has(key)) {
-            try { pollers.get(key).stop(); } catch (error) {}
+        if (key && registry[key] && typeof registry[key].stop === "function") {
+            registry[key].stop("replaced");
         }
 
-        const visibleIntervalOption = options.visibleInterval || 10000;
-        const hiddenIntervalOption = options.hiddenInterval || 60000;
         const runWhenHidden = options.runWhenHidden === true;
         const jitter = Math.max(0, Number(options.jitter || 0));
+        const timeoutMs = Math.max(2000, Number(options.timeoutMs || 15000));
         let timer = null;
         let stopped = false;
-        let paused = pagePaused;
         let inFlight = false;
+        let rerunRequested = false;
+        let requestController = null;
+        let requestTimeout = null;
+
+        function visibleInterval() {
+            return numericInterval(
+                typeof options.interval !== "undefined" ? options.interval : options.visibleInterval,
+                10000
+            );
+        }
+
+        function hiddenInterval() {
+            return numericInterval(options.hiddenInterval, Math.max(60000, visibleInterval()));
+        }
 
         function delayForCurrentState() {
-            const visibleInterval = resolveInterval(visibleIntervalOption, 10000);
-            const hiddenInterval = Math.max(
-                visibleInterval,
-                resolveInterval(hiddenIntervalOption, 60000)
-            );
-            const base = document.hidden ? hiddenInterval : visibleInterval;
+            const base = document.hidden ? hiddenInterval() : visibleInterval();
             if (!jitter || document.hidden) return base;
             return Math.max(1000, base + Math.round((Math.random() * 2 - 1) * jitter));
         }
 
-        function clearTimer() {
-            if (timer) clearTimeout(timer);
-            timer = null;
+        function clearRequestResources() {
+            if (requestTimeout) clearTimeout(requestTimeout);
+            requestTimeout = null;
+            requestController = null;
+        }
+
+        function abortInFlight() {
+            if (requestController) {
+                try { requestController.abort(); } catch (error) {}
+            }
+            clearRequestResources();
         }
 
         function schedule(delay) {
-            if (stopped || paused) return;
-            clearTimer();
-            timer = setTimeout(run, typeof delay === "number" ? delay : delayForCurrentState());
+            if (stopped) return;
+            clearTimeout(timer);
+            timer = setTimeout(run, typeof delay === "number" ? Math.max(0, delay) : delayForCurrentState());
+        }
+
+        function finishRun() {
+            inFlight = false;
+            clearRequestResources();
+            if (stopped) return;
+            if (rerunRequested && !document.hidden) {
+                rerunRequested = false;
+                schedule(0);
+                return;
+            }
+            schedule();
         }
 
         function run() {
-            if (stopped || paused) return;
+            if (stopped) return;
             if (!navigator.onLine || (document.hidden && !runWhenHidden)) {
                 schedule();
                 return;
             }
             if (inFlight) {
-                schedule();
+                rerunRequested = true;
                 return;
             }
 
             inFlight = true;
+            requestController = new AbortController();
+            requestTimeout = setTimeout(function () {
+                if (requestController) requestController.abort();
+            }, timeoutMs);
+
             Promise.resolve()
-                .then(task)
-                .catch(function () {})
-                .finally(function () {
-                    inFlight = false;
-                    schedule();
-                });
+                .then(function () {
+                    if (stopped || !requestController) return;
+                    return task(requestController.signal);
+                })
+                .catch(function (error) {
+                    if (!error || error.name !== "AbortError") {
+                        if (typeof options.onError === "function") {
+                            try { options.onError(error); } catch (ignored) {}
+                        }
+                    }
+                })
+                .finally(finishRun);
         }
 
         function runNow() {
-            if (stopped || paused || inFlight || !navigator.onLine) return;
-            clearTimer();
+            if (stopped || !navigator.onLine || (document.hidden && !runWhenHidden)) return;
+            clearTimeout(timer);
+            if (inFlight) {
+                rerunRequested = true;
+                return;
+            }
             run();
         }
 
-        function pause() {
-            if (stopped || paused) return;
-            paused = true;
-            clearTimer();
-        }
-
-        function resume(runImmediately) {
-            if (stopped) return;
-            paused = false;
-            if (runImmediately === false) schedule();
-            else runNow();
-        }
-
-        function stop() {
+        function stop(reason) {
             if (stopped) return;
             stopped = true;
-            paused = true;
-            clearTimer();
-            document.removeEventListener("visibilitychange", handleVisibility);
-            global.removeEventListener("online", handleOnline);
-            if (key && pollers.get(key) === controller) pollers.delete(key);
+            rerunRequested = false;
+            clearTimeout(timer);
+            abortInFlight();
+
+            document.removeEventListener("visibilitychange", onVisibilityChange);
+            global.removeEventListener("online", runNow);
+            global.removeEventListener("pagehide", onPageHide);
+            global.removeEventListener("pageshow", onPageShow);
+            global.removeEventListener("beforeunload", onBeforeUnload);
+
+            allPollers.delete(api);
+            if (key && registry[key] === api) delete registry[key];
+
+            if (typeof options.onStop === "function") {
+                try { options.onStop(reason || "stopped"); } catch (ignored) {}
+            }
         }
 
-        function handleVisibility() {
-            if (stopped || paused) return;
-            if (!document.hidden) runNow();
-            else if (runWhenHidden) schedule();
-            else clearTimer();
+        function onVisibilityChange() {
+            if (stopped) return;
+            if (document.hidden) {
+                rerunRequested = false;
+                if (!runWhenHidden) abortInFlight();
+                schedule();
+            } else {
+                runNow();
+            }
         }
 
-        function handleOnline() {
-            if (!document.hidden || runWhenHidden) runNow();
+        function onPageHide(event) {
+            if (event && event.persisted) {
+                rerunRequested = false;
+                clearTimeout(timer);
+                abortInFlight();
+                return;
+            }
+            stop("pagehide");
         }
 
-        const controller = {
+        function onPageShow(event) {
+            if (event && event.persisted && !stopped) runNow();
+        }
+
+        function onBeforeUnload() {
+            stop("beforeunload");
+        }
+
+        const api = {
+            key: key,
             runNow: runNow,
             stop: stop,
-            pause: pause,
-            resume: resume,
-            key: key,
-            get inFlight() { return inFlight; }
+            isInFlight: function () { return inFlight; },
+            isStopped: function () { return stopped; }
         };
 
-        if (key) pollers.set(key, controller);
-        document.addEventListener("visibilitychange", handleVisibility);
-        global.addEventListener("online", handleOnline);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+        global.addEventListener("online", runNow);
+        global.addEventListener("pagehide", onPageHide);
+        global.addEventListener("pageshow", onPageShow);
+        global.addEventListener("beforeunload", onBeforeUnload);
 
-        if (!paused) {
-            if (options.immediate === false) schedule();
-            else runNow();
-        }
+        allPollers.add(api);
+        if (key) registry[key] = api;
+        if (options.immediate === false) schedule();
+        else runNow();
 
-        return controller;
+        return api;
     }
 
-    function stopPoller(key) {
-        const normalized = String(key || "").trim();
-        const poller = pollers.get(normalized);
-        if (!poller) return false;
-        try { poller.stop(); } catch (error) {}
-        return true;
-    }
-
-    function pauseAllPollers() {
-        pagePaused = true;
-        Array.from(pollers.values()).forEach(function (poller) {
-            try { poller.pause(); } catch (error) {}
+    function stopAll(reason) {
+        Array.from(allPollers).forEach(function (poller) {
+            try { poller.stop(reason || "stop-all"); } catch (error) {}
         });
     }
 
-    function resumeAllPollers() {
-        pagePaused = false;
-        Array.from(pollers.values()).forEach(function (poller) {
-            try { poller.resume(true); } catch (error) {}
+    function stopByPrefix(prefix, reason) {
+        const normalized = String(prefix || "");
+        Object.keys(registry).forEach(function (key) {
+            if (key.indexOf(normalized) !== 0) return;
+            const poller = registry[key];
+            if (poller && typeof poller.stop === "function") {
+                poller.stop(reason || "prefix-stop");
+            }
         });
     }
 
-    function stopAllPollers() {
-        pagePaused = true;
-        Array.from(pollers.values()).forEach(function (poller) {
-            try { poller.stop(); } catch (error) {}
-        });
-        pollers.clear();
-    }
-
-    // Khóa request dùng chung giữa nhiều script. Nếu cùng key đang chạy, mọi
-    // nơi gọi sau đều nhận lại đúng Promise hiện tại thay vì tạo request mới.
-    function singleFlight(key, task) {
-        const normalized = String(key || "").trim();
-        if (!normalized || typeof task !== "function") {
-            return Promise.resolve().then(task);
-        }
-        if (requests.has(normalized)) return requests.get(normalized);
-
-        const promise = Promise.resolve()
-            .then(task)
-            .finally(function () {
-                if (requests.get(normalized) === promise) requests.delete(normalized);
-            });
-        requests.set(normalized, promise);
-        return promise;
+    function hasPoller(key) {
+        const poller = registry[String(key || "")];
+        return Boolean(poller && typeof poller.isStopped === "function" && !poller.isStopped());
     }
 
     function fetchJson(url, options, timeoutMs) {
-        const controller = new AbortController();
-        const timeout = setTimeout(function () {
-            controller.abort();
-        }, Math.max(2000, Number(timeoutMs || 12000)));
+        const supplied = options && options.signal;
+        const controller = supplied ? null : new AbortController();
+        const timeout = controller
+            ? setTimeout(function () { controller.abort(); }, Math.max(2000, Number(timeoutMs || 12000)))
+            : null;
         const config = Object.assign({
             credentials: "same-origin",
             cache: "no-store",
-            signal: controller.signal
+            signal: supplied || controller.signal
         }, options || {});
 
         return fetch(url, config).then(function (response) {
             if (response.status === 204 || response.status === 304) {
-                return {
-                    ok: response.ok,
-                    status: response.status,
-                    data: null,
-                    response: response
-                };
+                return {ok: response.ok, status: response.status, data: null, response: response};
             }
+
             const contentType = String(response.headers.get("content-type") || "").toLowerCase();
-            const parsed = contentType.includes("application/json")
-                ? response.json().catch(function () { return null; })
-                : Promise.resolve(null);
-            return parsed.then(function (data) {
-                return {
-                    ok: response.ok,
-                    status: response.status,
-                    data: data,
-                    response: response
-                };
+            if (contentType.indexOf("application/json") === -1) {
+                return response.text().then(function (text) {
+                    return {ok: response.ok, status: response.status, data: null, text: text, response: response};
+                });
+            }
+
+            return response.json().then(function (data) {
+                return {ok: response.ok, status: response.status, data: data, response: response};
             });
         }).finally(function () {
-            clearTimeout(timeout);
+            if (timeout) clearTimeout(timeout);
         });
     }
 
-    // File có thể bị trình duyệt hoặc một template cũ nạp lại. Chỉ đăng ký
-    // listener vòng đời trang đúng một lần để tránh pause/resume/stop lặp.
-    if (!global.__PES_POLLING_LIFECYCLE_BOUND__) {
-        global.__PES_POLLING_LIFECYCLE_BOUND__ = true;
-        global.addEventListener("pagehide", function (event) {
-            // BFCache giữ document để quay lại nhanh: chỉ tạm dừng. Khi rời hẳn
-            // trang, dừng và tháo toàn bộ listener/timer cũ.
-            if (event.persisted) pauseAllPollers();
-            else stopAllPollers();
+    function fetchJsonOnce(key, url, options, timeoutMs) {
+        return requestOnce(key, function () {
+            return fetchJson(url, options, timeoutMs);
         });
-        global.addEventListener("pageshow", function (event) {
-            if (event.persisted) resumeAllPollers();
+    }
+
+    function fetchText(url, options, timeoutMs) {
+        const supplied = options && options.signal;
+        const controller = supplied ? null : new AbortController();
+        const timeout = controller
+            ? setTimeout(function () { controller.abort(); }, Math.max(2000, Number(timeoutMs || 12000)))
+            : null;
+        const config = Object.assign({
+            credentials: "same-origin",
+            cache: "no-store",
+            signal: supplied || controller.signal
+        }, options || {});
+
+        return fetch(url, config).then(function (response) {
+            if (response.status === 204 || response.status === 304) {
+                return {ok: response.ok, status: response.status, text: "", response: response};
+            }
+            return response.text().then(function (text) {
+                return {ok: response.ok, status: response.status, text: text, response: response};
+            });
+        }).finally(function () {
+            if (timeout) clearTimeout(timeout);
         });
-        global.addEventListener("beforeunload", stopAllPollers, {once: true});
+    }
+
+    function fetchTextOnce(key, url, options, timeoutMs) {
+        return requestOnce(key, function () {
+            return fetchText(url, options, timeoutMs);
+        });
     }
 
     global.PESNet = {
         createPoller: createPoller,
-        stop: stopPoller,
-        pauseAll: pauseAllPollers,
-        resumeAll: resumeAllPollers,
-        stopAll: stopAllPollers,
-        singleFlight: singleFlight,
-        fetchJson: fetchJson
+        stopAll: stopAll,
+        stopByPrefix: stopByPrefix,
+        hasPoller: hasPoller,
+        requestOnce: requestOnce,
+        fetchJson: fetchJson,
+        fetchJsonOnce: fetchJsonOnce,
+        fetchText: fetchText,
+        fetchTextOnce: fetchTextOnce
     };
 })(window);

@@ -1,72 +1,66 @@
-# Log — Collap_V1.13.3k
+# Collap_V1.13.3m — Lịch sử toàn hệ thống và bộ lọc bỏ cuộc
 
-- **Phiên bản nền:** Collap_V1.13.3j
-- **Phiên bản mới:** Collap_V1.13.3k
-- **Ngày giờ:** 18/07/2026 23:47
-- **Múi giờ:** Asia/Bangkok
-- **Phạm vi:** Sửa lỗi HTTP 500 khi người chơi xác nhận **Bỏ cuộc và thoát**.
+- Ngày giờ: 19/07/2026 — múi giờ Asia/Bangkok.
+- Bản nền chức năng: `Collap_V1.13.3k`.
+- Không gộp các nhánh `l/lv2/lv3` đang thử nghiệm Request.
+- Loại gói: trình vá tự động, chỉ sửa đúng các file liên quan trên nhánh được chọn.
+- SQL Supabase: không cần.
 
-## Nguyên nhân trong code
+## 1. Lịch sử trận — Toàn hệ thống
 
-Tính năng ghi trận bỏ cuộc ở bản trước có hai nhánh ghi Supabase:
+- Thêm công tắc hệ thống `match_history_all_enabled`, mặc định bật.
+- Admin có quyền `system_features_manage` được bật/tắt tại:
+  - Admin → Bật/tắt tính năng hệ thống → `Xem lịch sử toàn hệ thống`.
+- Khi bật:
+  - Người chơi thấy tab `Toàn hệ thống` như hiện tại.
+- Khi tắt:
+  - Người chơi chỉ thấy `Trận của tôi`.
+  - Cố mở trực tiếp `/matches?view=all` cũng bị backend chuyển về dữ liệu của chính tài khoản.
+  - Admin vẫn xem được toàn hệ thống để quản lý và kiểm tra dữ liệu.
 
-1. Payload đầu tiên có các cột nâng cấp tùy chọn như `loser_id` và `rp_details`. Cấu trúc Supabase chưa chạy SQL nâng cấp có thể không có các cột này.
-2. Nhánh ghi dự phòng đã bỏ các cột tùy chọn, nhưng khi tạo trận bỏ cuộc trước lúc quay đội lại không gửi đủ nhóm trường mà luồng tạo trận bình thường đang sử dụng như đội, overall và `host_xp_factor`.
-3. Nếu nhánh dự phòng tiếp tục lỗi, exception bị đẩy ra route Flask và tạo trang **Internal Server Error**.
+## 2. Bộ lọc Đã hủy / Bỏ cuộc
 
-## Nội dung đã sửa
+Bộ lọc `status=cancelled` được mở rộng để nhận:
 
-### `app.py`
+- Mọi dòng có `status = cancelled`.
+- Dòng có marker hoặc ghi chú bỏ cuộc.
+- Dòng bị trừ RP (`delta1 < 0` hoặc `delta2 < 0`) nhưng không phải trận confirmed thua bình thường.
+- Không yêu cầu phải có đủ cả `player1_id` và `player2_id`.
 
-- Khoảng dòng **64–66**:
-  - Đổi phiên bản hiển thị thành `Collap_V1.13.3k`.
+Nhờ vậy các lần hệ thống đã trừ điểm vẫn xuất hiện trong `Toàn hệ thống`, kể cả bản ghi chỉ có một người chơi hoặc phòng chưa gắn đủ đối thủ.
 
-### `modules/forfeit_history_service.py`
+## 3. File được trình vá sửa
 
-- Khoảng dòng **91–127**:
-  - Tách payload dành cho trận đã có `match_id`.
-  - Chỉ cập nhật các cột đã được dự án sử dụng ổn định.
+| File | Nội dung |
+|---|---|
+| `app.py` | Đổi version; thêm mặc định `match_history_all_enabled = True` |
+| `modules/match_history_routes.py` | Khóa xem toàn hệ thống ở backend; mở rộng bộ lọc hủy/bỏ cuộc; giữ góc nhìn cá nhân/toàn hệ thống |
+| `templates/matches.html` | Ẩn tab Toàn hệ thống khi bị tắt; đổi tên bộ lọc thành `Đã hủy / Bỏ cuộc` |
+| `templates/admin.html` | Thêm công tắc `Xem lịch sử toàn hệ thống` |
 
-- Khoảng dòng **130–165**:
-  - Tạo payload riêng cho trường hợp bỏ cuộc trước lúc quay đội.
-  - Bổ sung `team1`, `team2`, `team1_overall`, `team2_overall` và `host_xp_factor` giống luồng tạo trận bình thường.
-  - Khi chưa quay đội, dùng nhãn `Chưa quay đội`; lịch sử giao diện vẫn hiển thị **Bỏ cuộc**, không tạo tỷ số giả.
-  - Không còn phụ thuộc vào `loser_id` hoặc `rp_details`, vì hai cột này có thể chưa tồn tại nếu chưa chạy SQL nâng cấp.
+## 4. An toàn khi áp dụng
 
-- Khoảng dòng **168–175**:
-  - Thêm hàm ghi cảnh báo an toàn vào log.
-
-- Khoảng dòng **178–240**:
-  - Cô lập toàn bộ lỗi ghi lịch sử Supabase.
-  - Lỗi phụ khi gắn `match_id` vào phòng không còn làm hỏng thao tác chính.
-  - Nếu Supabase tạm lỗi, route bỏ cuộc không còn trả HTTP 500.
-  - Giữ marker `[FORFEIT:host]` / `[FORFEIT:guest]` trong `note` để xác định chính xác người thua mà không cần sửa SQL.
-
-## Logic không thay đổi
-
-- Người bỏ cuộc vẫn bị trừ đúng mức RP hiện hành.
-- Vẫn cộng một trận thua cho người bỏ cuộc.
-- Đối thủ không được cộng RP và không được cộng trận thắng.
-- Trận bỏ cuộc vẫn được ghi vào lịch sử khi Supabase nhận lệnh thành công.
+- Trình vá tạo backup tại `.collap_v1_13_3m_backup` trước khi ghi file.
+- Nếu Python compile thất bại, trình vá tự khôi phục file cũ.
 - Không sửa công thức RP.
-- Không cần chạy SQL Supabase.
-- Không thay đổi giao diện phòng hoặc bảng lịch sử tỷ số.
+- Không sửa cơ chế bỏ cuộc/phạt điểm.
+- Không sửa polling, chat, trạng thái phòng hoặc file JavaScript.
+- Không cập nhật `created_at` và không sửa schema Supabase.
 
-## Kiểm tra đã thực hiện
+## 5. Cách áp dụng
 
-- `python -m py_compile app.py modules/*.py`: **Đạt**.
-- `python test_rp_engine.py`: **Đạt — RP_V1.12.0**.
-- Parse 24 template Jinja: **Đạt**.
-- Test tạo lịch sử bỏ cuộc trước lúc quay đội với schema yêu cầu đủ trường: **Đạt**.
-- Test cập nhật trận bỏ cuộc đã có `match_id`: **Đạt**.
-- Test ép Supabase lỗi: hàm trả về an toàn, không ném exception ra route: **Đạt**.
-- Không thể chạy full import Flask trong môi trường đóng gói hiện tại vì môi trường không cài thư viện `flask`; không phát hiện lỗi cú pháp Python hoặc Jinja.
+1. Chọn đúng nhánh cần thử, dựa trên `Collap_V1.13.3k` hoặc nhánh Request đã gộp đủ chức năng đến 3k.
+2. Chép `apply_Collap_V1.13.3m.py` vào thư mục gốc, cùng cấp `app.py`.
+3. Chạy:
 
-## File cần chép đè
-
-```text
-app.py
-modules/forfeit_history_service.py
+```bash
+python apply_Collap_V1.13.3m.py
 ```
 
-`Log.md` chỉ dùng để lưu lịch sử thay đổi.
+4. Commit bốn file được báo đã sửa.
+5. Không commit thư mục `.collap_v1_13_3m_backup`.
+6. Deploy nhánh test và kiểm tra:
+   - bật công tắc → người chơi thấy Toàn hệ thống;
+   - tắt công tắc → người chơi chỉ thấy Trận của tôi;
+   - Admin vẫn xem được Toàn hệ thống;
+   - lọc Đã hủy / Bỏ cuộc nhận các dòng delta âm và bản ghi thiếu một phía.

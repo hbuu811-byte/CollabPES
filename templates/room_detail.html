@@ -105,7 +105,16 @@
                             </form>
                             <details class="room-result-dispute">
                                 <summary class="room-result-btn disagree">× Không Đồng Ý</summary>
-                                <form class="dispute-form room-result-dispute-form" method="post" action="{{ url_for('room_dispute_result', room_id=room.id) }}" enctype="multipart/form-data" onsubmit="return confirm('Gửi tranh chấp cho Admin? Trận sẽ chưa được tính điểm.');">
+                                <form class="dispute-form room-result-dispute-form room-action-confirm-form"
+                                      method="post"
+                                      action="{{ url_for('room_dispute_result', room_id=room.id) }}"
+                                      enctype="multipart/form-data"
+                                      data-modal-tone="warning"
+                                      data-modal-icon="⚠"
+                                      data-modal-title="Gửi tranh chấp?"
+                                      data-modal-message="Trận sẽ tạm thời chưa được tính điểm và được chuyển tới Admin xử lý."
+                                      data-modal-note="CHỜ ADMIN XỬ LÝ"
+                                      data-modal-confirm-label="Gửi tranh chấp">
                                     <label>Lý do tranh chấp</label>
                                     <select name="reason_code" required>
                                         <option value="">-- Chọn lý do --</option>
@@ -176,7 +185,7 @@
                             <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
                                   data-modal-tone="danger"
                                   data-modal-icon="⚠"
-                                  data-modal-title="Xác nhận bỏ cuộc"
+                                  data-modal-title="Thoát khi đối thủ đã sẵn sàng"
                                   data-modal-message="Bạn đã Sẵn Sàng. Thoát phòng lúc này sẽ bị tính là bỏ cuộc và hệ thống trừ 20 RP."
                                   data-modal-note="−20 RP"
                                   data-modal-confirm-label="Bỏ cuộc và thoát">
@@ -186,7 +195,7 @@
                             <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
                                   data-modal-tone="safe"
                                   data-modal-icon="🚪"
-                                  data-modal-title="Rời phòng đấu?"
+                                  data-modal-title="Thoát an toàn"
                                   data-modal-message="Bạn chưa Sẵn Sàng nên có thể rời phòng ngay. Phòng của chủ phòng vẫn được giữ lại."
                                   data-modal-note="KHÔNG TRỪ RP"
                                   data-modal-confirm-label="Rời phòng">
@@ -200,7 +209,7 @@
                             <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_host_forfeit', room_id=room.id) }}"
                                   data-modal-tone="danger"
                                   data-modal-icon="⚠"
-                                  data-modal-title="Xác nhận bỏ cuộc"
+                                  data-modal-title="Thoát khi đối thủ đã sẵn sàng"
                                   data-modal-message="Khách đã Sẵn Sàng. Chủ phòng thoát lúc này sẽ bị tính là bỏ cuộc và hệ thống trừ 20 RP."
                                   data-modal-note="−20 RP"
                                   data-modal-confirm-label="Bỏ cuộc và đóng phòng">
@@ -210,7 +219,7 @@
                             <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
                                   data-modal-tone="safe"
                                   data-modal-icon="🚪"
-                                  data-modal-title="Đóng phòng đấu?"
+                                  data-modal-title="Thoát an toàn"
                                   data-modal-message="Khách chưa Sẵn Sàng nên bạn có thể đóng phòng mà không bị trừ RP."
                                   data-modal-note="KHÔNG TRỪ RP"
                                   data-modal-confirm-label="Thoát và đóng phòng">
@@ -229,7 +238,7 @@
                             <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}"
                                   data-modal-tone="warning"
                                   data-modal-icon="🚪"
-                                  data-modal-title="Kết thúc phiên đấu?"
+                                  data-modal-title="Thoát an toàn"
                                   data-modal-message="Bạn không muốn đá tiếp? Đối thủ sẽ nhận được thông báo và cả hai sẽ được đưa về sảnh chính."
                                   data-modal-note="KHÔNG TRỪ RP"
                                   data-modal-confirm-label="Thoát và về sảnh">
@@ -249,7 +258,7 @@
                     <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
                           data-modal-tone="warning"
                           data-modal-icon="🚪"
-                          data-modal-title="Đóng phòng đấu?"
+                          data-modal-title="Thoát an toàn"
                           data-modal-message="Phòng hiện chưa có đối thủ. Khi bạn thoát, phòng này sẽ được đóng."
                           data-modal-note="ĐÓNG PHÒNG"
                           data-modal-confirm-label="Thoát và đóng phòng">
@@ -393,7 +402,7 @@
         <form class="inline-form room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
               data-modal-tone="danger"
               data-modal-icon="⚠"
-              data-modal-title="Xác nhận bỏ cuộc"
+              data-modal-title="Thoát khi đối thủ đã sẵn sàng"
               data-modal-message="Trận đã bắt đầu. Thoát phòng lúc này được tính là bỏ cuộc."
               data-modal-note="−20 RP"
               data-modal-confirm-label="Bỏ cuộc và thoát">
@@ -413,7 +422,7 @@
         <form class="inline-form room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
               data-modal-tone="danger"
               data-modal-icon="⚠"
-              data-modal-title="Xác nhận bỏ cuộc"
+              data-modal-title="Thoát khi đối thủ đã sẵn sàng"
               data-modal-message="Trận đã bắt đầu. Thoát phòng lúc này được tính là bỏ cuộc."
               data-modal-note="−20 RP"
               data-modal-confirm-label="Bỏ cuộc và thoát">
@@ -461,7 +470,15 @@
         {% endif %}
         <p class="small">Hai người có thể về sảnh và tiếp tục sử dụng app. Trận này chỉ được tính điểm sau khi Admin xử lý.</p>
         {% if room.dispute and current_user.id == room.dispute.raised_by_id %}
-        <form class="inline-form" method="post" action="{{ url_for('room_withdraw_dispute', room_id=room.id) }}" onsubmit="return confirm('Rút tranh chấp và chấp nhận tỷ số ban đầu? Điểm rank sẽ được cập nhật ngay.');">
+        <form class="inline-form room-action-confirm-form"
+              method="post"
+              action="{{ url_for('room_withdraw_dispute', room_id=room.id) }}"
+              data-modal-tone="warning"
+              data-modal-icon="↩"
+              data-modal-title="Rút tranh chấp?"
+              data-modal-message="Bạn sẽ chấp nhận tỷ số ban đầu và điểm rank được cập nhật ngay."
+              data-modal-note="XÁC NHẬN KẾT QUẢ"
+              data-modal-confirm-label="Rút tranh chấp">
             <button class="btn green" type="submit">↩️ Rút tranh chấp và chấp nhận kết quả</button>
         </form>
         {% endif %}
@@ -663,6 +680,32 @@ function getRoomStateInterval() {
     return 10000;
 }
 
+function shouldShowRoomAjaxNotice(flash) {
+    if (!flash || !flash.message) return false;
+
+    // Các bước thành công đã được phản ánh trực tiếp trên giao diện phòng.
+    // Không mở modal lớn sau mỗi lần Sẵn Sàng, quay đội, nhập kết quả,
+    // xác nhận hoặc Đá tiếp vì làm gián đoạn trải nghiệm người chơi.
+    if (flash.tone === "success") return false;
+
+    const normalized = String(flash.message || "")
+        .trim()
+        .toLocaleLowerCase("vi-VN");
+    const quietRoomSteps = [
+        "bạn đã chọn đá tiếp",
+        "cả hai đã đồng ý đá tiếp",
+        "đã nhập kết quả",
+        "đang chờ người được mời xác nhận",
+        "bạn đã sẵn sàng",
+        "đã hủy trạng thái sẵn sàng",
+        "đã tự random tiếp",
+        "đã kết thúc giao hữu"
+    ];
+    return !quietRoomSteps.some(function (prefix) {
+        return normalized.startsWith(prefix) || normalized.includes(prefix);
+    });
+}
+
 function showRoomAjaxNotice(message, tone) {
     if (!message) return;
     if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
@@ -800,7 +843,9 @@ function bindRoomAjaxForms() {
                 if (updated && form.classList.contains("room-score-form") && (!flash || flash.tone !== "danger")) {
                     clearRoomScoreDraft();
                 }
-                if (flash && flash.message) showRoomAjaxNotice(flash.message, flash.tone);
+                if (shouldShowRoomAjaxNotice(flash)) {
+                    showRoomAjaxNotice(flash.message, flash.tone);
+                }
                 if (!updated && !flash) showRoomAjaxNotice("Không thể cập nhật phòng. Vui lòng thử lại sau vài giây.", "warning");
             } catch (error) {
                 showRoomAjaxNotice("Kết nối phòng đấu bị gián đoạn. Vui lòng thử lại.", "danger");
@@ -1340,9 +1385,9 @@ window.addEventListener("beforeunload", stopRoomLiveWork, {once: true});
     }
 
     function refreshForms() {
-        document.querySelectorAll(".room-exit-confirm-form").forEach(function (form) {
-            if (form.dataset.roomExitModalBound === "1") return;
-            form.dataset.roomExitModalBound = "1";
+        document.querySelectorAll(".room-exit-confirm-form, .room-action-confirm-form").forEach(function (form) {
+            if (form.dataset.roomActionModalBound === "1") return;
+            form.dataset.roomActionModalBound = "1";
             form.addEventListener("submit", function (event) {
                 event.preventDefault();
                 if (submitting || noticeMode) return;

@@ -1,41 +1,43 @@
-# Collap_V1.13.3lv1.2
+# Collap_V1.13.3lv1.3
 
 - Ngày giờ: 19/07/2026, múi giờ Asia/Bangkok.
-- Bản nền: Collap_V1.13.3lv1.1.
-- Phạm vi: ổn định vòng đời polling/request; không thay đổi RP, bỏ cuộc, lịch sử đấu, modal hoặc dữ liệu Supabase.
+- Bản nền: Collap_V1.13.3lv1.2.
+- Phạm vi: giảm modal thừa trong phòng đấu và đồng bộ các hộp xác nhận còn dùng giao diện trình duyệt.
 
-## Nội dung nâng cấp
+## Nội dung sửa
 
-### 1. `static/js/pes_polling.js`
-- Chỉ đăng ký bộ listener `pagehide/pageshow/beforeunload` một lần, kể cả file bị nạp lặp.
-- Giữ một registry poller và request dùng chung trên `window`.
-- `fetchJson()` không còn cố parse JSON đối với phản hồi HTML/rỗng, tránh lỗi JavaScript phụ.
+1. Bỏ modal lớn sau các bước thành công thông thường:
+   - Sẵn Sàng / Hủy Sẵn Sàng.
+   - Quay đội hoặc quay lại đội giao hữu.
+   - Nhập kết quả và chuyển sang chờ xác nhận.
+   - Xác nhận kết quả / rút tranh chấp thành công.
+   - Chọn Đá tiếp và chờ đối thủ.
+   - Các bước trạng thái tương tự đã thể hiện trực tiếp trên giao diện phòng.
 
-### 2. `static/js/session-timeout.js`
-- Thêm khóa dùng chung cho `/api/session/activity` và API kiểm tra hết hạn phiên.
-- Không gửi activity khi tab ẩn, trang đang tạm dừng hoặc request trước chưa xong.
-- Sửa lỗi quay lại trang bằng Back/Forward Cache làm bộ đếm tự đăng xuất bị dừng vĩnh viễn.
-- Khi rời trang thật sự, dọn timer và listener; khi quay lại từ BFCache, khởi động lại đúng một lần.
-- Chỉ ghi nhận mốc đã đồng bộ activity sau khi server phản hồi thành công.
+2. Giữ modal khi người chơi có ý định thoát phòng:
+   - Thoát an toàn, không trừ RP.
+   - Thoát khi đối thủ đã Sẵn Sàng hoặc trận đã bắt đầu, cảnh báo trừ 20 RP.
+   - Kết thúc phiên đấu và trở về sảnh.
 
-### 3. `templates/base.html`
-- Thêm khóa request dùng chung cho thông báo hệ thống và online count.
-- Không parse JSON khi API trả phản hồi lỗi/rỗng.
-- Không tạo polling mới và không đổi chu kỳ polling hiện hành.
+3. Giữ modal cho cảnh báo/lỗi quan trọng:
+   - Lỗi dữ liệu, kết nối, quyền thao tác và trạng thái không hợp lệ.
+   - Phiên đăng nhập hết hạn.
+   - Đối thủ rời phòng hoặc yêu cầu đá tiếp hết hạn.
 
-### 4. `templates/room_detail.html`
-- Dừng toàn bộ polling phòng/chat khi rời trang.
-- Nhận diện phiên đăng nhập hết hạn hoặc API chuyển về `/login`; dừng poller và hiển thị thông báo thay vì tiếp tục gọi request lỗi.
-- Giữ nguyên AJAX cập nhật phòng, bảo vệ bản nháp tỷ số, chat JSON, modal thoát phòng và toàn bộ giao diện trước đó.
+4. Đồng bộ hai hộp xác nhận còn dùng `confirm()` của trình duyệt:
+   - Gửi tranh chấp.
+   - Rút tranh chấp và chấp nhận kết quả.
+   Hai thao tác này giờ dùng chung modal PES Arena.
 
-### 5. `app.py`
-- Chỉ tăng `APP_VERSION` thành `Collap_V1.13.3lv1.2` để tách cache CSS/JS đúng phiên bản.
+## File đã sửa
 
-## File cần chép đè
-- `app.py`
-- `static/js/pes_polling.js`
-- `static/js/session-timeout.js`
-- `templates/base.html`
-- `templates/room_detail.html`
+- `app.py` khoảng dòng 65: tăng APP_VERSION thành Collap_V1.13.3lv1.3.
+- `templates/room_detail.html` khoảng dòng 103–125, 170–255, 460–475, 666–835 và 1230–1395:
+  lọc thông báo trạng thái thường, chuẩn hóa nội dung thoát phòng và đồng bộ hộp xác nhận tranh chấp.
 
-Không cần chạy SQL Supabase.
+## Không thay đổi
+
+- Không sửa RP hoặc mức phạt 20 RP.
+- Không sửa polling, chat, lời mời, cache hoặc API trạng thái phòng.
+- Không sửa lịch sử đấu và lịch sử bỏ cuộc.
+- Không sửa Supabase và không cần chạy SQL.

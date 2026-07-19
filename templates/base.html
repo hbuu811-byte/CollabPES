@@ -336,27 +336,44 @@ function roomPageNeedsInvitePolling() {
 
 function checkPendingInvites(signal) {
     if (document.hidden || !roomPageNeedsInvitePolling()) return Promise.resolve();
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('api_pending_invites') }}", {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal
-        }).then(function (res) {
-            if (res.status === 204) return {invites: []};
-            if (res.status === 401 || res.status === 403) {
-                stopInvitePolling();
-                return {invites: []};
-            }
-            if (!res.ok) return {invites: []};
-            return res.json();
-        });
+    const options = {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
     };
     const requestPromise = window.PESNet
-        ? PESNet.runLocked("pending-invites-request", task, signal)
-        : task(signal);
+        ? PESNet.fetchJson(
+            "{{ url_for('api_pending_invites') }}",
+            options,
+            10000,
+            "pending-invites-request",
+            signal
+        )
+        : fetch("{{ url_for('api_pending_invites') }}", Object.assign({}, options, {signal: signal}))
+            .then(function (res) {
+                return res.text().then(function (text) {
+                    let data = null;
+                    try { data = text ? JSON.parse(text) : null; } catch (error) {}
+                    return {
+                        ok: res.ok,
+                        status: res.status,
+                        redirected: Boolean(res.redirected),
+                        url: res.url || "",
+                        contentType: res.headers.get("content-type") || "",
+                        data: data
+                    };
+                });
+            });
     return requestPromise
-    .then(function (data) {
+    .then(function (result) {
+        if (!result) return;
+        if (result.status === 401 || result.status === 403 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
+            stopInvitePolling();
+            return;
+        }
+        if (!result.ok && result.status !== 204) return;
+        const data = result.status === 204 ? {invites: []} : (result.data || {invites: []});
         if (!data.invites || data.invites.length === 0) {
             const backdrop = document.getElementById("inviteModalBackdrop");
             if (backdrop) backdrop.style.display = "none";

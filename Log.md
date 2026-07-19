@@ -1,114 +1,83 @@
-# Log — Collap_V1.13.3lv2.1
+# Log — Collap_V1.13.3lv2.2
 
-- Ngày giờ: 19/07/2026 01:29, múi giờ Asia/Bangkok.
-- Nhánh nền: `Collap_V1.13.3lv2` — cùng nội dung kỹ thuật với `Collap_V1.13.3l`.
+- Ngày giờ: 19/07/2026 01:43, múi giờ Asia/Bangkok.
+- Nhánh nền: `Collap_V1.13.3lv2.1`.
 - Loại gói: bản vá, chỉ gồm các file cần chép đè.
 - SQL Supabase: không cần.
+- Không sửa RP, lịch sử trận, phạt bỏ cuộc, modal phòng, công thức Rank hoặc dữ liệu Supabase.
 
-## Mục tiêu kiểm tra
+## Mục tiêu
 
-1. Sửa API chat phát sinh 403 trong luồng sử dụng bình thường.
-2. Chỉ giữ một bộ polling trạng thái phòng.
-3. Dừng polling/request cũ khi chuyển trang hoặc rời phòng.
-4. Không reload toàn bộ trang phòng khi trạng thái thay đổi.
-5. Ngăn `/api/invites/pending` chạy đồng thời từ nhiều script.
-6. Thêm khóa request đang chạy cho trạng thái phòng, chat và lời mời.
-7. Tăng cache cho CSS, JavaScript, ảnh Rank và ảnh giao diện.
+Hoàn thiện các phần request/polling còn có nguy cơ treo hoặc tiếp tục chạy sau khi người dùng rời trang, đồng thời giảm giật phần chat khi trạng thái phòng thay đổi.
 
-## Lỗi phát hiện và nội dung đã sửa
+## Nội dung đã sửa
 
-### 1. Fragment trạng thái phòng có thể trả lỗi 500
+### 1. Request không còn giữ khóa vô thời hạn
 
-- `templates/_room_live_content.html` thiếu import macro `player_avatar` khi được API `/state` render trực tiếp.
-- Đã import macro ngay trong fragment.
-- `app.py` giữ lớp bảo vệ: lỗi render tạm thời trả JSON 503 thay vì làm sập trang phòng.
+- `/api/room/<room-id>/state`: thời gian chờ tối đa 12 giây.
+- `/api/room/<room-id>/chat`: thời gian chờ tối đa 10 giây.
+- Gửi chat phòng: thời gian chờ tối đa 12 giây.
+- `/api/invites/pending`: thời gian chờ tối đa 10 giây.
+- Khi request quá thời gian, request bị hủy và khóa được giải phóng để chu kỳ sau thử lại.
+- Không tạo request mới khi request cùng khóa vẫn đang chạy.
 
-### 2. Chat có thể chạy chồng và phát sinh 403 giả sau khi rời phòng
+### 2. Dừng toàn bộ request cũ khi rời trang
 
-- Chỉ giữ một poller chat có khóa `room-chat:<room_id>`.
-- Thêm khóa riêng cho gửi tin nhắn.
-- Gửi chat bằng AJAX, không reload cả trang.
-- Khi người chơi vừa rời phòng hoặc Admin vừa tắt chat, API GET trả lệnh `stop_polling` bình thường, không trả 403 giả.
-- Truy cập gửi tin nhắn trái phép thật sự vẫn bị chặn ở backend.
-- Dừng và hủy request chat trước khi rời phòng/chuyển trang.
+- `pes_polling.js` bổ sung lớp dọn chung cho `pagehide` và `beforeunload`.
+- Khi trang thực sự rời đi: dừng toàn bộ poller và hủy toàn bộ request còn chạy.
+- Khi trang được giữ trong BFCache: chỉ hủy request đang chạy, giữ poller ở trạng thái có thể tiếp tục khi quay lại.
+- Không thay đổi logic riêng của phòng đấu đã có trong bản `lv2.1`.
 
-### 3. Polling trạng thái phòng
+### 3. Xử lý phiên đăng nhập hết hạn
 
-- Chỉ còn một điểm gọi `api_room_state` trong toàn bộ template/script.
-- Dùng một timer `roomStateTimer`, một cờ in-flight và một `AbortController`.
-- Không dùng `location.reload()` hoặc `window.location.reload()` trong phòng.
-- API chỉ trả fragment HTML động; client chỉ thay `#roomLiveContent`.
-- Không tạm dừng polling chỉ vì người dùng đang gõ chat; chỉ bảo vệ form tỷ số chưa gửi.
+- State, chat và lời mời nhận biết trường hợp API bị chuyển hướng sang trang đăng nhập.
+- Không cố phân tích HTML đăng nhập thành JSON.
+- State dừng realtime và đưa người dùng về trang đăng nhập.
+- Chat/lời mời dừng poller thay vì tiếp tục gọi ngầm.
+- HTML lỗi 5xx không bị hiểu nhầm thành hết phiên; poller giữ giao diện và thử lại ở chu kỳ sau.
 
-### 4. Polling lời mời
+### 4. Giữ nguyên khung chat khi phòng cập nhật trạng thái
 
-- Toàn bộ giao diện chỉ còn một điểm gọi `/api/invites/pending`.
-- Poller được đăng ký bằng khóa `pending-invites`; tạo lại sẽ dừng poller cũ.
-- Request được khóa bằng `pending-invites-request`.
-- Phòng đủ hai người, đang thi đấu hoặc chờ xác nhận sẽ dừng kiểm tra lời mời.
-- Tab ẩn không kiểm tra lời mời.
+- Khi đội, tỷ số, nút hoặc lịch sử thay đổi, vùng phòng vẫn cập nhật bằng fragment như bản trước.
+- Riêng DOM của chat phòng được giữ nguyên.
+- Không làm mất nội dung người dùng đang gõ.
+- Không làm mất vị trí cuộn chat.
+- Không tạo thêm request chat chỉ vì đội hoặc nút trong phòng thay đổi.
+- Chỉ khởi động/dừng chat nếu khung chat thực sự xuất hiện hoặc bị loại khỏi giao diện.
 
-### 5. Dừng polling cũ
+### 5. Cache CSS trên các trang độc lập
 
-- Dừng timer/request phòng khi gửi form chuyển trang.
-- Dừng ngay khi xác nhận bỏ cuộc hoặc rời phòng.
-- Dừng ngay khi bấm liên kết nội bộ, không đợi tới lúc trang cũ bị hủy.
-- Xử lý `pagehide`, `beforeunload` và BFCache `pageshow`.
-- `pes_polling.js` gỡ toàn bộ event listener khi poller dừng, tránh tích lũy listener sau nhiều lần cấu hình lại.
-
-### 6. Cache file tĩnh
-
-- Giữ cấu hình cache một năm, `immutable`, cho toàn bộ `/static/` trong `vercel.json` và Flask của nhánh nền.
-- CSS và JavaScript đã có `?v={{ APP_VERSION }}`.
-- Bổ sung version cho ảnh Rank, ảnh VS, ảnh podium, QR và ảnh giao diện đăng nhập.
-- Khi nâng phiên bản, trình duyệt tải tài nguyên mới; khi không đổi, trình duyệt dùng lại cache.
+- `public_ranking.html` dùng `style.css?v={{ APP_VERSION }}`.
+- `maintenance.html` bỏ số phiên bản cũ cố định và dùng `APP_VERSION` hiện tại.
+- Giữ nguyên cache một năm `immutable` đã có ở Flask/Vercel.
 
 ## File đã chỉnh sửa
 
-- `app.py`
-  - Khoảng dòng 65: tăng phiên bản.
-  - Khoảng dòng 3750–3811: API trạng thái phòng trả fragment động và chống lỗi render.
-  - Khoảng dòng 4173–4275: xử lý API chat, phản hồi dừng polling và gửi chat AJAX.
-- `static/js/pes_polling.js`
-  - Khoảng dòng 1–275: registry poller/request, khóa in-flight, AbortController, gỡ listener và dừng poller cũ.
-- `templates/base.html`
-  - Khoảng dòng 9–23: version CSS/JS.
-  - Khoảng dòng 337–373: khóa request lời mời.
-  - Khoảng dòng 849–881: một poller lời mời và dừng poller cũ.
-- `templates/room_detail.html`
-  - Khoảng dòng 138–500: một polling trạng thái, cập nhật fragment, dừng request khi rời trang.
-  - Khoảng dòng 500–708: một polling chat, khóa tải/gửi chat và gửi AJAX.
-  - Khoảng dòng 844–905: dừng realtime trước khi xác nhận thoát.
-- `templates/_room_live_content.html`
-  - Khoảng dòng 1–288: import macro avatar, version ảnh Rank/VS và form chat động.
-- `templates/_rank_macros.html`
-  - Khoảng dòng 1–8: version ảnh Rank dùng chung.
-- `static/style.css`
-  - Khoảng dòng 419 và 1237: version ảnh nền giao diện đăng nhập.
-- `templates/guide.html`
-  - Khoảng dòng 13 và 90: version QR và thẻ Rank.
-- `templates/public_ranking.html`
-  - Khoảng dòng 55: version ảnh podium.
-- `templates/ranking.html`
-  - Khoảng dòng 16: version ảnh podium.
+| File | Vị trí gần đúng | Nội dung |
+|---|---:|---|
+| `app.py` | khoảng dòng 65 | tăng phiên bản thành `Collap_V1.13.3lv2.2` |
+| `static/js/pes_polling.js` | khoảng dòng 220–305 | metadata response, timeout cleanup, nhận biết HTML redirect, dọn poller/request khi rời trang |
+| `templates/room_detail.html` | khoảng dòng 318–465, 618–760 | giữ DOM chat; timeout và xử lý hết phiên cho state/chat/gửi chat |
+| `templates/base.html` | khoảng dòng 337–395 | timeout, khóa và xử lý hết phiên cho lời mời |
+| `templates/public_ranking.html` | khoảng dòng 10 | thêm phiên bản URL CSS |
+| `templates/maintenance.html` | khoảng dòng 7 | thay version CSS cố định bằng `APP_VERSION` |
 
 ## Kiểm tra kỹ thuật
 
 - `python -m py_compile app.py modules/*.py`: đạt.
 - Parse 25 template Jinja: đạt.
-- Render toàn bộ `room_detail.html` với fragment động: đạt.
-- Kiểm tra cú pháp toàn bộ JavaScript nội tuyến sau render: đạt.
+- Render thử `room_detail.html`, `public_ranking.html`, `maintenance.html`: đạt.
+- Kiểm tra cú pháp toàn bộ JavaScript nội tuyến của trang phòng: đạt.
 - `node --check static/js/pes_polling.js`: đạt.
-- `node --check static/js/session-timeout.js`: đạt.
-- Kiểm tra khóa request: ba lệnh cùng khóa chỉ chạy task một lần.
-- Kiểm tra thay poller cùng khóa: listener cũ được gỡ, không tích lũy.
-- Số route decorator trước/sau: giữ nguyên 100; không thêm hoặc mất route.
-- Số điểm gọi trạng thái phòng: 1.
-- Số điểm gọi chat phòng: 1.
-- Số điểm gọi lời mời chờ: 1.
+- Ba request cùng khóa chỉ chạy task một lần: đạt.
+- Response HTML 200 được nhận biết là redirect đăng nhập: đạt.
+- Response HTML 500 không bị nhận nhầm là redirect đăng nhập: đạt.
+- Điểm gọi state trong giao diện: 1.
+- Điểm gọi lời mời trong giao diện: 1 hàm, có nhánh fallback khi thiếu `PESNet`.
+- Điểm gọi chat phòng: 1 hàm, có nhánh fallback khi thiếu `PESNet`.
 - `location.reload()` trong `room_detail.html`: 0.
-- Ảnh tĩnh trong template chưa có version: 0.
+- Link static trong template thiếu `?v=`: 0.
 
 ## Cài đặt
 
-Chép đè các file trong gói này lên nhánh `Collap_V1.13.3lv2`. Không áp dụng lên hai nhánh song song khác nếu chưa đối chiếu riêng.
+Chép đè các file trong gói này lên nhánh `Collap_V1.13.3lv2.1`. Không áp dụng sang hai nhánh song song khác nếu chưa đối chiếu riêng.

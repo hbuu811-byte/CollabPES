@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="panel">
+  <h1>🔎 Kiểm tra file Backup</h1>
+  <p class="notice success">File hợp lệ. Đây mới là bước kiểm tra, chưa có dữ liệu nào được ghi vào Supabase.</p>
+  <div class="stats-grid">
+    <div class="stat-card"><strong>Phiên bản nguồn</strong><span>{{ metadata.get('app_version', 'Không rõ') }}</span></div>
+    <div class="stat-card"><strong>Thời điểm sao lưu</strong><span>{{ metadata.get('created_at', 'Không rõ') }}</span></div>
+    <div class="stat-card"><strong>Môi trường nguồn</strong><span>{{ metadata.get('environment', 'Không rõ') }}</span></div>
+    <div class="stat-card"><strong>Tổng bản ghi</strong><span>{{ total_rows }}</span></div>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Bảng</th><th>Số bản ghi</th></tr></thead>
+      <tbody>{% for name, count in counts.items() %}<tr><td>{{ name }}</td><td>{{ count }}</td></tr>{% endfor %}</tbody>
+    </table>
+  </div>
+  {% if warnings %}<p class="notice warning">Backup nguồn có {{ warnings|length }} cảnh báo. Hãy xem xét trước khi khôi phục.</p>{% endif %}
+  <p><a class="btn gold" href="{{ url_for('admin') }}?tab=backup">Quay lại Backup dữ liệu</a></p>
+  <p class="small">Vì lý do an toàn, trình duyệt không giữ lại file đã chọn. Khi khôi phục, hãy chọn lại đúng file này.</p>
+</div>
+{% endblock %}

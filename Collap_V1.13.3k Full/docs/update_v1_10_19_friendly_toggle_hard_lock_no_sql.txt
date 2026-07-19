@@ -1,0 +1,33 @@
+V1.10.19_FRIENDLY_TOGGLE_HARD_LOCK_NO_SQL
+
+Mục tiêu:
+- Sửa lỗi Admin tắt trận Giao hữu nhưng người chơi vẫn thấy/bấm được Giao hữu trong phòng đấu.
+
+Phạm vi thay đổi:
+- app.py
+- templates/admin.html
+- templates/room_detail.html
+- static/style.css
+- README.md
+- Log.md
+
+Chi tiết:
+1. Admin toggle:
+   - Thay công tắc checkbox bằng 2 nút rõ ràng: Bật giao hữu / Tắt giao hữu.
+   - Trạng thái hiện tại hiển thị rõ ĐANG BẬT hoặc ĐANG TẮT.
+
+2. Room detail:
+   - Trang phòng đấu đọc trạng thái Giao hữu bằng force=True để không bị cache trạng thái cũ.
+   - Nếu Giao hữu tắt, card Giao hữu bị khóa.
+   - Nếu đang trong trận Giao hữu cũ, nút Tự Random Tiếp bị khóa; vẫn cho Kết thúc giao hữu để thoát trạng thái cũ.
+
+3. Backend:
+   - Route quay đội Giao hữu vẫn hard-block khi Admin đã tắt.
+   - Route reroll Giao hữu vẫn hard-block khi Admin đã tắt.
+
+SQL:
+- Không cần SQL.
+
+Rollback:
+- Rollback Vercel về deployment trước.
+- Không cần rollback Supabase.

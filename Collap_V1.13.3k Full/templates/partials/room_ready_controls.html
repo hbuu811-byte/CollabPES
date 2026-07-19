@@ -1,0 +1,16 @@
+<div id="roomReadyControls"><div class="room-guest-control-actions">
+            {% if not room.guest_ready %}
+            <form method="post" action="{{ url_for('room_guest_ready', room_id=room.id) }}" hx-post="{{ url_for('room_guest_ready', room_id=room.id) }}" hx-target="#roomReadyControls" hx-swap="outerHTML" hx-disabled-elt="button">
+                <button class="btn green" type="submit">Sẵn sàng</button>
+            </form>
+            {% else %}
+            <form method="post" action="{{ url_for('room_guest_unready', room_id=room.id) }}" hx-post="{{ url_for('room_guest_unready', room_id=room.id) }}" hx-target="#roomReadyControls" hx-swap="outerHTML" hx-disabled-elt="button">
+                <button class="btn gray" type="submit">Hủy sẵn sàng</button>
+            </form>
+            {% endif %}
+            <form method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}" onsubmit="return confirm('Bạn đã chấp nhận vào phòng. Thoát lúc này được tính là Bỏ Cuộc và bị trừ 20 RP. Tiếp tục?');">
+                <button class="btn red" type="submit">Thoát phòng</button>
+            </form>
+        </div>
+        <p class="small danger-text">Thoát phòng sau khi đã chấp nhận lời mời được tính là bỏ cuộc và bị trừ 20 RP.</p>
+</div>

@@ -1,0 +1,27 @@
+V1.10.32_HISTORY_SCORE_PERSPECTIVE_HOTFIX_NO_SQL
+
+Mục tiêu:
+- Sửa lỗi lịch sử/hồ sơ hiển thị tỷ số không khớp với nhãn THẮNG/THUA.
+
+Nguyên nhân:
+- `score_display` đang hiển thị theo thứ tự database `score1 - score2`.
+- Nhưng danh sách lịch sử lại hiển thị người đang xem ở bên trái và tính nhãn THẮNG/THUA theo người đó.
+- Khi người đang xem là player2, tỷ số có thể nhìn ngược, ví dụ thấy 6 - 2 nhưng nhãn lại là THUA.
+
+Thay đổi:
+- Trong `decorate_match_for_view(match, viewer_id)`, nếu có viewer_id và trận thuộc về viewer, `score_display` được đổi sang góc nhìn của viewer: `my_score - opponent_score`.
+- Nhãn THẮNG/THUA/HÒA và tỷ số giờ khớp nhau.
+- Cập nhật APP_VERSION lên V1.10.32.
+
+File thay đổi:
+- app.py
+- README.md
+- Log.md
+- docs/update_v1_10_32_history_score_perspective_hotfix_no_sql.txt
+
+SQL:
+- Không cần SQL.
+- Không thay đổi database.
+
+Rollback:
+- Rollback Vercel về V1.10.31 nếu cần.

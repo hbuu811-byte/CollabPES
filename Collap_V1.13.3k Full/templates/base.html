@@ -1,0 +1,867 @@
+{% from "_rank_macros.html" import rank_badge %}
+{% from "_avatar_macros.html" import player_avatar %}
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <title>{{ APP_NAME }}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=1.13.13">
+    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v=1.13.13" defer></script>
+    {% if current_user and not (auth_only|default(false)) %}
+    <script>
+    window.PES_SESSION_CONFIG = {
+        enabled: true,
+        idleTimeoutSeconds: 3600,
+        warningSeconds: 300,
+        activitySyncSeconds: 300,
+        activityUrl: {{ url_for('api_session_activity')|tojson }},
+        timeoutCheckUrl: {{ url_for('api_session_timeout_check')|tojson }},
+        logoutUrl: {{ url_for('logout')|tojson }}
+    };
+    </script>
+    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v=1.13.13-v4.9" defer></script>
+    {% endif %}
+
+<script>
+(function initTheme(){
+    const saved = localStorage.getItem('pes2026-theme');
+    const theme = saved || 'dark';
+    document.documentElement.dataset.theme = theme;
+})();
+function toggleTheme(){
+    const next = document.documentElement.dataset.theme === 'light' ? 'dark' : 'light';
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem('pes2026-theme', next);
+}
+</script>
+</head>
+<body>
+{% if is_test_mode %}<div style="position:fixed;z-index:99999;left:0;right:0;top:0;text-align:center;background:#ffcc00;color:#111;font-weight:800;padding:6px">🧪 PES ARENA TEST MODE — KHÔNG DÙNG DATABASE PRODUCTION</div><div style="height:34px"></div>{% endif %}
+{% if maintenance_status and maintenance_status.countdown %}
+<div class="server-transition-banner {{ 'server-closing' if maintenance_status.countdown.kind == 'close' else 'server-opening' }}">
+    <strong>{{ '⚠️' if maintenance_status.countdown.kind == 'close' else '✅' }} {{ maintenance_status.countdown.label }}</strong>
+    <span data-maintenance-countdown="{{ maintenance_status.countdown.target_iso }}">--:--</span>
+</div>
+{% endif %}
+{% if current_user and not (auth_only|default(false)) %}
+<div class="layout player-app-shell">
+    <aside class="sidebar player-sidebar">
+        <div class="brand-lockup">
+            <div class="brand-wordmark" aria-label="PES Arena">PES Arena <small>– Bản Lĩnh Sân Cỏ</small></div>
+            <div class="app-version">{{ APP_VERSION }}</div>
+        </div>
+
+        <nav class="nav player-nav">
+            <a class="{{ 'active' if request.endpoint == 'ranking' else '' }}" href="{{ url_for('ranking') }}"><span>🏆</span> BXH</a>
+            <a class="{{ 'active' if request.endpoint in ['rooms', 'room_detail'] else '' }}" href="#" onclick="event.preventDefault(); document.getElementById('quickCreateRoomForm').submit();"><span>🎮</span> Phòng đấu</a>
+            <a class="{{ 'active' if request.endpoint == 'matches' else '' }}" href="{{ url_for('matches') }}"><span>📜</span> Lịch sử</a>
+            <a class="{{ 'active' if request.endpoint == 'guide' else '' }}" href="{{ url_for('guide') }}"><span>📘</span> Hướng dẫn</a>
+            {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}<a class="{{ 'active' if request.endpoint == 'admin' else '' }}" href="{{ url_for('admin') }}"><span>⚙️</span> Admin</a>{% endif %}
+            <a class="logout" href="{{ url_for('logout') }}"><span>↪</span> Đăng xuất</a>
+        </nav>
+        <form id="quickCreateRoomForm" method="post" action="{{ url_for('create_open_room') }}" hidden></form>
+
+    </aside>
+
+    <main class="main player-main">
+        <header class="player-topbar">
+            <button class="sidebar-menu-button" type="button" onclick="document.body.classList.toggle('sidebar-open')">☰</button>
+            {% set page_titles = {'dashboard':'Dashboard','ranking':'Bảng xếp hạng','players':'Players','guide':'Hướng dẫn bắt đầu','matches':'Lịch sử trận đấu','profile':'Hồ sơ cá nhân','change_password':'Đổi mật khẩu','admin':'Quản trị hệ thống','rooms':'Phòng đấu','room_detail':'Phòng đấu'} %}
+            <div class="topbar-copy"><strong>{{ page_titles.get(request.endpoint, APP_NAME) }}</strong><small>Chào {{ current_user.display_name }}, chúc bạn có một ngày thi đấu tốt!</small></div>
+            <div id="adminAnnouncementMount" class="topbar-announcement-mount">
+                {% if active_announcement and system_features.announcements_enabled %}
+                <div class="admin-announcement" data-announcement-id="{{ active_announcement.id }}" data-announcement-message="{{ active_announcement.message|e }}">
+                    <div class="admin-announcement-label">📢 {{ active_announcement.title }}</div>
+                    <div class="admin-announcement-marquee" aria-label="{{ active_announcement.message }}">
+                        <div class="admin-announcement-track">
+                            <span>{{ active_announcement.message }}</span>
+                            <span aria-hidden="true">{{ active_announcement.message }}</span>
+                        </div>
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+            <div class="topbar-actions">
+                <a id="activeRoomTopbarLink"
+                   class="active-room-topbar-link{% if not active_room or request.endpoint == 'room_detail' %} is-hidden{% endif %}"
+                   href="{% if active_room %}{{ url_for('room_detail', room_id=active_room.id) }}{% else %}#{% endif %}"
+                   title="Trở lại phòng đấu">
+                    <span class="active-room-topbar-icon">🎮</span>
+                    <span class="active-room-topbar-copy"><strong>Trở lại phòng đấu</strong><small>Bạn đang ở trong 1 phòng đấu</small></span>
+                </a>
+                <a class="topbar-icon" href="{{ url_for('players') }}" title="Tìm người chơi">⌕</a>
+                <button id="themeToggle" class="topbar-icon theme-toggle" type="button" onclick="toggleTheme()" title="Chuyển giao diện sáng/tối" aria-label="Chuyển giao diện sáng/tối"><span class="theme-sun">☀</span><span class="theme-moon">☾</span></button>
+                <div class="topbar-notification-wrap">
+                    <button id="notificationBellButton" class="topbar-icon notification-bell" type="button" onclick="toggleUserNotifications(event)" title="Thông báo" aria-label="Mở thông báo" aria-expanded="false">🔔{% if unread_notification_count %}<b>{{ unread_notification_count }}</b>{% endif %}</button>
+                    <div id="userNotificationDropdown" class="user-notification-dropdown" hidden>
+                        <div class="notification-dropdown-head">
+                            <strong>Thông báo</strong>
+                            <span>{{ unread_notification_count or 0 }} chưa đọc</span>
+                        </div>
+                        {% if bell_notifications %}
+                            <div class="notification-dropdown-list">
+                            {% for notice in bell_notifications %}
+                                <article class="user-notification-card">
+                                    <div class="user-notification-content">
+                                        <strong>{{ notice.title }}</strong>
+                                        <p>{{ notice.message }}</p>
+                                        <span class="small">{{ format_vn_datetime(notice.created_at) }}</span>
+                                    </div>
+                                    <div class="user-notification-actions">
+                                        <form method="post" action="{{ url_for('mark_notification_read', notification_id=notice.id) }}">
+                                            {% if notice.link_url %}<input type="hidden" name="next_url" value="{{ notice.link_url }}">{% endif %}
+                                            <button class="btn small green" type="submit">{{ 'Xem' if notice.link_url else 'Đã đọc' }}</button>
+                                        </form>
+                                        {% if notice.link_url %}
+                                        <form method="post" action="{{ url_for('mark_notification_read', notification_id=notice.id) }}">
+                                            <button class="btn small gray" type="submit">Bỏ qua</button>
+                                        </form>
+                                        {% endif %}
+                                    </div>
+                                </article>
+                            {% endfor %}
+                            </div>
+                        {% else %}
+                            <p class="notification-empty">Chưa có thông báo.</p>
+                        {% endif %}
+                        <div class="notification-dropdown-footer">
+                            <a href="{{ url_for('notifications') }}">Xem tất cả thông báo cũ →</a>
+                        </div>
+                    </div>
+                </div>
+                <a class="topbar-profile" href="{{ url_for('profile', user_id=current_user.id) }}">{{ player_avatar(current_user, size='sm') }}<span><strong>{{ current_user.display_name }}</strong><small><i></i> Online</small></span><em>⌄</em></a>
+            </div>
+        </header>
+        {% if request.endpoint == "players" %}
+        <div class="app-status-row">
+            <div class="online-floating-badge" title="Người đang online"><span class="online-floating-dot"></span><span id="onlineFloatingCount">0</span><span class="online-floating-text">online</span></div>
+        </div>
+        {% endif %}
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}
+                <div class="alert {{ category }}">{{ message }}</div>
+            {% endfor %}
+        {% endwith %}
+
+
+        {% if incoming_invites %}
+        <div class="invite-banner">
+            <h3>🔔 Bạn có lời mời thi đấu hạng</h3>
+            {% for inv in incoming_invites %}
+            <div class="invite-item">
+                <div class="invite-player-inline">
+                    {{ player_avatar(name=inv.from_name, avatar_url=inv.from_avatar_url, achievement=inv.from_achievement, size='sm') }}
+                    <div>
+                        <strong>{{ inv.from_name }}</strong> mời bạn thi đấu<br>
+                        <span class="small">Rank: {{ inv.from_rank }} • Điểm: {{ inv.from_points }} • Tier: {{ inv.tier }}</span>
+                    </div>
+                </div>
+                <form method="post" action="{{ url_for('respond_invite', invite_id=inv.id) }}">
+                    <button class="btn green" name="action" value="accept" type="submit">Chấp nhận</button>
+                    <button class="btn red" name="action" value="reject" type="submit">Từ chối</button>
+                </form>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+</div>
+{% else %}
+    {% block auth %}{% endblock %}
+{% endif %}
+
+
+{% if current_user and not (auth_only|default(false)) %}
+<div id="inviteModalBackdrop" class="invite-modal-backdrop">
+    <div class="invite-modal">
+        <h2>🔔 Có người mời bạn thi đấu hạng</h2>
+        <div id="inviteModalContent"></div>
+    </div>
+</div>
+
+
+{% if request.endpoint != "dashboard" %}
+{% if system_features.lobby_chat_enabled %}<button id="chatToggleButton" class="chat-floating-toggle" type="button" onclick="toggleLobbyChat()">
+    💬 <span id="chatToggleText">Chat sảnh</span>
+    <span id="chatUnreadBadge" class="chat-unread-badge" hidden>0</span>
+</button>
+
+<div id="bottomLobbyChat" class="bottom-lobby-chat chat-collapsed" hidden>
+    <button class="bottom-chat-close" type="button" onclick="toggleLobbyChat()" aria-label="Đóng khung chat" title="Đóng">×</button>
+    {% if (current_user.role == "admin" or current_user.admin_level in ["owner", "admin"]) %}
+    <div class="admin-quick-announcement">
+        <div class="admin-quick-title">📢 Gửi thông báo Admin</div>
+        <div class="admin-quick-row">
+            <input id="adminAnnouncementTitle" maxlength="40" value="THÔNG BÁO" placeholder="Tiêu đề">
+            <input id="adminAnnouncementMessage" maxlength="220" placeholder="Nhập thông báo chạy ngang cho toàn app...">
+            <button class="btn gold" type="button" onclick="sendAdminAnnouncement()">Gửi</button>
+        </div>
+        <div id="adminAnnouncementStatus" class="bottom-chat-status"></div>
+    </div>
+    {% endif %}
+
+    <div class="bottom-chat-header">
+        <strong>💬 Chat sảnh</strong>
+    </div>
+
+    <div id="bottomGlobalChatBox" class="bottom-chat-messages">
+        <div class="bottom-chat-empty">Chưa có tin nhắn mới trong sảnh.</div>
+    </div>
+
+    <div class="bottom-chat-form">
+        <input id="bottomChatInput" maxlength="200" placeholder="Chat với anh em trong sảnh..." autocomplete="off">
+        <button class="btn green" type="button" onclick="sendBottomChat()">Gửi</button>
+    </div>
+    <div id="bottomChatStatus" class="bottom-chat-status"></div>
+</div>
+{% endif %}
+{% endif %}
+
+<script>
+function postHeartbeat() {
+    return fetch("{{ url_for('heartbeat') }}", {
+        method: "POST",
+        credentials: "same-origin"
+    }).catch(function () {});
+}
+
+let lastInviteId = null;
+let inviteCountdownTimer = null;
+
+function renderInvitePopup(invite) {
+    const backdrop = document.getElementById("inviteModalBackdrop");
+    const content = document.getElementById("inviteModalContent");
+    if (!backdrop || !content || !invite) return;
+
+    lastInviteId = invite.id;
+
+    content.innerHTML = `
+        <div class="invite-modal-player">
+            <div class="invite-modal-person">
+                ${renderAvatarHtml(invite.from_avatar_url, invite.from_name, 'lg', invite.from_achievement)}
+                <p><strong>${escapeHtml(invite.from_name)}</strong> đang mời bạn thi đấu.</p>
+            </div>
+            <p class="small">Rank: ${escapeHtml(invite.from_rank)} • Điểm: ${escapeHtml(String(invite.from_points))} • Tier: ${escapeHtml(invite.tier)}</p>
+            <p class="small">Lời mời hết hạn sau <strong id="inviteCountdown">${escapeHtml(String(invite.expires_in_seconds || 0))}</strong> giây.</p>
+        </div>
+        <div class="invite-modal-actions">
+            <form method="post" action="${invite.accept_url}">
+                <button class="btn green" name="action" value="accept" type="submit">Chấp nhận</button>
+            </form>
+            <form method="post" action="${invite.reject_url}">
+                <button class="btn red" name="action" value="reject" type="submit">Từ chối</button>
+            </form>
+        </div>
+    `;
+
+    backdrop.style.display = "flex";
+
+    if (inviteCountdownTimer) clearInterval(inviteCountdownTimer);
+    let seconds = Number(invite.expires_in_seconds || 0);
+    const countdown = document.getElementById("inviteCountdown");
+    inviteCountdownTimer = setInterval(function () {
+        seconds = Math.max(0, seconds - 1);
+        if (countdown) countdown.textContent = String(seconds);
+        if (seconds <= 0) {
+            clearInterval(inviteCountdownTimer);
+            inviteCountdownTimer = null;
+            backdrop.style.display = "none";
+            lastInviteId = null;
+        }
+    }, 1000);
+}
+
+
+let lastKnownActiveRoomId = null;
+
+function checkActiveRoom() {
+    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+
+    return fetch("{{ url_for('api_active_room') }}", {
+        method: "GET",
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        const roomLink = document.getElementById("activeRoomTopbarLink");
+        if (!roomLink) return;
+
+        const currentPath = window.location.pathname;
+        const isRoomPage = currentPath.startsWith("/room/");
+
+        if (!data.ok || !data.has_room || !data.room_url || isRoomPage) {
+            roomLink.classList.add("is-hidden");
+            return;
+        }
+
+        lastKnownActiveRoomId = data.room_id;
+        roomLink.href = data.room_url;
+        roomLink.classList.remove("is-hidden");
+
+        if (data.auto_redirect === true) {
+            window.location.replace(data.room_url);
+        }
+    })
+    .catch(function () {});
+}
+
+
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) checkActiveRoom();
+});
+
+function checkPendingInvites() {
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_pending_invites') }}", {
+        method: "GET",
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
+        if (!data.invites || data.invites.length === 0) {
+            const backdrop = document.getElementById("inviteModalBackdrop");
+            if (backdrop) backdrop.style.display = "none";
+            if (inviteCountdownTimer) clearInterval(inviteCountdownTimer);
+            inviteCountdownTimer = null;
+            lastInviteId = null;
+            return;
+        }
+        const invite = data.invites[0];
+        if (invite.id !== lastInviteId) {
+            renderInvitePopup(invite);
+        }
+    })
+    .catch(function () {});
+}
+
+function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.innerText = text || "";
+    return div.innerHTML;
+}
+
+function renderAvatarHtml(url, name, size, achievement) {
+    const safeName = escapeHtml(name || "?");
+    const initial = escapeHtml((name || "?").trim().charAt(0).toUpperCase() || "?");
+    const sizeClass = escapeHtml(size || "sm");
+    const badge = achievement && achievement.icon
+        ? `<span class="avatar-achievement" title="${escapeHtml(achievement.name || 'Huy hiệu')}">${escapeHtml(achievement.icon)}</span>`
+        : "";
+    if (url) {
+        return `<span class="player-avatar avatar-${sizeClass}" title="${safeName}"><img src="${escapeHtml(url)}" alt="Ảnh đại diện ${safeName}" loading="lazy">${badge}</span>`;
+    }
+    return `<span class="player-avatar avatar-${sizeClass}" title="${safeName}"><span>${initial}</span>${badge}</span>`;
+}
+
+function renderBottomChat(messages) {
+    const box = document.getElementById("bottomGlobalChatBox");
+    if (!box) return;
+
+    box.innerHTML = messages.map(function (msg) {
+        const adminBadge = ["owner", "admin"].includes(msg.user_role) ? '<span class="badge gold">ADMIN</span>' : '';
+        const adminClass = ["owner", "admin"].includes(msg.user_role) ? 'admin' : '';
+        return `
+            <div class="bottom-chat-message">
+                <div class="chat-message-head">
+                    ${renderAvatarHtml(msg.user_avatar_url, msg.user_name, 'xs', msg.user_achievement)}
+                    <span class="chat-name ${adminClass}">${escapeHtml(msg.user_name)}</span>
+                </div>
+                ${adminBadge}
+                <span class="bottom-chat-time">${escapeHtml(msg.created_at_display || msg.created_at)}</span>
+                <div class="bottom-chat-text">${escapeHtml(msg.message)}</div>
+            </div>
+        `;
+    }).join("");
+
+    box.scrollTop = box.scrollHeight;
+}
+
+let isLobbyChatOpen = false;
+let chatLastReadFallback = null;
+const chatLastReadStorageKey = "rankzone_chat_last_read_{{ current_user.id }}";
+
+function getChatLastRead() {
+    try {
+        return localStorage.getItem(chatLastReadStorageKey) || chatLastReadFallback;
+    } catch (error) {
+        return chatLastReadFallback;
+    }
+}
+
+function saveChatLastRead(timestamp) {
+    if (!timestamp) return;
+    chatLastReadFallback = timestamp;
+    try {
+        localStorage.setItem(chatLastReadStorageKey, timestamp);
+    } catch (error) {}
+}
+
+function setChatUnreadCount(count) {
+    const badge = document.getElementById("chatUnreadBadge");
+    if (!badge) return;
+
+    const safeCount = Math.max(0, Number(count) || 0);
+    if (safeCount <= 0) {
+        badge.hidden = true;
+        badge.innerText = "0";
+        return;
+    }
+
+    badge.hidden = false;
+    badge.innerText = safeCount > 99 ? "99+" : String(safeCount);
+}
+
+function newestChatTimestamp(messages) {
+    if (!Array.isArray(messages) || messages.length === 0) return null;
+    return messages[messages.length - 1].created_at || null;
+}
+
+function markLobbyChatRead(messages) {
+    const latestTimestamp = newestChatTimestamp(messages);
+    if (latestTimestamp) saveChatLastRead(latestTimestamp);
+    setChatUnreadCount(0);
+}
+
+
+function toggleUserNotifications(event) {
+    if (event) event.stopPropagation();
+    const panel = document.getElementById("userNotificationDropdown");
+    const button = document.getElementById("notificationBellButton");
+    if (!panel) return;
+    const willOpen = panel.hasAttribute("hidden");
+    panel.toggleAttribute("hidden", !willOpen);
+    if (button) button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+}
+
+document.addEventListener("click", function(event) {
+    const wrap = document.querySelector(".topbar-notification-wrap");
+    const panel = document.getElementById("userNotificationDropdown");
+    const button = document.getElementById("notificationBellButton");
+    if (!wrap || !panel || wrap.contains(event.target)) return;
+    panel.setAttribute("hidden", "");
+    if (button) button.setAttribute("aria-expanded", "false");
+});
+
+function toggleLobbyChat() {
+    const panel = document.getElementById("bottomLobbyChat");
+    const button = document.getElementById("chatToggleButton");
+    if (!panel) return;
+
+    const willOpen = panel.hidden || panel.classList.contains("chat-collapsed");
+    isLobbyChatOpen = willOpen;
+
+    panel.hidden = !willOpen;
+    panel.classList.toggle("chat-collapsed", !willOpen);
+
+    if (button) {
+        button.classList.toggle("chat-toggle-open", willOpen);
+        button.setAttribute("aria-expanded", willOpen ? "true" : "false");
+    }
+
+    if (willOpen) {
+        loadBottomChat();
+    } else {
+        checkLobbyChatUnread();
+    }
+}
+
+function loadBottomChatSmart() {
+    if (document.hidden || !isLobbyChatOpen) return Promise.resolve();
+    return loadBottomChat();
+}
+
+function checkAnnouncementSmart() {
+    if (document.hidden) return Promise.resolve();
+    return checkAnnouncement();
+}
+
+function updateOnlineFloatingCountSmart() {
+    if (document.hidden) return Promise.resolve();
+    return updateOnlineFloatingCount();
+}
+
+function loadBottomChat() {
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (!data.ok) return;
+            renderBottomChat(data.messages);
+            if (isLobbyChatOpen) markLobbyChatRead(data.messages);
+        })
+        .catch(function () {});
+}
+
+function checkLobbyChatUnread() {
+    if (document.hidden || isLobbyChatOpen) return Promise.resolve();
+
+    return fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (!data.ok || !Array.isArray(data.messages)) return;
+
+            const latestTimestamp = data.latest_created_at || newestChatTimestamp(data.messages);
+            const lastRead = getChatLastRead();
+
+            // Lần đầu dùng tính năng: lấy mốc hiện tại, không báo toàn bộ tin cũ.
+            if (!lastRead) {
+                if (latestTimestamp) saveChatLastRead(latestTimestamp);
+                setChatUnreadCount(0);
+                return;
+            }
+
+            const lastReadMs = Date.parse(lastRead);
+            if (!Number.isFinite(lastReadMs)) {
+                if (latestTimestamp) saveChatLastRead(latestTimestamp);
+                setChatUnreadCount(0);
+                return;
+            }
+
+            const unreadCount = data.messages.filter(function (msg) {
+                const createdMs = Date.parse(msg.created_at || "");
+                return !msg.is_own && Number.isFinite(createdMs) && createdMs > lastReadMs;
+            }).length;
+
+            setChatUnreadCount(unreadCount);
+        })
+        .catch(function () {});
+}
+
+function sendBottomChat() {
+    const input = document.getElementById("bottomChatInput");
+    const status = document.getElementById("bottomChatStatus");
+    const message = input ? input.value.trim() : "";
+
+    if (!message) return;
+
+    if (status) status.innerText = "Đang gửi...";
+    if (input) input.disabled = true;
+
+    fetch("{{ url_for('api_send_global_chat') }}", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({message: message})
+    })
+    .then(function (res) { return res.json().then(function (data) { return {ok: res.ok, data: data}; }); })
+    .then(function (result) {
+        if (!result.ok) {
+            if (status) status.innerText = result.data.error || "Không gửi được tin nhắn.";
+            return;
+        }
+        if (input) {
+            input.value = "";
+            input.disabled = false;
+            input.focus();
+        }
+        if (status) status.innerText = "";
+        loadBottomChat();
+    })
+    .catch(function () {
+        if (input) input.disabled = false;
+        if (status) status.innerText = "Lỗi kết nối.";
+    });
+}
+
+const bottomChatInput = document.getElementById("bottomChatInput");
+if (bottomChatInput) {
+    bottomChatInput.addEventListener("keydown", function (event) {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            sendBottomChat();
+        }
+    });
+}
+
+let lastAnnouncementId = null;
+let announcementAnimation = null;
+let announcementResizeTimer = null;
+let announcementRotateTimer = null;
+let announcementItems = [];
+let announcementIndex = 0;
+let overlayQueueRunning = false;
+
+function stopAnnouncementMarquee() {
+    if (announcementAnimation) {
+        announcementAnimation.cancel();
+        announcementAnimation = null;
+    }
+}
+
+function startAnnouncementMarquee() {
+    const marquee = document.querySelector("#adminAnnouncementMount .admin-announcement-marquee");
+    const track = marquee ? marquee.querySelector(".admin-announcement-track") : null;
+    const firstCopy = track ? track.querySelector("span") : null;
+    if (!marquee || !track || !firstCopy) return;
+
+    stopAnnouncementMarquee();
+    track.style.transform = "translate3d(0,0,0)";
+
+    requestAnimationFrame(function () {
+        const copyWidth = Math.ceil(firstCopy.getBoundingClientRect().width);
+        const viewportWidth = Math.ceil(marquee.getBoundingClientRect().width);
+        if (!copyWidth || !viewportWidth) return;
+
+        const distance = copyWidth;
+        const pixelsPerSecond = window.innerWidth <= 520 ? 42 : 52;
+        const duration = Math.max(9000, Math.round((distance / pixelsPerSecond) * 1000));
+
+        announcementAnimation = track.animate(
+            [
+                { transform: "translate3d(0,0,0)" },
+                { transform: `translate3d(-${distance}px,0,0)` }
+            ],
+            { duration: duration, iterations: Infinity, easing: "linear" }
+        );
+    });
+}
+
+function renderAnnouncement(announcement) {
+    const mount = document.getElementById("adminAnnouncementMount");
+    if (!mount) return;
+    if (!announcement) {
+        stopAnnouncementMarquee();
+        mount.innerHTML = "";
+        lastAnnouncementId = null;
+        return;
+    }
+
+    const type = String(announcement.announcement_type || "admin");
+    const icon = String(announcement.icon || (type === "admin" ? "📢" : "🏆"));
+    const existing = mount.querySelector("[data-announcement-id]");
+    const existingId = existing ? existing.getAttribute("data-announcement-id") : null;
+    const currentMessage = existing ? existing.getAttribute("data-announcement-message") : null;
+    if (existingId === String(announcement.id) && currentMessage === String(announcement.message || "")) return;
+
+    lastAnnouncementId = String(announcement.id);
+    mount.innerHTML = `
+        <div class="admin-announcement system-event-announcement ${escapeHtml(type)}" data-announcement-id="${escapeHtml(announcement.id)}" data-announcement-message="${escapeHtml(announcement.message)}">
+            <div class="admin-announcement-label">${escapeHtml(icon)} ${escapeHtml(announcement.title)}</div>
+            <div class="admin-announcement-marquee" aria-label="${escapeHtml(announcement.message)}"><div class="admin-announcement-track"><span>${escapeHtml(announcement.message)}</span><span aria-hidden="true">${escapeHtml(announcement.message)}</span></div></div>
+            ${type !== "admin" ? '<span class="system-event-spark spark-a"></span><span class="system-event-spark spark-b"></span><span class="system-event-spark spark-c"></span>' : ''}
+        </div>`;
+    startAnnouncementMarquee();
+}
+
+function rotateAnnouncementBanner() {
+    if (!announcementItems.length) {
+        renderAnnouncement(null);
+        return;
+    }
+    if (announcementIndex >= announcementItems.length) announcementIndex = 0;
+    renderAnnouncement(announcementItems[announcementIndex]);
+    announcementIndex = (announcementIndex + 1) % announcementItems.length;
+}
+
+function scheduleAnnouncementRotation() {
+    if (announcementRotateTimer) clearInterval(announcementRotateTimer);
+    announcementRotateTimer = null;
+    rotateAnnouncementBanner();
+    if (announcementItems.length > 1) {
+        announcementRotateTimer = setInterval(function () {
+            if (!document.hidden) rotateAnnouncementBanner();
+        }, 8000);
+    }
+}
+
+function showGlobalSystemEventOverlay(announcement) {
+    return new Promise(function (resolve) {
+        const type = String(announcement.announcement_type || "win_streak");
+        const overlay = document.createElement("div");
+        overlay.className = "global-system-event-overlay " + type;
+        overlay.innerHTML = `<div class="global-system-event-burst"></div><div class="global-system-event-card"><div class="global-system-event-icon">${escapeHtml(announcement.icon || "🏆")}</div><strong>${escapeHtml(announcement.title || "DANH HIỆU")}</strong><span>${escapeHtml(announcement.message || "")}</span></div>`;
+        document.body.appendChild(overlay);
+        requestAnimationFrame(() => overlay.classList.add("is-visible"));
+        const visibleMs = type === "shutdown" ? 5200 : 4300;
+        setTimeout(function () {
+            overlay.classList.add("is-leaving");
+            setTimeout(function () { overlay.remove(); resolve(); }, 700);
+        }, visibleMs);
+    });
+}
+
+async function playSystemEventQueue(items) {
+    if (overlayQueueRunning || document.hidden) return;
+    const overlayCountKey = "pes-global-system-event-overlay-count";
+    let shownCount = 0;
+    try { shownCount = Number(sessionStorage.getItem(overlayCountKey) || 0); } catch (error) {}
+    const remainingSlots = Math.max(0, 3 - shownCount);
+    if (!remainingSlots) return;
+
+    const unseen = [];
+    for (const item of items) {
+        if (String(item.announcement_type || "admin") === "admin") continue;
+        const eventId = String(item.id || "");
+        if (!eventId) continue;
+        const storageKey = "pes-global-system-event:" + eventId;
+        let viewed = false;
+        try { viewed = sessionStorage.getItem(storageKey) === "1"; } catch (error) {}
+        if (!viewed) unseen.push({item, storageKey});
+        if (unseen.length >= remainingSlots) break;
+    }
+    if (!unseen.length) return;
+
+    overlayQueueRunning = true;
+    try {
+        for (let i = 0; i < unseen.length; i++) {
+            const entry = unseen[i];
+            try {
+                sessionStorage.setItem(entry.storageKey, "1");
+                shownCount += 1;
+                sessionStorage.setItem(overlayCountKey, String(shownCount));
+            } catch (error) {}
+            await showGlobalSystemEventOverlay(entry.item);
+            if (i < unseen.length - 1) await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+    } finally {
+        overlayQueueRunning = false;
+    }
+}
+
+document.addEventListener("DOMContentLoaded", startAnnouncementMarquee);
+window.addEventListener("load", startAnnouncementMarquee);
+window.addEventListener("resize", function () {
+    clearTimeout(announcementResizeTimer);
+    announcementResizeTimer = setTimeout(startAnnouncementMarquee, 180);
+});
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) {
+        if (!announcementAnimation) startAnnouncementMarquee();
+        playSystemEventQueue(announcementItems);
+    }
+});
+
+function checkAnnouncement() {
+    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (!data.ok) return;
+            const items = Array.isArray(data.announcements)
+                ? data.announcements
+                : (data.announcement ? [data.announcement] : []);
+            const oldIds = announcementItems.map(item => String(item.id || "")).join("|");
+            const newIds = items.map(item => String(item.id || "")).join("|");
+            announcementItems = items;
+            if (oldIds !== newIds) {
+                announcementIndex = 0;
+                scheduleAnnouncementRotation();
+            } else if (!items.length) {
+                renderAnnouncement(null);
+            }
+            playSystemEventQueue(items);
+        })
+        .catch(function () {});
+}
+
+function sendAdminAnnouncement() {
+    const title = document.getElementById("adminAnnouncementTitle");
+    const message = document.getElementById("adminAnnouncementMessage");
+    const status = document.getElementById("adminAnnouncementStatus");
+
+    const payload = {
+        title: title ? title.value.trim() : "THÔNG BÁO",
+        message: message ? message.value.trim() : ""
+    };
+
+    if (!payload.message) {
+        if (status) status.innerText = "Bạn chưa nhập nội dung thông báo.";
+        return;
+    }
+
+    fetch("{{ url_for('api_admin_send_announcement') }}", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+    })
+    .then(function (res) { return res.json().then(function (data) { return {ok: res.ok, data: data}; }); })
+    .then(function (result) {
+        if (!result.ok) {
+            if (status) status.innerText = result.data.error || "Không gửi được thông báo.";
+            return;
+        }
+        if (message) message.value = "";
+        if (status) status.innerText = "Đã gửi thông báo.";
+        checkAnnouncement();
+    })
+    .catch(function () {
+        if (status) status.innerText = "Lỗi kết nối.";
+    });
+}
+
+// V4.8: chỉ chạy polling thật sự cần cho trang hiện tại.
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return;
+    const path = window.location.pathname;
+    const isRoomPage = path.startsWith("/room/");
+    const isPlayersPage = path === "/players";
+    const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
+
+    // Heartbeat nhẹ, không chạy khi tab ẩn.
+    PESNet.createPoller({task: postHeartbeat, visibleInterval: 180000, hiddenInterval: 600000, runWhenHidden: false, immediate: false, jitter: 7000});
+
+    // Lời mời cần trên toàn hệ thống, nhưng phòng đấu đã có polling trạng thái riêng nên giảm tần suất.
+    PESNet.createPoller({task: checkPendingInvites, visibleInterval: isRoomPage ? 15000 : 9000, hiddenInterval: 120000, immediate: true, jitter: 1200});
+
+    // Không kiểm tra active-room ở chính trang phòng. BXH kiểm tra thưa hơn để tránh request khi chuyển qua lại.
+    if (!isRoomPage) {
+        PESNet.createPoller({task: checkActiveRoom, visibleInterval: isRankingPage ? 30000 : 20000, hiddenInterval: 120000, immediate: false, jitter: 2500});
+    }
+
+    // Chat sảnh chỉ tải khi khung chat đang mở; không polling ngầm toàn trang.
+    if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
+        PESNet.createPoller({task: loadBottomChatSmart, visibleInterval: 20000, hiddenInterval: 120000, immediate: true, jitter: 2000});
+    }
+
+    // Thông báo hệ thống kiểm tra thưa, lần đầu dùng dữ liệu server render sẵn.
+    PESNet.createPoller({task: checkAnnouncementSmart, visibleInterval: 300000, hiddenInterval: 600000, immediate: false, jitter: 7000});
+});
+
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden && typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) loadBottomChat();
+});
+</script>
+{% endif %}
+
+
+{% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
+<script>
+function updateOnlineFloatingCount() {
+    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (!data.ok) return;
+            const el = document.getElementById("onlineFloatingCount");
+            if (el) el.innerText = data.online_count;
+        })
+        .catch(function () {});
+}
+
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return updateOnlineFloatingCount();
+    PESNet.createPoller({task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, immediate: true, jitter: 5000});
+});
+</script>
+{% endif %}
+
+<script>
+(function maintenanceCountdowns(){
+    function tick(){
+        document.querySelectorAll('[data-maintenance-countdown]').forEach(function(el){
+            const target = Date.parse(el.dataset.maintenanceCountdown || '');
+            if (!Number.isFinite(target)) return;
+            const seconds = Math.max(0, Math.floor((target - Date.now()) / 1000));
+            const minutes = Math.floor(seconds / 60);
+            const remain = seconds % 60;
+            el.textContent = String(minutes).padStart(2,'0') + ':' + String(remain).padStart(2,'0');
+            if (seconds === 0) window.setTimeout(function(){ window.location.reload(); }, 1200);
+        });
+    }
+    tick();
+    window.setInterval(tick, 1000);
+})();
+</script>
+</body>
+</html>

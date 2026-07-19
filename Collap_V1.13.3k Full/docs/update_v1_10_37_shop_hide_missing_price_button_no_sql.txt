@@ -1,0 +1,37 @@
+V1.10.37_SHOP_HIDE_MISSING_PRICE_BUTTON_NO_SQL
+==============================================
+
+Mục tiêu
+--------
+- Chỉnh giao diện nút mua vật phẩm trong Cửa Hàng để không hiển thị dòng "Thiếu xxx".
+- Khi người chơi chưa đủ ZCOIN, nút bên phải chỉ hiển thị giá vật phẩm, ví dụ "300 ZCOIN".
+
+Thay đổi
+--------
+1. templates/shop.html
+   - Xóa biến `missing` khỏi macro render card.
+   - Xóa data-preview-missing.
+   - Nút mua khi chưa đủ ZCOIN đổi từ "Thiếu xxx" sang "<giá vật phẩm> ZCOIN".
+   - Popup xem trước cũng đổi nút disabled từ "Thiếu xxx ZCOIN" sang "<giá vật phẩm> ZCOIN".
+
+2. templates/base.html
+   - Nâng cache CSS lên ?v=1.10.37.
+
+3. app.py
+   - APP_VERSION -> V1.10.37.
+
+Không thay đổi
+--------------
+- Không cần SQL.
+- Không thay đổi database.
+- Không đụng luồng mua vật phẩm.
+- Không đụng Kho đồ, Gift Code, ZCOIN, Điểm danh, BXH, Admin, phòng đấu hoặc logic tính điểm.
+
+Cách deploy
+-----------
+- Upload đè các file trong gói ZIP này lên source hiện tại.
+- Commit gợi ý: V1.10.37_SHOP_HIDE_MISSING_PRICE_BUTTON_NO_SQL
+
+Rollback
+--------
+- Quay lại deployment/commit V1.10.36 nếu cần.

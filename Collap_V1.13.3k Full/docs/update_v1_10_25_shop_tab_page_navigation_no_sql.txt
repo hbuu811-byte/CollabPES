@@ -1,0 +1,34 @@
+# V1.10.25_SHOP_TAB_PAGE_NAVIGATION_NO_SQL
+
+## Mục tiêu
+Sửa trải nghiệm Cửa Hàng: mỗi tab trong Shop là một trang/danh mục riêng. Khi bấm Nổi bật, Trang trí, Tiện ích, Lucky Box hoặc Gift Code, app hiển thị đúng nội dung của tab đó ở khu chính, không còn nhảy xuống section bên dưới bằng anchor.
+
+## Thay đổi
+- Cập nhật `/shop` để nhận tham số `?tab=`.
+- Thêm trạng thái tab đang active: `featured`, `decor`, `utility`, `lucky`, `gift-code`.
+- Chỉ render nội dung của tab đang chọn.
+- Chuyển form Gift Code thành một tab riêng trong Cửa Hàng.
+- Menu user trỏ Gift Code tới `/shop?tab=gift-code`.
+- Cập nhật CSS cho tab active, khu nội dung tab và form Gift Code.
+- Cập nhật `APP_VERSION` thành `V1.10.25`.
+
+## Không thay đổi
+- Không cần SQL.
+- Không thay đổi database.
+- Không đụng logic Gift Code backend.
+- Không đụng ZCOIN, Điểm danh, phòng đấu, BXH, Admin hoặc logic tính điểm.
+
+## File thay đổi
+- app.py
+- templates/base.html
+- templates/shop.html
+- static/style.css
+- README.md
+- Log.md
+- docs/update_v1_10_25_shop_tab_page_navigation_no_sql.txt
+
+## Commit khuyến nghị
+V1.10.25_SHOP_TAB_PAGE_NAVIGATION_NO_SQL
+
+## Rollback
+Rollback Vercel về deployment V1.10.24 nếu cần. Không cần restore Supabase.

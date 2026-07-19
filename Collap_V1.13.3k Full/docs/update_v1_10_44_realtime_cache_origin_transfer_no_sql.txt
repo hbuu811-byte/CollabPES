@@ -1,0 +1,13 @@
+V1.10.44 - Realtime + cache + giảm Fast Origin Transfer (không cần SQL)
+
+- Cache HTML BXH công khai 45 giây và thêm Cache-Control CDN stale-while-revalidate.
+- Cache dữ liệu players/matches của BXH 45 giây trên warm instance.
+- Khách chưa đăng nhập không chạy heartbeat, invite, active room, chat, thông báo hay online count.
+- Thêm pollingEnabled = !document.hidden; mọi polling dừng khi tab ẩn.
+- Không tải nội dung chat sảnh khi hộp chat chưa mở.
+- Invite, room và announcement dùng Supabase Realtime khi có SUPABASE_ANON_KEY.
+- Polling còn lại chỉ là fallback thưa, không tạo request chồng.
+- Room state dùng Realtime, fallback 60 giây khi websocket đã sẵn sàng.
+- Không thay đổi database, Rank Point hay dữ liệu người dùng.
+
+Lưu ý Supabase: bật Realtime cho match_invites, match_rooms, admin_announcements.

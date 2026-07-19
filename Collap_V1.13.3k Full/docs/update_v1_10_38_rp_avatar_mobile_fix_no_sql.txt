@@ -1,0 +1,20 @@
+RANKZONE FC V1.10.38_RP_AVATAR_MOBILE_FIX_NO_SQL
+
+1. Sửa an toàn cơ chế RP
+- Thắng: delta dương.
+- Thua: -20 RP theo luật hiện tại.
+- Hòa: 0 RP.
+- Hệ số chủ phòng 0.95 chỉ áp dụng với RP dương.
+- Chặn delta sai dấu và hoàn tác dữ liệu nếu cập nhật trận bị lỗi giữa chừng.
+
+2. Sửa avatar điện thoại
+- Hỗ trợ JPG, PNG, WEBP, HEIC, HEIF.
+- Giới hạn file đầu vào 12 MB, sau đó tự cắt và nén thành WEBP 512x512.
+- Cải thiện trạng thái nút tải ảnh trên mobile.
+
+3. SQL
+- KHÔNG CẦN CHẠY SQL.
+
+4. Triển khai
+- Copy đè source nhưng giữ nguyên .env.
+- Không upload .env, __pycache__, *.pyc lên GitHub.

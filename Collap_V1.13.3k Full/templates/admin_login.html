@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block auth %}
+<div class="auth-page admin-auth-page">
+    <div class="auth-card admin-login-card">
+        <div class="auth-logo">⚙️</div>
+        <h1>Đăng nhập Admin</h1>
+        <p>Trang quản trị riêng, vẫn hoạt động khi máy chủ đang bảo trì.</p>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% for category, message in messages %}<div class="alert {{ category }}">{{ message }}</div>{% endfor %}
+        {% endwith %}
+        <form method="post" action="{{ url_for('admin_login') }}">
+            <label>Tài khoản Admin<input type="text" name="username" required autocomplete="username"></label>
+            <label>Mật khẩu<input type="password" name="password" required autocomplete="current-password"></label>
+            <button class="btn green auth-submit" type="submit">Vào trang quản trị</button>
+        </form>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,29 @@
+V1.10.38_RP_DELTA_GUARD_AVATAR_MOBILE_HOTFIX
+=============================================
+
+Mục tiêu:
+- Sửa chắc lỗi thua nhưng không bị trừ RP / lịch sử hiện +0 điểm.
+- Sửa upload avatar trên điện thoại khó sử dụng hoặc lỗi do ảnh điện thoại thường lớn hơn 2 MB.
+
+Nguyên nhân chính đã tìm thấy:
+- app.py có 2 hàm tên _safe_int.
+- Hàm _safe_int thứ 2 dùng cho import admin có minimum=0, vô tình ghi đè hàm _safe_int chung.
+- Khi xử lý trận đấu, delta âm như -20 bị ép thành 0, khiến người thua không bị trừ điểm.
+
+Thay đổi code:
+- Đổi hàm import/admin thành _safe_int_bounded để không ghi đè _safe_int dùng cho RP.
+- Giữ _safe_int chung cho phép số âm, để delta thua -20 được lưu đúng.
+- Thêm enforce_ranked_delta_signs() để đảm bảo trận có thắng/thua luôn có winner > 0 và loser < 0.
+- Thêm display guard cho các dòng lịch sử cũ đã lưu sai delta 0.
+- Xóa cache liên quan sau khi xác nhận trận hoặc đổi avatar.
+- Tăng giới hạn avatar từ 2 MB lên 8 MB.
+- Chỉnh form upload avatar mobile-safe hơn và hiển thị tên file đã chọn.
+- Cập nhật cache CSS lên ?v=1.10.38.
+
+SQL tùy chọn để sửa dữ liệu cũ:
+- docs/01_repair_v1_10_38_rank_loss_zero_delta.sql
+- docs/02_check_v1_10_38_rank_loss_zero_delta.sql
+
+Lưu ý:
+- Code mới sẽ chặn lỗi cho các trận sau.
+- Nếu muốn các trận cũ đã lưu +0 khi thua được trừ điểm thật trong database, chạy file repair SQL một lần.

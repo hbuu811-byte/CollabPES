@@ -1,0 +1,60 @@
+V1.10.40_INVENTORY_EQUIP_PROFILE_BANNER_NO_SQL
+==============================================
+
+Mục tiêu
+--------
+- Mở chức năng dùng thật vật phẩm banner hồ sơ đã mua trong Cửa Hàng.
+- Người chơi có thể vào Kho đồ, bấm Trang bị và banner sẽ hiện trực tiếp trên hồ sơ cá nhân.
+
+Thay đổi chính
+--------------
+1. app.py
+   - APP_VERSION -> V1.10.40.
+   - Thêm get_equipped_profile_banner(user_id) để đọc banner đang dùng từ user_inventory.
+   - Profile route gắn player.equipped_profile_banner để template hiển thị banner.
+   - Inventory route trả thêm equipped_profile_banner.
+   - Thêm route POST /inventory/equip/<inventory_id>:
+     + kiểm tra vật phẩm thuộc đúng người dùng,
+     + chỉ hỗ trợ item_type = profile_banner,
+     + gỡ các banner hồ sơ cũ,
+     + bật is_equipped = true cho banner được chọn.
+   - Thêm route POST /inventory/unequip/profile-banner để gỡ banner đang dùng.
+
+2. templates/inventory.html
+   - Nút "Trang bị sắp mở" được thay bằng nút "Trang bị" cho banner hồ sơ.
+   - Vật phẩm đang dùng hiển thị "✓ Đang sử dụng".
+   - Thêm nút "Gỡ banner" nếu người dùng đang trang bị banner.
+
+3. templates/profile.html
+   - Nếu người chơi có banner đang dùng, hero hồ sơ sẽ dùng ảnh đó làm background.
+   - Hiển thị pill tên banner đang dùng.
+
+4. static/style.css
+   - CSS cho profile hero có banner.
+   - CSS cho trạng thái item đang sử dụng trong Kho đồ.
+
+5. templates/base.html
+   - Cache CSS -> ?v=1.10.40.
+
+SQL
+---
+- Không cần SQL mới nếu bạn đã chạy V1.10.36.
+- Bản V1.10.36 đã có cột user_inventory.is_equipped nên bản này dùng lại cột đó.
+
+Không thay đổi
+--------------
+- Không đổi logic mua Shop.
+- Không đổi giá ZCOIN.
+- Không đụng Gift Code / Điểm danh / BXH / Phòng đấu / Admin / cơ chế cộng trừ RP.
+
+Cách test
+---------
+1. Vào Kho đồ.
+2. Bấm Trang bị trên banner đã mua.
+3. Mở Hồ sơ cá nhân.
+4. Kiểm tra banner đã hiện ở phần đầu hồ sơ.
+5. Quay lại Kho đồ, bấm Gỡ banner để test gỡ.
+
+Rollback
+--------
+- Quay lại deployment/commit V1.10.39 nếu cần.

@@ -1,0 +1,35 @@
+# V1.10.15_MERGE_LEAGUE_LOGOS_DAILY_CHECKIN_SAFE
+
+Mục tiêu: gộp bản update mới của bạn bạn vào source hiện tại mà không làm mất hệ thống Điểm danh/ZCOIN đã chạy.
+
+## Giữ lại từ bản bạn bạn gửi
+- Logo giải đấu trong phòng đấu qua Supabase Storage `team-logos/league-logos`.
+- Mapping logo cho Africa, Bundesliga, Europe, LaLiga EA Sports, Süper Lig, Serie BKT, Sky Bet Championship, South America, Serie A, Premier League, Ligue 1.
+- Hiển thị logo giải nhỏ cạnh tên giải trong phòng đấu.
+- Menu người dùng/dropdown và sidebar gọn từ các bản trước.
+
+## Bổ sung/giữ lại từ bản V1.10.14 đã chạy thành công
+- Ví ZCOIN thật trong Hồ sơ cá nhân.
+- Điểm danh hằng ngày thật trong Hồ sơ cá nhân.
+- Random 80–150 ZCOIN/ngày.
+- Popup nhận thưởng và hiệu ứng confetti.
+- Lịch sử giao dịch ZCOIN.
+
+## SQL
+- Nếu database đã chạy SQL V1.10.14 và điểm danh đang hoạt động thì không cần chạy SQL thêm.
+- Nếu triển khai sang database mới, chạy file `01_install_v1_10_15_profile_daily_checkin.sql`, sau đó chạy `02_check_v1_10_15_profile_daily_checkin.sql`.
+- Không chạy rollback trừ khi đã rollback code và chắc chắn muốn gỡ tính năng.
+
+## File thay đổi trong gói update
+- app.py
+- templates/base.html
+- templates/profile.html
+- templates/room_detail.html
+- static/style.css
+- Log.md
+- docs/*
+
+## Rollback
+- Nếu lỗi giao diện/code: rollback Vercel về deployment trước.
+- Không cần rollback database nếu chỉ lỗi code.
+- Chỉ chạy SQL rollback khi muốn xóa hoàn toàn bảng/cột/function ZCOIN/điểm danh.

@@ -3,8 +3,6 @@
 
     const cfg = global.PES_SESSION_CONFIG || {};
     if (!cfg.enabled) return;
-    if (global.__PES_SESSION_TIMEOUT_RUNNING__) return;
-    global.__PES_SESSION_TIMEOUT_RUNNING__ = true;
 
     const timeoutMs = Math.max(60_000, Number(cfg.idleTimeoutSeconds || 3600) * 1000);
     const warningMs = Math.max(30_000, Number(cfg.warningSeconds || 300) * 1000);
@@ -13,15 +11,15 @@
     const timeoutCheckUrl = cfg.timeoutCheckUrl;
     const logoutUrl = cfg.logoutUrl;
 
-    let lastActivityAt = Date.now();
-    let lastSyncAt = 0;
+    const activityStorageKey = "pes-session-last-activity";
+    const syncStorageKey = "pes-session-last-sync";
+    let lastActivityAt = Number(sessionStorage.getItem(activityStorageKey) || 0) || Date.now();
+    let lastSyncAt = Number(sessionStorage.getItem(syncStorageKey) || 0) || 0;
+    let activitySyncInFlight = false;
     let warningTimer = null;
     let logoutTimer = null;
     let countdownTimer = null;
     let checkInFlight = false;
-    let activityInFlight = false;
-    let lifecyclePaused = false;
-    let destroyed = false;
 
     function ensureModal() {
         let root = document.getElementById("idleTimeoutModal");
@@ -71,60 +69,42 @@
     function schedule() {
         clearTimeout(warningTimer);
         clearTimeout(logoutTimer);
-        if (destroyed || lifecyclePaused) return;
         const elapsed = Date.now() - lastActivityAt;
         warningTimer = setTimeout(showWarning, Math.max(0, timeoutMs - warningMs - elapsed));
         logoutTimer = setTimeout(checkAndLogout, Math.max(0, timeoutMs - elapsed));
     }
 
     function syncActivity(force) {
-        if (destroyed || lifecyclePaused || !activityUrl || !navigator.onLine || document.hidden || activityInFlight) {
-            return Promise.resolve();
-        }
+        if (!activityUrl || !navigator.onLine || document.hidden || activitySyncInFlight) return;
         const now = Date.now();
-        if (!force && now - lastSyncAt < syncMs) return Promise.resolve();
-
-        activityInFlight = true;
-        const task = function () {
-            return fetch(activityUrl, {
-                method: "POST",
-                credentials: "same-origin",
-                cache: "no-store",
-                headers: {"X-Requested-With": "XMLHttpRequest"}
-            });
-        };
-        const request = global.PESNet && typeof global.PESNet.singleFlight === "function"
-            ? global.PESNet.singleFlight("api:session-activity", task)
-            : task();
-        return Promise.resolve(request)
-            .then(function (response) {
-                if (response && response.ok) lastSyncAt = Date.now();
-            })
-            .catch(function () {})
-            .finally(function () { activityInFlight = false; });
+        // Kể cả thao tác cưỡng bức cũng không vượt quá một request mỗi 60 giây.
+        if (now - lastSyncAt < syncMs) return;
+        activitySyncInFlight = true;
+        lastSyncAt = now;
+        try { sessionStorage.setItem(syncStorageKey, String(lastSyncAt)); } catch (error) {}
+        fetch(activityUrl, {
+            method: "POST",
+            credentials: "same-origin",
+            cache: "no-store",
+            headers: {"X-Requested-With": "XMLHttpRequest"}
+        }).catch(function () {}).finally(function () {
+            activitySyncInFlight = false;
+        });
     }
 
     function recordActivity(forceSync) {
         lastActivityAt = Date.now();
+        try { sessionStorage.setItem(activityStorageKey, String(lastActivityAt)); } catch (error) {}
         hideModal();
         schedule();
         syncActivity(Boolean(forceSync));
     }
 
     function checkAndLogout() {
-        if (destroyed || lifecyclePaused || checkInFlight || !timeoutCheckUrl) return;
+        if (checkInFlight || !timeoutCheckUrl) return;
         checkInFlight = true;
-        const task = function () {
-            return fetch(timeoutCheckUrl, {credentials: "same-origin", cache: "no-store"});
-        };
-        const request = global.PESNet && typeof global.PESNet.singleFlight === "function"
-            ? global.PESNet.singleFlight("api:session-timeout-check", task)
-            : task();
-        Promise.resolve(request)
-            .then(function (res) {
-                if (!res || !res.ok) throw new Error("timeout_check_failed");
-                return res.json();
-            })
+        fetch(timeoutCheckUrl, {credentials: "same-origin", cache: "no-store"})
+            .then(function (res) { return res.json(); })
             .then(function (data) {
                 if (data.protected === true) {
                     // Đang có trận cần hoàn tất: gia hạn 10 phút rồi kiểm tra lại.
@@ -137,7 +117,7 @@
             })
             .catch(function () {
                 // Nếu mất mạng, không ép đăng xuất ngay; thử lại sau 60 giây.
-                if (!destroyed && !lifecyclePaused) logoutTimer = setTimeout(checkAndLogout, 60_000);
+                logoutTimer = setTimeout(checkAndLogout, 60_000);
             })
             .finally(function () { checkInFlight = false; });
     }
@@ -150,51 +130,18 @@
         recordActivity(false);
     }
 
-    const activityEvents = ["pointerdown", "keydown", "touchstart", "submit"];
-    activityEvents.forEach(function (name) {
+    ["pointerdown", "keydown", "touchstart", "submit"].forEach(function (name) {
         document.addEventListener(name, onUserActivity, {passive: true, capture: true});
     });
-
-    function onVisibilityChange() {
-        if (!document.hidden && !lifecyclePaused && !destroyed) recordActivity(false);
-    }
-    document.addEventListener("visibilitychange", onVisibilityChange);
-
-    function pauseLifecycle() {
-        lifecyclePaused = true;
-        clearTimeout(warningTimer);
-        clearTimeout(logoutTimer);
-        if (countdownTimer) clearInterval(countdownTimer);
-        countdownTimer = null;
-    }
-
-    function resumeLifecycle() {
-        if (destroyed) return;
-        lifecyclePaused = false;
-        lastActivityAt = Date.now();
-        hideModal();
-        schedule();
-    }
-
-    function destroyLifecycle() {
-        if (destroyed) return;
-        destroyed = true;
-        pauseLifecycle();
-        activityEvents.forEach(function (name) {
-            document.removeEventListener(name, onUserActivity, {capture: true});
-        });
-        document.removeEventListener("visibilitychange", onVisibilityChange);
-        global.__PES_SESSION_TIMEOUT_RUNNING__ = false;
-    }
-
-    global.addEventListener("pagehide", function (event) {
-        if (event.persisted) pauseLifecycle();
-        else destroyLifecycle();
+    document.addEventListener("visibilitychange", function () {
+        if (!document.hidden) {
+            lastActivityAt = Date.now();
+            try { sessionStorage.setItem(activityStorageKey, String(lastActivityAt)); } catch (error) {}
+            hideModal();
+            schedule();
+            syncActivity(true);
+        }
     });
-    global.addEventListener("pageshow", function (event) {
-        if (event.persisted) resumeLifecycle();
-    });
-    global.addEventListener("beforeunload", destroyLifecycle, {once: true});
 
     schedule();
 })(window);

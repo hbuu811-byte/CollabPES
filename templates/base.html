@@ -6,21 +6,21 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION|urlencode }}">
-    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION }}">
+    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION }}" defer></script>
     {% if current_user and not (auth_only|default(false)) %}
     <script>
     window.PES_SESSION_CONFIG = {
         enabled: true,
         idleTimeoutSeconds: 3600,
         warningSeconds: 300,
-        activitySyncSeconds: 300,
+        activitySyncSeconds: 60,
         activityUrl: {{ url_for('api_session_activity')|tojson }},
         timeoutCheckUrl: {{ url_for('api_session_timeout_check')|tojson }},
         logoutUrl: {{ url_for('logout')|tojson }}
     };
     </script>
-    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
+    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION }}" defer></script>
     {% endif %}
 
 <script>
@@ -221,17 +221,17 @@ function toggleTheme(){
 {% endif %}
 
 <script>
+let heartbeatRequestInFlight = false;
 function postHeartbeat() {
-    const task = function () {
-        return fetch("{{ url_for('heartbeat') }}", {
-            method: "POST",
-            credentials: "same-origin",
-            cache: "no-store"
-        }).catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:heartbeat", task)
-        : task();
+    if (document.hidden || heartbeatRequestInFlight) return Promise.resolve();
+    heartbeatRequestInFlight = true;
+    return fetch("{{ url_for('heartbeat') }}", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store"
+    }).catch(function () {}).finally(function () {
+        heartbeatRequestInFlight = false;
+    });
 }
 
 let lastInviteId = null;
@@ -282,18 +282,18 @@ function renderInvitePopup(invite) {
 
 
 let lastKnownActiveRoomId = null;
+let activeRoomRequestInFlight = false;
 
 function checkActiveRoom() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+    if (document.hidden || window.location.pathname.startsWith("/room/") || activeRoomRequestInFlight) return Promise.resolve();
+    activeRoomRequestInFlight = true;
 
-    const task = function () {
-        return fetch("{{ url_for('api_active_room') }}", {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
+    return fetch("{{ url_for('api_active_room') }}", {
+        method: "GET",
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
         const roomLink = document.getElementById("activeRoomTopbarLink");
         if (!roomLink) return;
 
@@ -312,30 +312,32 @@ function checkActiveRoom() {
         if (data.auto_redirect === true) {
             window.location.replace(data.room_url);
         }
-        })
-        .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:active-room", task)
-        : task();
+    })
+    .catch(function () {})
+    .finally(function () { activeRoomRequestInFlight = false; });
 }
 
 
-let pendingInvitesRequestPromise = null;
-function checkPendingInvites() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) checkActiveRoom();
+});
 
-    const task = function () {
-        return fetch("{{ url_for('api_pending_invites') }}", {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) return {invites: []};
-            return res.json();
-        })
-        .then(function (data) {
+let pendingInvitesRequestInFlight = false;
+function roomPageNeedsInvitePolling() {
+    const context = window.PES_ROOM_CONTEXT;
+    if (!window.location.pathname.startsWith("/room/")) return true;
+    return Boolean(context && context.status === "waiting_ready" && !context.hasGuest);
+}
+
+function checkPendingInvites() {
+    if (document.hidden || pendingInvitesRequestInFlight || !roomPageNeedsInvitePolling()) return Promise.resolve();
+    pendingInvitesRequestInFlight = true;
+    return fetch("{{ url_for('api_pending_invites') }}", {
+        method: "GET",
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
         if (!data.invites || data.invites.length === 0) {
             const backdrop = document.getElementById("inviteModalBackdrop");
             if (backdrop) backdrop.style.display = "none";
@@ -348,18 +350,9 @@ function checkPendingInvites() {
         if (invite.id !== lastInviteId) {
             renderInvitePopup(invite);
         }
-        })
-        .catch(function () {});
-    };
-
-    if (window.PESNet && typeof PESNet.singleFlight === "function") {
-        return PESNet.singleFlight("api:pending-invites", task);
-    }
-    if (pendingInvitesRequestPromise) return pendingInvitesRequestPromise;
-    pendingInvitesRequestPromise = Promise.resolve()
-        .then(task)
-        .finally(function () { pendingInvitesRequestPromise = null; });
-    return pendingInvitesRequestPromise;
+    })
+    .catch(function () {})
+    .finally(function () { pendingInvitesRequestInFlight = false; });
 }
 
 function escapeHtml(text) {
@@ -405,8 +398,6 @@ function renderBottomChat(messages) {
 }
 
 let isLobbyChatOpen = false;
-let lobbyChatPoller = null;
-let bottomChatSendInFlight = false;
 let chatLastReadFallback = null;
 const chatLastReadStorageKey = "rankzone_chat_last_read_{{ current_user.id }}";
 
@@ -472,29 +463,6 @@ document.addEventListener("click", function(event) {
     if (button) button.setAttribute("aria-expanded", "false");
 });
 
-function startLobbyChatPolling() {
-    if (!window.PESNet || !isLobbyChatOpen) return loadBottomChat();
-    lobbyChatPoller = PESNet.createPoller({
-        key: "lobby-chat",
-        task: loadBottomChatSmart,
-        visibleInterval: 20000,
-        hiddenInterval: 120000,
-        runWhenHidden: false,
-        immediate: true,
-        jitter: 2000
-    });
-    return lobbyChatPoller;
-}
-
-function stopLobbyChatPolling() {
-    if (lobbyChatPoller && typeof lobbyChatPoller.stop === "function") {
-        lobbyChatPoller.stop();
-    } else if (window.PESNet && typeof PESNet.stop === "function") {
-        PESNet.stop("lobby-chat");
-    }
-    lobbyChatPoller = null;
-}
-
 function toggleLobbyChat() {
     const panel = document.getElementById("bottomLobbyChat");
     const button = document.getElementById("chatToggleButton");
@@ -512,9 +480,8 @@ function toggleLobbyChat() {
     }
 
     if (willOpen) {
-        startLobbyChatPolling();
+        loadBottomChat();
     } else {
-        stopLobbyChatPolling();
         checkLobbyChatUnread();
     }
 }
@@ -535,44 +502,23 @@ function updateOnlineFloatingCountSmart() {
 }
 
 function loadBottomChat() {
-    const task = function () {
-        return fetch("{{ url_for('api_global_chat') }}", {
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) {
-                stopLobbyChatPolling();
-                return null;
-            }
-            return res.json();
-        })
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data || !data.ok) return;
+            if (!data.ok) return;
             renderBottomChat(data.messages);
             if (isLobbyChatOpen) markLobbyChatRead(data.messages);
         })
         .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:global-chat", task)
-        : task();
 }
 
 function checkLobbyChatUnread() {
     if (document.hidden || isLobbyChatOpen) return Promise.resolve();
 
-    const task = function () {
-        return fetch("{{ url_for('api_global_chat_status') }}", {
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) return null;
-            return res.json();
-        })
+    return fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data || !data.ok || !Array.isArray(data.messages)) return;
+            if (!data.ok || !Array.isArray(data.messages)) return;
 
             const latestTimestamp = data.latest_created_at || newestChatTimestamp(data.messages);
             const lastRead = getChatLastRead();
@@ -599,10 +545,6 @@ function checkLobbyChatUnread() {
             setChatUnreadCount(unreadCount);
         })
         .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:global-chat-status", task)
-        : task();
 }
 
 function sendBottomChat() {
@@ -610,9 +552,8 @@ function sendBottomChat() {
     const status = document.getElementById("bottomChatStatus");
     const message = input ? input.value.trim() : "";
 
-    if (!message || bottomChatSendInFlight) return;
+    if (!message) return;
 
-    bottomChatSendInFlight = true;
     if (status) status.innerText = "Đang gửi...";
     if (input) input.disabled = true;
 
@@ -622,13 +563,9 @@ function sendBottomChat() {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({message: message})
     })
-    .then(function (res) {
-        if (res.status === 204) return {ok: false, data: {error: "Chat Sảnh đang tắt."}};
-        return res.json().then(function (data) { return {ok: res.ok, data: data}; });
-    })
+    .then(function (res) { return res.json().then(function (data) { return {ok: res.ok, data: data}; }); })
     .then(function (result) {
         if (!result.ok) {
-            if (input) input.disabled = false;
             if (status) status.innerText = result.data.error || "Không gửi được tin nhắn.";
             return;
         }
@@ -643,9 +580,6 @@ function sendBottomChat() {
     .catch(function () {
         if (input) input.disabled = false;
         if (status) status.innerText = "Lỗi kết nối.";
-    })
-    .finally(function () {
-        bottomChatSendInFlight = false;
     });
 }
 
@@ -817,23 +751,13 @@ document.addEventListener("visibilitychange", function () {
     }
 });
 
+let announcementRequestInFlight = false;
 function checkAnnouncement() {
-    const task = function () {
-        return fetch("{{ url_for('api_current_announcement') }}", {
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204 || !res.ok) return null;
-            return res.json().catch(function () { return null; });
-        });
-    };
-    const request = window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:announcement-current", task)
-        : task();
-    return Promise.resolve(request)
+    if (document.hidden || announcementRequestInFlight) return Promise.resolve();
+    announcementRequestInFlight = true;
+    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin", cache: "no-store" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data) return;
             if (!data.ok) return;
             const items = Array.isArray(data.announcements)
                 ? data.announcements
@@ -849,7 +773,8 @@ function checkAnnouncement() {
             }
             playSystemEventQueue(items);
         })
-        .catch(function () {});
+        .catch(function () {})
+        .finally(function () { announcementRequestInFlight = false; });
 }
 
 function sendAdminAnnouncement() {
@@ -888,61 +813,72 @@ function sendAdminAnnouncement() {
     });
 }
 
-// Chỉ chạy polling cần thiết cho đúng trang hiện tại. Mỗi poller có key duy nhất,
-// nên kể cả script bị khởi tạo lại cũng không tạo vòng lặp thứ hai.
-window.addEventListener("DOMContentLoaded", function () {
+// V1.13.3l: mỗi endpoint chỉ có một poller và tuân theo trạng thái trang/tab.
+let globalInvitePoller = null;
+
+function configureInvitePolling() {
     if (!window.PESNet) return;
+    if (globalInvitePoller) {
+        globalInvitePoller.stop();
+        globalInvitePoller = null;
+    }
+
     const path = window.location.pathname;
     const isRoomPage = path.startsWith("/room/");
     const isPlayersPage = path === "/players";
     const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
-    const isHistoryPage = path === "/matches";
-    const isGuidePage = path === "/guide";
-    const isPassivePage = isHistoryPage || isGuidePage;
+    if (isRoomPage && !roomPageNeedsInvitePolling()) return;
+
+    const interval = isPlayersPage ? 10000 : (isRoomPage ? 12000 : (isRankingPage ? 15000 : 15000));
+    globalInvitePoller = PESNet.createPoller({
+        key: "pending-invites",
+        task: checkPendingInvites,
+        visibleInterval: interval,
+        hiddenInterval: 60000,
+        runWhenHidden: false,
+        immediate: true,
+        jitter: 800
+    });
+}
+window.PESConfigureInvitePolling = configureInvitePolling;
+
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return;
 
     PESNet.createPoller({
         key: "heartbeat",
         task: postHeartbeat,
         visibleInterval: 60000,
-        hiddenInterval: 120000,
+        hiddenInterval: 90000,
         runWhenHidden: false,
         immediate: false,
-        jitter: 5000
+        jitter: 3000
     });
 
-    // Trong phòng đã có đủ hai người; Lịch sử/Hướng dẫn không cần dò lời mời.
-    if (!isRoomPage && !isPassivePage) {
+    configureInvitePolling();
+
+    // active-room đã có dữ liệu server khi tải trang. Chỉ kiểm tra lại khi quay lại tab.
+
+    if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
         PESNet.createPoller({
-            key: "pending-invites",
-            task: checkPendingInvites,
-            visibleInterval: isPlayersPage || isRankingPage ? 15000 : 20000,
-            hiddenInterval: 60000,
+            key: "lobby-chat",
+            task: loadBottomChatSmart,
+            visibleInterval: 20000,
+            hiddenInterval: 120000,
             runWhenHidden: false,
             immediate: true,
             jitter: 1500
         });
     }
 
-    if (!isRoomPage && !isPassivePage) {
-        PESNet.createPoller({
-            key: "active-room",
-            task: checkActiveRoom,
-            visibleInterval: isRankingPage ? 30000 : 45000,
-            hiddenInterval: 120000,
-            runWhenHidden: false,
-            immediate: false,
-            jitter: 2500
-        });
-    }
-
     PESNet.createPoller({
         key: "announcement",
         task: checkAnnouncementSmart,
-        visibleInterval: 120000,
-        hiddenInterval: 300000,
+        visibleInterval: 60000,
+        hiddenInterval: 120000,
         runWhenHidden: false,
         immediate: false,
-        jitter: 7000
+        jitter: 3000
     });
 });
 
@@ -956,22 +892,10 @@ document.addEventListener("visibilitychange", function () {
 {% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
 <script>
 function updateOnlineFloatingCount() {
-    const task = function () {
-        return fetch("{{ url_for('api_online_count') }}", {
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (!res.ok) return null;
-            return res.json().catch(function () { return null; });
-        });
-    };
-    const request = window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:online-count", task)
-        : task();
-    return Promise.resolve(request)
+    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data || !data.ok) return;
+            if (!data.ok) return;
             const el = document.getElementById("onlineFloatingCount");
             if (el) el.innerText = data.online_count;
         })
@@ -980,7 +904,7 @@ function updateOnlineFloatingCount() {
 
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return updateOnlineFloatingCount();
-    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, runWhenHidden: false, immediate: true, jitter: 5000});
+    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 60000, hiddenInterval: 120000, runWhenHidden: false, immediate: true, jitter: 2500});
 });
 </script>
 {% endif %}

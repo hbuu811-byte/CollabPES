@@ -60,26 +60,12 @@ function renderGlobalChat(messages) {
 
 function loadGlobalChat() {
     if (document.hidden) return Promise.resolve();
-    const task = function () {
-        return fetch("{{ url_for('api_global_chat') }}", {
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) {
-                if (window.PESNet) PESNet.stop("global-chat-page");
-                return null;
-            }
-            return res.json();
-        })
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (data && data.ok) renderGlobalChat(data.messages);
+            if (data.ok) renderGlobalChat(data.messages);
         })
         .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:global-chat", task)
-        : task();
 }
 
 window.addEventListener("DOMContentLoaded", function () {

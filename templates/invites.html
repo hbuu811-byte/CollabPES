@@ -78,32 +78,6 @@
 </table>
 </div>
 
-<script>
-function checkActiveRoomFromInvitesPage() {
-    if (document.hidden) return Promise.resolve();
-    const task = function () {
-        return fetch("{{ url_for('api_active_room') }}", {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
-            if (!data.ok || !data.has_room || !data.room_url || data.auto_redirect === false) return;
-            window.location.href = data.room_url;
-        })
-        .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:active-room", task)
-        : task();
-}
 
-window.addEventListener("DOMContentLoaded", function () {
-    if (!window.PESNet) return checkActiveRoomFromInvitesPage();
-    // Dùng cùng key với base.html: poller cũ bị thay thế, không thể chạy chồng.
-    PESNet.createPoller({key: "active-room", task: checkActiveRoomFromInvitesPage, visibleInterval: 10000, hiddenInterval: 60000, runWhenHidden: false, immediate: true, jitter: 1000});
-});
-</script>
 
 {% endblock %}

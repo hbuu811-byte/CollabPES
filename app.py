@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3lv1.2"
+APP_VERSION = "Collap_V1.13.3l"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1480,22 +1480,8 @@ def set_device_cookie(response):
             httponly=True,
             samesite="Lax",
         )
-
-    # CSS/JS có APP_VERSION trong URL nên có thể cache dài và immutable.
-    # Ảnh rank/giao diện giữ 30 ngày để giảm tải nhưng vẫn cho phép thay ảnh
-    # cùng tên mà không phải chờ một năm.
-    if request.endpoint == "static" or request.path.startswith("/static/"):
-        static_path = request.path.lower()
-        if static_path.endswith((".css", ".js")):
-            cache_control = "public, max-age=31536000, immutable"
-        elif static_path.startswith("/static/ranks/") or static_path.endswith(
-            (".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".ico")
-        ):
-            cache_control = "public, max-age=2592000, stale-while-revalidate=604800"
-        else:
-            cache_control = "public, max-age=604800, stale-while-revalidate=86400"
-        response.headers["Cache-Control"] = cache_control
-        response.headers.setdefault("Vary", "Accept-Encoding")
+    if request.endpoint == "static":
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
 
 
@@ -3738,6 +3724,8 @@ def build_room_state_key(room):
     """Tạo khóa trạng thái ổn định dùng chung cho HTML và API phòng đấu."""
     return "|".join([
         str(room.get("status")),
+        str(room.get("guest_user_id")),
+        str(room.get("match_id")),
         str(room.get("host_team")),
         str(room.get("guest_team")),
         str(room.get("guest_ready")),
@@ -3751,15 +3739,9 @@ def build_room_state_key(room):
         str(room.get("state_expires_at")),
         str((room.get("dispute") or {}).get("status")),
         str((room.get("dispute") or {}).get("updated_at")),
+        str(room.get("note")),
+        str(room.get("updated_at")),
     ])
-
-
-def polling_stop_response(reason="stopped"):
-    """Kết thúc một poller cũ mà không tạo lỗi 4xx trên trình duyệt."""
-    response = app.response_class(status=204)
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    response.headers["X-PES-Polling-Stop"] = str(reason or "stopped")[:80]
-    return response
 
 
 @app.route("/api/room/<room_id>/state")
@@ -3774,10 +3756,10 @@ def api_room_state(room_id):
         return jsonify({"ok": False, "error": "temporary_db_error"}), 503
 
     if not room:
-        return polling_stop_response("room_not_found")
+        return jsonify({"ok": False, "error": "room_not_found"}), 404
 
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return polling_stop_response("room_access_ended")
+        return jsonify({"ok": False, "error": "forbidden"}), 403
 
     state_key = build_room_state_key(room)
 
@@ -3795,15 +3777,28 @@ def api_room_state(room_id):
         or (user["id"] == room.get("guest_user_id") and room.get("rematch_guest_declined"))
     )
 
+    # Chỉ render lại vùng động của phòng khi state_key thay đổi. Không tải lại
+    # Document, CSS, JavaScript, avatar, ảnh Rank hoặc logo đang có trên trang.
+    room_head_to_head = build_room_head_to_head(room)
+    live_html = render_template(
+        "_room_live_content.html",
+        room=room,
+        friendly_tiers=get_available_team_tiers(),
+        room_head_to_head=room_head_to_head,
+    )
+
     return jsonify({
         "ok": True,
         "state_key": state_key,
         "status": room.get("status"),
+        "has_guest": bool(room.get("has_guest") or room.get("guest_user_id")),
+        "guest_ready": bool(room.get("guest_ready")),
         "rematch_declined": bool(room.get("rematch_declined")),
         "rematch_declined_by_me": bool(rematch_declined_by_me),
         "rematch_expired": bool(room.get("rematch_expired")),
         "timeout_seconds": int(room.get("timeout_seconds") or 0),
         "timeout_label": room.get("timeout_label") or "",
+        "html": live_html,
     })
 
 # =========================
@@ -4100,7 +4095,7 @@ def logout():
 @login_required
 def lobby_chat():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return redirect(url_for("dashboard"))
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     return render_template("chat.html", messages=list_chat_messages("global", limit=20))
 
 
@@ -4123,7 +4118,7 @@ def send_global_chat():
 @login_required
 def api_global_chat():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return polling_stop_response("lobby_chat_disabled")
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     messages = list_chat_messages("global", limit=20)
     return jsonify({"ok": True, "messages": messages})
 
@@ -4132,7 +4127,7 @@ def api_global_chat():
 @login_required
 def api_global_chat_status():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return polling_stop_response("lobby_chat_disabled")
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
     user = current_user()
     limit = 100
@@ -4168,15 +4163,15 @@ def api_global_chat_status():
 @login_required
 def api_room_chat(room_id):
     if not system_feature_enabled("room_chat_enabled"):
-        return polling_stop_response("room_chat_disabled")
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     user = current_user()
     room = get_room(room_id)
 
     if not room:
-        return polling_stop_response("room_not_found")
+        return jsonify({"ok": False, "error": "room_not_found"}), 404
 
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return polling_stop_response("room_access_ended")
+        return jsonify({"ok": False, "error": "forbidden"}), 403
 
     messages = list_chat_messages("room", room_id=room_id, limit=20)
     return jsonify({"ok": True, "messages": messages})
@@ -4185,9 +4180,6 @@ def api_room_chat(room_id):
 @app.route("/room/<room_id>/chat/send", methods=["POST"])
 @login_required
 def send_room_chat(room_id):
-    if not system_feature_enabled("room_chat_enabled"):
-        flash("Chat phòng đang bị tắt.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
     user = current_user()
     room = get_room(room_id)
 
@@ -4206,28 +4198,6 @@ def send_room_chat(room_id):
         flash(error, "warning")
 
     return redirect(url_for("room_detail", room_id=room_id))
-
-
-@app.route("/api/room/<room_id>/chat/send", methods=["POST"])
-@login_required
-def api_send_room_chat(room_id):
-    """Gửi chat phòng bằng AJAX, không redirect và không tải lại khung phòng."""
-    if not system_feature_enabled("room_chat_enabled"):
-        return jsonify({"ok": False, "disabled": True, "error": "Chat phòng đang bị tắt."})
-
-    user = current_user()
-    room = get_room(room_id)
-    if not room:
-        return polling_stop_response("room_not_found")
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return polling_stop_response("room_access_ended")
-
-    payload = request.get_json(silent=True) or request.form
-    message = payload.get("message", "")
-    ok, error = create_chat_message(user["id"], message, scope="room", room_id=room_id)
-    if not ok:
-        return jsonify({"ok": False, "error": error}), 400
-    return jsonify({"ok": True})
 
 
 @app.route("/admin/announcement", methods=["POST"])
@@ -4303,7 +4273,7 @@ def api_current_announcement():
 @login_required
 def api_send_global_chat():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return jsonify({"ok": False, "disabled": True, "error": "Chat Sảnh đang bị tắt."})
+        return jsonify({"ok": False, "error": "Chat Sảnh đang bị tắt."}), 403
     user = current_user()
     payload = request.get_json(silent=True) or {}
     message = payload.get("message", "")

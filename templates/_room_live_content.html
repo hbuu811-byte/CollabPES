@@ -1,11 +1,66 @@
 {% from "_avatar_macros.html" import player_avatar %}
-{# Nội dung động của phòng. API state render lại riêng fragment này. #}
+
+<!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_BEGIN === -->
+{% if room.streak_event %}
+<div id="winStreakToast"
+     class="win-streak-toast {{ room.streak_event.kind }}"
+     data-event-id="{{ room.streak_event.id }}"
+     data-duration="{{ room.streak_event.toast_duration or 6000 }}">
+    <div class="win-streak-toast-icon">🔔</div>
+    <div class="win-streak-toast-copy">
+        <strong>{{ room.streak_event.toast_title or 'THÔNG BÁO HỆ THỐNG' }}</strong>
+        <span><b>{{ room.streak_event.title }}</b> {{ room.streak_event.subtitle }}</span>
+    </div>
+    <button type="button" aria-label="Đóng thông báo" onclick="this.parentElement.remove()">×</button>
+</div>
+
+<div id="winStreakAnnouncement"
+     class="win-streak-announcement {{ room.streak_event.kind }}"
+     data-event-id="{{ room.streak_event.id }}"
+     data-duration="{{ room.streak_event.overlay_duration or 4000 }}">
+    <div class="win-streak-announcement-crown">🏆</div>
+    <div class="win-streak-announcement-flare left"></div>
+    <div class="win-streak-announcement-flare right"></div>
+    <div class="win-streak-announcement-inner">
+        <strong>{{ room.streak_event.title }}</strong>
+        <span>{{ room.streak_event.subtitle }}</span>
+    </div>
+</div>
+{% endif %}
+<!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_END === -->
+
+    <div class="room-stage-topbar panel">
+        <div class="room-stage-title-wrap">
+            <div>
+                <h1 class="room-stage-title">PHÒNG ĐẤU <span class="room-code-badge">#{{ room.room_code }}</span></h1>
+                <p class="room-stage-subtitle">{{ room.match_mode_label }} • 1 vs 1</p>
+            </div>
+        </div>
+        {% if room.status == 'waiting_ready' and not room.has_guest and (current_user.id == room.host_user_id or current_user.role == 'admin') %}
+        <div class="room-stage-share-wrap">
+            <button id="copyRoomShareLink"
+                    class="room-share-button"
+                    type="button"
+                    data-share-path="{{ url_for('room_join_shared', room_id=room.id) }}"
+                    aria-label="Copy link chia sẻ phòng đấu">
+                <span class="room-share-icon" aria-hidden="true">🔗</span>
+                <span class="room-share-copy">
+                    <strong>Chia sẻ phòng</strong>
+                    <small>Copy link tham gia</small>
+                </span>
+            </button>
+            <span id="roomShareStatus" class="room-share-status" role="status" aria-live="polite"></span>
+        </div>
+        {% endif %}
+    </div>
+
+    <div class="room-match-shell">
         <section class="room-side-card room-team-card home">
             <div class="room-player-heading-plain">
                 {{ player_avatar(name=room.host_name, avatar_url=room.host_avatar_url, achievement=room.host_achievement, size='sm') }}
                 <div class="room-player-name">{{ room.host_name }}</div>
                 <div class="room-player-rankline">
-                    <img src="{{ url_for('static', filename='ranks/' ~ room.host_rank_info.slug ~ '.png') }}?v={{ APP_VERSION }}" alt="{{ room.host_rank_info.name }}" loading="lazy">
+                    <img src="{{ url_for('static', filename='ranks/' ~ room.host_rank_info.slug ~ '.png') }}" alt="{{ room.host_rank_info.name }}" loading="lazy">
                     <span>{{ room.host_rank_info.name }}</span>
                 </div>
                 {% if room.host_streak_badge %}
@@ -70,7 +125,7 @@
                         {% endif %}
                     </div>
                 {% else %}
-                    <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}?v={{ APP_VERSION }}" alt="VS" loading="eager">
+                    <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
                     {% if room.status == 'playing' and room.match_mode != 'friendly' and (current_user.id == room.host_user_id or current_user.role == 'admin') %}
                         <div class="room-center-score-panel">
                             <h3 class="room-score-title">Kết quả trận đấu</h3>
@@ -184,7 +239,7 @@
                     {% endif %}
                 {% endif %}
             {% else %}
-                <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}?v={{ APP_VERSION }}" alt="VS" loading="eager">
+                <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
                 {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
                 <div class="room-center-primary-actions">
                     <a class="btn gold room-center-action-btn" href="{{ url_for('players') }}">Mời Đấu</a>
@@ -208,7 +263,7 @@
                 <div class="room-player-name">{{ room.guest_name }}</div>
                 {% if room.has_guest and room.guest_rank_info %}
                 <div class="room-player-rankline">
-                    <img src="{{ url_for('static', filename='ranks/' ~ room.guest_rank_info.slug ~ '.png') }}?v={{ APP_VERSION }}" alt="{{ room.guest_rank_info.name }}" loading="lazy">
+                    <img src="{{ url_for('static', filename='ranks/' ~ room.guest_rank_info.slug ~ '.png') }}" alt="{{ room.guest_rank_info.name }}" loading="lazy">
                     <span>{{ room.guest_rank_info.name }}</span>
                 </div>
                 {% if room.guest_streak_badge %}
@@ -281,11 +336,11 @@
             {% if system_features.room_chat_enabled %}<section class="panel room-chat-side">
                 <h2>Chat phòng</h2>
                 <div id="roomChatBox" class="chat-box"></div>
-                <form method="post" action="{{ url_for('send_room_chat', room_id=room.id) }}" class="chat-form" data-room-chat-form>
+                <form method="post" action="{{ url_for('send_room_chat', room_id=room.id) }}" class="chat-form">
                     <input name="message" maxlength="200" placeholder="Nhắn với đối thủ trong phòng..." required autocomplete="off">
                     <button class="btn green" type="submit">Gửi</button>
                 </form>
-                <div id="roomChatStatus" class="chat-note" role="status" aria-live="polite">Chat phòng chỉ dành cho 2 người trong phòng. Chống spam: 1 tin nhắn / 5 giây.</div>
+                <div class="chat-note">Chat phòng chỉ dành cho 2 người trong phòng. Chống spam: 1 tin nhắn / 5 giây.</div>
             </section>{% endif %}
         </aside>
     </div>
@@ -411,3 +466,5 @@
     </div>
     {% endif %}
         </div>
+
+    </div>

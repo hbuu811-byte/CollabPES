@@ -138,6 +138,15 @@ def register_routes(context):
         return redirect(url_for("room_detail", room_id=room_id))
 
 
+    def build_room_template_context(room):
+        return {
+            "room": room,
+            "initial_room_state_key": build_room_state_key(room),
+            "friendly_tiers": get_available_team_tiers(),
+            "room_head_to_head": build_room_head_to_head(room),
+        }
+
+
     @app.route("/room/<room_id>")
     @login_required
 
@@ -158,14 +167,30 @@ def register_routes(context):
             flash("Bạn không thuộc phòng này.", "danger")
             return redirect(url_for("rooms"))
 
-        room_head_to_head = build_room_head_to_head(room)
-        return render_template(
-            "room_detail.html",
-            room=room,
-            initial_room_state_key=build_room_state_key(room),
-            friendly_tiers=get_available_team_tiers(),
-            room_head_to_head=room_head_to_head,
+        return render_template("room_detail.html", **build_room_template_context(room))
+
+
+    @app.route("/api/room/<room_id>/view")
+    @login_required
+    def api_room_view(room_id):
+        """HTML động của phòng, chỉ tải khi state_key thật sự thay đổi."""
+        user = current_user()
+        try:
+            room = get_room(room_id)
+        except Exception:
+            return "", 503
+
+        if not room:
+            return "", 404
+        if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
+            return "", 403
+
+        response = make_response(
+            render_template("_room_live_content.html", **build_room_template_context(room))
         )
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["X-PES-Room-Partial"] = "1"
+        return response
 
 
     @app.route("/room/<room_id>/leave", methods=["POST"])

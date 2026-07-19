@@ -1,106 +1,97 @@
-# Collap_V1.13.3lv3.4 — Cập nhật phòng theo sự kiện
+# Collap_V1.13.3lv3.3 — Giảm request trong phòng đấu
 
-- Ngày giờ: 19/07/2026, múi giờ Asia/Bangkok.
-- Bản nền bắt buộc: `Collap_V1.13.3lv3.3`.
-- Loại gói: trình vá an toàn, chỉ sửa file liên quan.
+- Ngày giờ: 19/07/2026 — múi giờ Asia/Bangkok.
+- Bản nền bắt buộc: `Collap_V1.13.3lv3.2`.
+- Loại gói: trình vá an toàn; chỉ sửa đúng ba file liên quan.
 - SQL Supabase: không cần.
 
-## Mục tiêu
+## Kết quả rà soát
 
-- Không reload toàn bộ trang sau thao tác trong phòng.
-- Không thay toàn bộ `#roomLiveContent` khi chỉ một nội dung nhỏ đổi.
-- Ưu tiên cập nhật ngay sau sự kiện người dùng.
-- Giữ cache HTML hiện tại và không tải lại CSS, JavaScript hoặc ảnh không đổi.
-- Giảm polling thường xuyên nhưng vẫn có kiểm tra dự phòng để hai máy không bị lệch trạng thái khi mất tín hiệu.
+Request trùng đã được khóa ở `lv3.2`, nhưng tổng request vẫn cao vì nhiều vòng hợp lệ cùng hoạt động trong phòng:
+
+1. `/state` chạy nhanh cố định ngay cả khi phòng không thay đổi.
+2. Chat phòng gọi mỗi 15 giây.
+3. Heartbeat, lời mời và thông báo hệ thống vẫn chạy khi người chơi đang ở trong phòng.
+4. `updated_at` nằm trong `state_key`; cập nhật phụ cũng có thể làm tải thêm fragment `/view`.
 
 ## Nội dung sửa
 
-### 1. Thao tác phòng bằng AJAX
+### `app.py`
 
-Các thao tác Sẵn sàng, Hủy sẵn sàng, quay đội, gửi kết quả, xác nhận, tranh chấp, đá tiếp và gửi chat không còn đi theo redirect để tải lại toàn trang.
+- Tăng version lên `Collap_V1.13.3lv3.3`.
+- Bỏ `updated_at` khỏi `build_room_state_key()` vì các trường làm đổi giao diện đã có trong khóa.
+- Tận dụng `/api/room/<id>/state` để cập nhật online tối đa một lần mỗi 60 giây.
+- Nhờ đó trang phòng không cần gửi thêm request `/heartbeat` riêng.
 
-Backend nhận header `X-PES-Room-Action: 1` và trả JSON gồm:
+### `templates/base.html`
 
-- HTML động mới nhất của phòng;
-- `state_key` mới;
-- thông báo lỗi/cảnh báo cần hiển thị;
-- URL chuyển trang nếu người chơi thật sự rời phòng.
+Khi đang ở trang phòng:
 
-### 2. Chỉ vá node giao diện thay đổi
+- Không chạy heartbeat riêng.
+- Không kiểm tra `/api/invites/pending`.
+- Không chạy active-room.
+- Không chạy chat sảnh.
+- Không polling thông báo hệ thống.
 
-Client không còn dùng:
+Khi ở ngoài phòng:
 
-```text
-target.innerHTML = html
-```
+- Heartbeat: 60 giây.
+- Lời mời: 18 giây.
+- Active room: 30–45 giây.
+- Chat sảnh khi mở: 30 giây.
+- Thông báo hệ thống: 90 giây.
 
-Thay vào đó, bộ vá DOM so sánh node, thuộc tính và nội dung chữ. Chỉ node khác mới được cập nhật. Các phần không đổi giữ nguyên:
+### `templates/room_detail.html`
 
-- ảnh đã tải;
-- focus và vị trí con trỏ;
-- tỷ số đang nhập;
-- trạng thái mở của khung chi tiết;
-- animation và vị trí cuộn.
+- `/state` dùng chu kỳ thích ứng:
+  - phản hồi nhanh ngay sau khi phòng thay đổi;
+  - sau 4 lần không đổi bắt đầu giãn;
+  - sau 8 lần không đổi có thể giãn tối đa 18 giây;
+  - khi có thay đổi hoặc người dùng thao tác, lập tức quay về chu kỳ nhanh.
+- Chat phòng:
+  - 30 giây khi khung chat đang nằm trong màn hình;
+  - 60 giây khi khung chat ngoài vùng nhìn;
+  - 120 giây khi tab ẩn.
+- Không thêm reload toàn trang.
+- Không sửa khóa request hoặc logic giữ ô tỷ số của `lv3.2`.
 
-### 3. Cache phía trình duyệt
+## Ước lượng giảm request trong phòng ổn định
 
-- HTML động gần nhất lưu trong `sessionStorage` theo ID phòng.
-- `state_key` gần nhất cũng được lưu riêng.
-- Nếu server trả cùng HTML, không vá DOM lần nữa.
-- CSS/JS/ảnh tiếp tục dùng cache dài của nhánh `lv3.1`–`lv3.3`.
+So với `lv3.2`, mỗi người chơi trong phòng sẽ loại bỏ hoàn toàn:
 
-### 4. Event-first
+- 1 vòng lời mời.
+- 1 vòng heartbeat.
+- 1 vòng thông báo hệ thống.
 
-Cập nhật ngay khi có:
+Đồng thời:
 
-- thao tác phòng thành công;
-- tab trở lại hiển thị;
-- cửa sổ được focus;
-- kết nối mạng trở lại;
-- trang được phục hồi từ BFCache;
-- sự kiện từ tab khác cùng phòng qua `BroadcastChannel`.
+- `/state` tự giãn khi không có thay đổi.
+- Chat giảm khoảng một nửa hoặc hơn.
+- Các cập nhật phụ không còn tự kích hoạt `/view` chỉ vì `updated_at` đổi.
 
-Không còn poller `/state` của `PESNet` chạy liên tục.
-
-### 5. Kiểm tra dự phòng
-
-Hạ tầng hiện tại chưa bật Supabase Realtime trực tiếp ở trình duyệt. Để tránh máy khách không nhận được thao tác của đối thủ khi mất sự kiện, giữ một watchdog nhẹ:
-
-| Trạng thái | Chu kỳ dự phòng |
-|---|---:|
-| Chờ xác nhận kết quả | 8–15 giây |
-| Chờ sẵn sàng / Đá tiếp | 15 giây |
-| Đang thi đấu | 60 giây |
-| Trạng thái khác | 30 giây |
-
-Tab bị ẩn không gửi request.
-
-### 6. Chat theo thay đổi
-
-- Client gửi `since=<chat_key>`.
-- Không có tin mới: API trả HTTP 204, không gửi danh sách và không render lại chat.
-- Có tin mới: chỉ cập nhật khung chat.
-- Chat kiểm tra ngay sau thao tác, khi tab hiện lại và có watchdog 60 giây.
+Mức giảm thực tế phụ thuộc trạng thái phòng và số tin chat, nhưng trong giai đoạn thi đấu ổn định dự kiến giảm khoảng 45–70% số request nền của trang phòng.
 
 ## File được sửa sau khi chạy
 
 | File | Nội dung |
 |---|---|
-| `app.py` | Version; JSON response cho thao tác phòng; chat `since/chat_key` |
-| `templates/room_detail.html` | AJAX form; event sync; cache; vá DOM theo node; watchdog nhẹ |
+| `app.py` | Version, state key, gộp online presence vào `/state` |
+| `templates/base.html` | Tắt poller toàn cục trong phòng; giãn poller ngoài phòng |
+| `templates/room_detail.html` | Polling `/state` thích ứng và giãn chat phòng |
 
 ## Không thay đổi
 
-- Không sửa RP, công thức Rank hoặc phạt bỏ cuộc.
-- Không sửa lịch sử trận và lịch sử tỷ số trong phòng.
-- Không sửa Admin, CSS, `vercel.json` hoặc cấu trúc Supabase.
-- Không thêm thư viện JavaScript bên ngoài.
+- Không sửa RP hoặc phạt bỏ cuộc.
+- Không sửa lịch sử trận.
+- Không sửa Admin.
+- Không sửa modal hoặc giao diện phòng.
+- Không sửa CSS/JS cache đã có.
+- Không thay đổi cấu trúc Supabase.
 
-## Cài đặt
+## Cách áp dụng
 
-1. Chép ba file trong ZIP vào thư mục gốc dự án `Collap_V1.13.3lv3.3`.
-2. Nhấp đúp `APPLY_Collap_V1.13.3lv3.4.bat`.
-3. Commit đúng:
-   - `app.py`;
-   - `templates/room_detail.html`.
-4. Không commit `.collap_v1_13_3lv3_4_backup`.
+1. Giải nén ZIP.
+2. Chép ba file trong ZIP vào thư mục gốc dự án `Collap_V1.13.3lv3.2`.
+3. Nhấp đúp `APPLY_Collap_V1.13.3lv3.3.bat`.
+4. Commit đúng ba file được báo đã sửa.
+5. Không commit thư mục `.collap_v1_13_3lv3_3_backup`.

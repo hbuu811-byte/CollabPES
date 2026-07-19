@@ -373,7 +373,8 @@ function checkPendingInvites(signal) {
             return;
         }
         if (!result.ok && result.status !== 204) return;
-        const data = result.status === 204 ? {invites: []} : (result.data || {invites: []});
+        const data = result.status === 204 ? {ok: true, invites: []} : (result.data || {ok: false, invites: []});
+        if (data.ok === false) return;
         if (!data.invites || data.invites.length === 0) {
             const backdrop = document.getElementById("inviteModalBackdrop");
             if (backdrop) backdrop.style.display = "none";
@@ -949,10 +950,19 @@ document.addEventListener("visibilitychange", function () {
     if (!window.PESNet && roomPageNeedsInvitePolling()) scheduleInviteFallback(100);
 });
 
-window.addEventListener("DOMContentLoaded", function () {
-    // Lời mời phải khởi động cả khi file PESNet chưa sẵn sàng; khi PESNet có
-    // mặt, configureInvitePolling() tự dùng poller chuẩn và không tạo timer phụ.
+function bootstrapInvitePolling() {
     configureInvitePolling();
+}
+if (document.readyState === "loading") {
+    window.addEventListener("DOMContentLoaded", bootstrapInvitePolling, {once: true});
+} else {
+    bootstrapInvitePolling();
+}
+window.addEventListener("pageshow", function (event) {
+    if (event.persisted) bootstrapInvitePolling();
+});
+
+window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return;
 
     PESNet.createPoller({

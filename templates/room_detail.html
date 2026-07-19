@@ -318,13 +318,29 @@ function restoreRoomChatDraft(draft) {
 function refreshRoomLiveContent(data) {
     const liveRoot = document.getElementById("roomLiveContent");
     if (!liveRoot || typeof data.html !== "string") return;
-    const chatDraft = captureRoomChatDraft();
+
+    // Chat không thuộc trạng thái thi đấu. Giữ nguyên DOM cũ để không làm mất
+    // nội dung đang gõ, vị trí cuộn hoặc tạo thêm request chat mỗi lần đội/nút đổi.
+    const existingChatPanel = liveRoot.querySelector(".room-chat-side");
+    const chatDraft = existingChatPanel ? null : captureRoomChatDraft();
     liveRoot.innerHTML = data.html;
+    const renderedChatPanel = liveRoot.querySelector(".room-chat-side");
+    let chatPanelPreserved = false;
+    if (existingChatPanel && renderedChatPanel) {
+        renderedChatPanel.replaceWith(existingChatPanel);
+        chatPanelPreserved = true;
+    }
+
     syncRoomCountdownFromDom();
     restoreRoomScoreDraft();
-    restoreRoomChatDraft(chatDraft);
+    if (!chatPanelPreserved) restoreRoomChatDraft(chatDraft);
     syncRoomShareButton();
-    if (typeof window.PESRefreshRoomChat === "function") window.PESRefreshRoomChat();
+
+    if (!renderedChatPanel && existingChatPanel && typeof window.PESStopRoomChatPolling === "function") {
+        window.PESStopRoomChatPolling();
+    } else if (!chatPanelPreserved && renderedChatPanel && typeof window.PESRefreshRoomChat === "function") {
+        window.PESRefreshRoomChat();
+    }
     document.dispatchEvent(new CustomEvent("pes:room-state-updated", {detail: data}));
 }
 
@@ -364,28 +380,51 @@ async function checkRoomState() {
     const stateUrl = new URL("{{ url_for('api_room_state', room_id=room.id) }}", window.location.origin);
     if (currentRoomStateKey) stateUrl.searchParams.set("since", currentRoomStateKey);
 
-    const task = function (requestSignal) {
-        return fetch(stateUrl.toString(), {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal,
-            headers: {"X-Requested-With": "XMLHttpRequest"}
-        });
+    const requestOptions = {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
     };
 
     try {
-        const res = window.PESNet
-            ? await PESNet.runLocked(roomStateRequestKey, task, roomStateAbortController.signal)
-            : await task(roomStateAbortController.signal);
-        if (res.status === 204 || res.status === 304) return;
-        if ([401, 403, 404].includes(res.status)) {
+        let result;
+        if (window.PESNet) {
+            result = await PESNet.fetchJson(
+                stateUrl.toString(),
+                requestOptions,
+                12000,
+                roomStateRequestKey,
+                roomStateAbortController.signal
+            );
+        } else {
+            const res = await fetch(stateUrl.toString(), Object.assign({}, requestOptions, {signal: roomStateAbortController.signal}));
+            const text = res.status === 204 ? "" : await res.text();
+            let data = null;
+            try { data = text ? JSON.parse(text) : null; } catch (error) {}
+            result = {
+                ok: res.ok,
+                status: res.status,
+                redirected: Boolean(res.redirected),
+                url: res.url || "",
+                contentType: res.headers.get("content-type") || "",
+                data: data
+            };
+        }
+
+        if (result.status === 204 || result.status === 304) return;
+        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
+            stopRoomRealtime();
+            window.location.href = "{{ url_for('login') }}";
+            return;
+        }
+        if ([403, 404].includes(result.status)) {
             stopRoomRealtime();
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
-        if (!res.ok) return;
-        const data = await res.json();
+        if (!result.ok) return;
+        const data = result.data;
         if (!data || !data.ok) return;
         updateRoomPollingContext(data);
 
@@ -579,32 +618,53 @@ window.PESStopRoomChatPolling = stopRoomChatPolling;
 
 function loadRoomChat(signal) {
     if (document.hidden || roomChatStopped || !document.getElementById("roomChatBox")) return Promise.resolve();
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", {
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal,
-            headers: {"X-Requested-With": "XMLHttpRequest"}
-        }).then(function (res) {
-            if (res.status === 204) return {ok: true, messages: []};
-            if ([401, 403, 404].includes(res.status)) {
-                stopRoomChatPolling();
-                return null;
-            }
-            if (!res.ok) return null;
-            return res.json();
-        });
+    const options = {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
     };
     const requestPromise = window.PESNet
-        ? PESNet.runLocked(roomChatRequestKey, task, signal)
-        : task(signal);
+        ? PESNet.fetchJson(
+            "{{ url_for('api_room_chat', room_id=room.id) }}",
+            options,
+            10000,
+            roomChatRequestKey,
+            signal
+        )
+        : fetch("{{ url_for('api_room_chat', room_id=room.id) }}", Object.assign({}, options, {signal: signal}))
+            .then(function (res) {
+                return res.text().then(function (text) {
+                    let data = null;
+                    try { data = text ? JSON.parse(text) : null; } catch (error) {}
+                    return {
+                        ok: res.ok,
+                        status: res.status,
+                        redirected: Boolean(res.redirected),
+                        url: res.url || "",
+                        contentType: res.headers.get("content-type") || "",
+                        data: data
+                    };
+                });
+            });
+
     return requestPromise
-        .then(function (data) {
+        .then(function (result) {
+            if (!result) return;
+            if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
+                stopRoomChatPolling();
+                setRoomChatStatus("Phiên đăng nhập đã hết hạn.");
+                return;
+            }
+            if ([403, 404].includes(result.status)) {
+                stopRoomChatPolling();
+                return;
+            }
+            const data = result.data;
             if (data && data.stop_polling) {
                 stopRoomChatPolling();
                 return;
             }
-            if (data && data.ok) renderRoomChat(data.messages);
+            if (result.ok && data && data.ok) renderRoomChat(data.messages);
         })
         .catch(function (error) {
             if (!(error && error.name === "AbortError")) setRoomChatStatus("Chat đang kết nối lại...");
@@ -653,28 +713,37 @@ function submitRoomChat(form) {
     if (button) button.disabled = true;
     setRoomChatStatus("Đang gửi tin nhắn...");
 
-    const task = function (requestSignal) {
-        return fetch(form.action, {
-            method: "POST",
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal,
-            headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
-            body: new FormData(form)
-        }).then(function (res) {
+    const options = {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
+        body: new FormData(form)
+    };
+    const requestPromise = window.PESNet
+        ? PESNet.fetchJson(form.action, options, 12000, roomChatSendRequestKey)
+        : fetch(form.action, options).then(function (res) {
             return res.text().then(function (text) {
                 let data = null;
                 try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                return {status: res.status, ok: res.ok, data: data};
+                return {
+                    status: res.status,
+                    ok: res.ok,
+                    redirected: Boolean(res.redirected),
+                    url: res.url || "",
+                    contentType: res.headers.get("content-type") || "",
+                    data: data
+                };
             });
         });
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.runLocked(roomChatSendRequestKey, task)
-        : task();
 
     return requestPromise.then(function (result) {
-        if (result.status === 401 || result.status === 403 || result.status === 404) {
+        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
+            stopRoomChatPolling();
+            setRoomChatStatus("Phiên đăng nhập đã hết hạn.");
+            return;
+        }
+        if (result.status === 403 || result.status === 404) {
             stopRoomChatPolling();
             setRoomChatStatus((result.data && result.data.error) || "Bạn không còn quyền chat trong phòng này.");
             return;

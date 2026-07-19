@@ -244,17 +244,25 @@
 
             return fetch(url, config)
                 .then(function (response) {
+                    const metadata = {
+                        ok: response.ok,
+                        status: response.status,
+                        redirected: Boolean(response.redirected),
+                        url: response.url || "",
+                        contentType: response.headers.get("content-type") || ""
+                    };
                     if (response.status === 204) {
-                        return {ok: response.ok, status: response.status, data: null};
+                        return Object.assign(metadata, {data: null});
                     }
                     return response.text().then(function (text) {
                         let data = null;
                         try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                        return {ok: response.ok, status: response.status, data: data};
+                        return Object.assign(metadata, {data: data});
                     });
                 })
                 .finally(function () {
                     clearTimeout(timeout);
+                    timeoutController.signal.removeEventListener("abort", abortCombined);
                     if (signal) signal.removeEventListener("abort", abortCombined);
                     if (externalSignal) externalSignal.removeEventListener("abort", abortCombined);
                 });
@@ -263,6 +271,29 @@
         return lockKey ? runLocked(lockKey, task, externalSignal) : task(externalSignal);
     }
 
+    function isUnexpectedHtml(result) {
+        if (!result) return false;
+        if (result.redirected) return true;
+        const status = Number(result.status || 0);
+        const contentType = String(result.contentType || "").toLowerCase();
+        // Chỉ coi HTML 2xx là trang đăng nhập bị fetch theo redirect. Lỗi 5xx
+        // dạng HTML phải được giữ lại để poller thử lại, không ép người dùng login.
+        return status >= 200 && status < 300 && contentType.includes("text/html");
+    }
+
+    function stopNetworkForNavigation(event) {
+        // BFCache: giữ poller để pageshow có thể resume, nhưng hủy request đang chạy.
+        if (event && event.type === "pagehide" && event.persisted) {
+            abortAllRequests();
+            return;
+        }
+        stopAllPollers();
+        abortAllRequests();
+    }
+
+    global.addEventListener("pagehide", stopNetworkForNavigation);
+    global.addEventListener("beforeunload", stopNetworkForNavigation);
+
     global.PESNet = {
         createPoller: createPoller,
         stopPoller: stopPoller,
@@ -270,6 +301,8 @@
         runLocked: runLocked,
         abortRequest: abortRequest,
         abortAllRequests: abortAllRequests,
-        fetchJson: fetchJson
+        fetchJson: fetchJson,
+        isAbortError: isAbortError,
+        isUnexpectedHtml: isUnexpectedHtml
     };
 })(window);

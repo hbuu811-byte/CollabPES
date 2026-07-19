@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3lv1.3"
+APP_VERSION = "Collap_V1.13.3lv2.3"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1480,22 +1480,8 @@ def set_device_cookie(response):
             httponly=True,
             samesite="Lax",
         )
-
-    # CSS/JS có APP_VERSION trong URL nên có thể cache dài và immutable.
-    # Ảnh rank/giao diện giữ 30 ngày để giảm tải nhưng vẫn cho phép thay ảnh
-    # cùng tên mà không phải chờ một năm.
-    if request.endpoint == "static" or request.path.startswith("/static/"):
-        static_path = request.path.lower()
-        if static_path.endswith((".css", ".js")):
-            cache_control = "public, max-age=31536000, immutable"
-        elif static_path.startswith("/static/ranks/") or static_path.endswith(
-            (".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif", ".ico")
-        ):
-            cache_control = "public, max-age=2592000, stale-while-revalidate=604800"
-        else:
-            cache_control = "public, max-age=604800, stale-while-revalidate=86400"
-        response.headers["Cache-Control"] = cache_control
-        response.headers.setdefault("Vary", "Accept-Encoding")
+    if request.endpoint == "static":
+        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
     return response
 
 
@@ -3689,10 +3675,14 @@ def api_pending_invites():
                 "accept_url": url_for("respond_invite", invite_id=invite["id"]),
                 "reject_url": url_for("respond_invite", invite_id=invite["id"]),
             })
-        return jsonify({"invites": data})
+        response = jsonify({"invites": data})
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
     except Exception as exc:
         print(f"api_pending_invites ERROR user={user.get('id')}: {type(exc).__name__}: {exc}")
-        return jsonify({"invites": []})
+        response = jsonify({"invites": []})
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
 
 
@@ -3738,6 +3728,8 @@ def build_room_state_key(room):
     """Tạo khóa trạng thái ổn định dùng chung cho HTML và API phòng đấu."""
     return "|".join([
         str(room.get("status")),
+        str(room.get("guest_user_id")),
+        str(room.get("match_id")),
         str(room.get("host_team")),
         str(room.get("guest_team")),
         str(room.get("guest_ready")),
@@ -3751,15 +3743,9 @@ def build_room_state_key(room):
         str(room.get("state_expires_at")),
         str((room.get("dispute") or {}).get("status")),
         str((room.get("dispute") or {}).get("updated_at")),
+        str(room.get("note")),
+        str(room.get("updated_at")),
     ])
-
-
-def polling_stop_response(reason="stopped"):
-    """Kết thúc một poller cũ mà không tạo lỗi 4xx trên trình duyệt."""
-    response = app.response_class(status=204)
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    response.headers["X-PES-Polling-Stop"] = str(reason or "stopped")[:80]
-    return response
 
 
 @app.route("/api/room/<room_id>/state")
@@ -3774,10 +3760,10 @@ def api_room_state(room_id):
         return jsonify({"ok": False, "error": "temporary_db_error"}), 503
 
     if not room:
-        return polling_stop_response("room_not_found")
+        return jsonify({"ok": False, "error": "room_not_found"}), 404
 
     if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return polling_stop_response("room_access_ended")
+        return jsonify({"ok": False, "error": "forbidden"}), 403
 
     state_key = build_room_state_key(room)
 
@@ -3795,16 +3781,40 @@ def api_room_state(room_id):
         or (user["id"] == room.get("guest_user_id") and room.get("rematch_guest_declined"))
     )
 
-    return jsonify({
+    # Chỉ render lại vùng động của phòng khi state_key thay đổi. Không tải lại
+    # Document, CSS, JavaScript, avatar, ảnh Rank hoặc logo đang có trên trang.
+    try:
+        room_head_to_head = build_room_head_to_head(room)
+        live_html = render_template(
+            "_room_live_content.html",
+            room=room,
+            current_user=user,
+            system_features=get_system_features(),
+            friendly_tiers=get_available_team_tiers(),
+            room_head_to_head=room_head_to_head,
+        )
+    except Exception as exc:
+        app.logger.exception("api_room_state render failed room=%s: %s", room_id, exc)
+        response = jsonify({"ok": False, "error": "temporary_render_error"})
+        response.status_code = 503
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+    response = jsonify({
         "ok": True,
         "state_key": state_key,
         "status": room.get("status"),
+        "has_guest": bool(room.get("has_guest") or room.get("guest_user_id")),
+        "guest_ready": bool(room.get("guest_ready")),
         "rematch_declined": bool(room.get("rematch_declined")),
         "rematch_declined_by_me": bool(rematch_declined_by_me),
         "rematch_expired": bool(room.get("rematch_expired")),
         "timeout_seconds": int(room.get("timeout_seconds") or 0),
         "timeout_label": room.get("timeout_label") or "",
+        "html": live_html,
     })
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 # =========================
 # Auth
@@ -4100,7 +4110,7 @@ def logout():
 @login_required
 def lobby_chat():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return redirect(url_for("dashboard"))
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     return render_template("chat.html", messages=list_chat_messages("global", limit=20))
 
 
@@ -4123,7 +4133,7 @@ def send_global_chat():
 @login_required
 def api_global_chat():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return polling_stop_response("lobby_chat_disabled")
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     messages = list_chat_messages("global", limit=20)
     return jsonify({"ok": True, "messages": messages})
 
@@ -4132,7 +4142,7 @@ def api_global_chat():
 @login_required
 def api_global_chat_status():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return polling_stop_response("lobby_chat_disabled")
+        return (jsonify({"ok": False, "error": "Tính năng đang tắt"}), 403) if request.path.startswith("/api/") else redirect(url_for("dashboard"))
     """Dữ liệu nhẹ để hiển thị số tin chat sảnh chưa đọc khi khung chat đang đóng."""
     user = current_user()
     limit = 100
@@ -4167,67 +4177,115 @@ def api_global_chat_status():
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
+    # Khi Admin vừa tắt chat hoặc người dùng vừa rời phòng, poller cũ nhận
+    # lệnh dừng bằng response 200 thay vì tạo lỗi 403 giả trên Network.
     if not system_feature_enabled("room_chat_enabled"):
-        return polling_stop_response("room_chat_disabled")
+        response = jsonify({
+            "ok": False,
+            "error": "Chat phòng đang tắt.",
+            "stop_polling": True,
+            "messages": [],
+        })
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
     user = current_user()
-    room = get_room(room_id)
+    try:
+        room = get_room(room_id)
+    except Exception as exc:
+        app.logger.warning("api_room_chat get_room failed room=%s: %s", room_id, exc)
+        response = jsonify({"ok": False, "error": "temporary_db_error"})
+        response.status_code = 503
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
     if not room:
-        return polling_stop_response("room_not_found")
+        response = jsonify({"ok": False, "error": "room_not_found", "stop_polling": True})
+        response.status_code = 404
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return polling_stop_response("room_access_ended")
+    if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
+        # Poller có thể vừa gửi request đúng lúc người dùng rời phòng. Trả lệnh
+        # dừng bình thường thay vì 403 để Network không ghi nhận lỗi giả trong
+        # luồng sử dụng hợp lệ. Không trả bất kỳ nội dung chat nào.
+        response = jsonify({
+            "ok": False,
+            "error": "not_room_member",
+            "stop_polling": True,
+            "messages": [],
+        })
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
 
-    messages = list_chat_messages("room", room_id=room_id, limit=20)
-    return jsonify({"ok": True, "messages": messages})
+    try:
+        messages = list_chat_messages("room", room_id=room_id, limit=20)
+    except Exception as exc:
+        app.logger.warning("api_room_chat list failed room=%s: %s", room_id, exc)
+        response = jsonify({"ok": False, "error": "temporary_db_error"})
+        response.status_code = 503
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+    response = jsonify({"ok": True, "messages": messages})
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.route("/room/<room_id>/chat/send", methods=["POST"])
 @login_required
 def send_room_chat(room_id):
+    wants_json = (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.accept_mimetypes.best == "application/json"
+    )
+
     if not system_feature_enabled("room_chat_enabled"):
-        flash("Chat phòng đang bị tắt.", "warning")
+        if wants_json:
+            return jsonify({"ok": False, "error": "Chat phòng đang tắt.", "stop_polling": True}), 409
+        flash("Chat phòng đang tắt.", "warning")
         return redirect(url_for("room_detail", room_id=room_id))
+
     user = current_user()
-    room = get_room(room_id)
+    try:
+        room = get_room(room_id)
+    except Exception:
+        if wants_json:
+            return jsonify({"ok": False, "error": "Dữ liệu phòng đang bận. Hãy thử lại."}), 503
+        flash("Dữ liệu phòng đang bận. Hãy thử lại.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
 
     if not room:
+        if wants_json:
+            return jsonify({"ok": False, "error": "Không tìm thấy phòng."}), 404
         flash("Không tìm thấy phòng.", "danger")
         return redirect(url_for("rooms"))
 
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
+    if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
+        if wants_json:
+            return jsonify({"ok": False, "error": "Bạn không thuộc phòng này."}), 403
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 
     message = request.form.get("message", "")
-    ok, error = create_chat_message(user["id"], message, scope="room", room_id=room_id)
+    try:
+        ok, error = create_chat_message(user["id"], message, scope="room", room_id=room_id)
+    except Exception as exc:
+        app.logger.warning("send_room_chat failed room=%s user=%s: %s", room_id, user.get("id"), exc)
+        if wants_json:
+            return jsonify({"ok": False, "error": "Không gửi được tin nhắn lúc này."}), 503
+        flash("Không gửi được tin nhắn lúc này.", "warning")
+        return redirect(url_for("room_detail", room_id=room_id))
+
+    if wants_json:
+        if not ok:
+            status_code = 429 if "5 giây" in str(error or "") else 400
+            return jsonify({"ok": False, "error": error or "Không gửi được tin nhắn."}), status_code
+        return jsonify({"ok": True})
 
     if not ok:
         flash(error, "warning")
-
     return redirect(url_for("room_detail", room_id=room_id))
-
-
-@app.route("/api/room/<room_id>/chat/send", methods=["POST"])
-@login_required
-def api_send_room_chat(room_id):
-    """Gửi chat phòng bằng AJAX, không redirect và không tải lại khung phòng."""
-    if not system_feature_enabled("room_chat_enabled"):
-        return jsonify({"ok": False, "disabled": True, "error": "Chat phòng đang bị tắt."})
-
-    user = current_user()
-    room = get_room(room_id)
-    if not room:
-        return polling_stop_response("room_not_found")
-    if user["id"] not in [room["host_user_id"], room["guest_user_id"]] and not is_admin_user(user):
-        return polling_stop_response("room_access_ended")
-
-    payload = request.get_json(silent=True) or request.form
-    message = payload.get("message", "")
-    ok, error = create_chat_message(user["id"], message, scope="room", room_id=room_id)
-    if not ok:
-        return jsonify({"ok": False, "error": error}), 400
-    return jsonify({"ok": True})
 
 
 @app.route("/admin/announcement", methods=["POST"])
@@ -4303,7 +4361,7 @@ def api_current_announcement():
 @login_required
 def api_send_global_chat():
     if not system_feature_enabled("lobby_chat_enabled"):
-        return jsonify({"ok": False, "disabled": True, "error": "Chat Sảnh đang bị tắt."})
+        return jsonify({"ok": False, "error": "Chat Sảnh đang bị tắt."}), 403
     user = current_user()
     payload = request.get_json(silent=True) or {}
     message = payload.get("message", "")

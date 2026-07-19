@@ -6,21 +6,21 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION|urlencode }}">
-    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION }}">
+    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION }}" defer></script>
     {% if current_user and not (auth_only|default(false)) %}
     <script>
     window.PES_SESSION_CONFIG = {
         enabled: true,
         idleTimeoutSeconds: 3600,
         warningSeconds: 300,
-        activitySyncSeconds: 300,
+        activitySyncSeconds: 60,
         activityUrl: {{ url_for('api_session_activity')|tojson }},
         timeoutCheckUrl: {{ url_for('api_session_timeout_check')|tojson }},
         logoutUrl: {{ url_for('logout')|tojson }}
     };
     </script>
-    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
+    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION }}" defer></script>
     {% endif %}
 
 <script>
@@ -221,17 +221,19 @@ function toggleTheme(){
 {% endif %}
 
 <script>
-function postHeartbeat() {
-    const task = function () {
+function postHeartbeat(signal) {
+    if (document.hidden) return Promise.resolve();
+    const task = function (requestSignal) {
         return fetch("{{ url_for('heartbeat') }}", {
             method: "POST",
             credentials: "same-origin",
-            cache: "no-store"
+            cache: "no-store",
+            signal: requestSignal
         }).catch(function () {});
     };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:heartbeat", task)
-        : task();
+    return window.PESNet
+        ? PESNet.runLocked("heartbeat-request", task, signal)
+        : task(signal);
 }
 
 let lastInviteId = null;
@@ -283,17 +285,22 @@ function renderInvitePopup(invite) {
 
 let lastKnownActiveRoomId = null;
 
-function checkActiveRoom() {
+function checkActiveRoom(signal) {
     if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
-
-    const task = function () {
+    const task = function (requestSignal) {
         return fetch("{{ url_for('api_active_room') }}", {
             method: "GET",
             credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) { return res.json(); })
-        .then(function (data) {
+            cache: "no-store",
+            signal: requestSignal
+        }).then(function (res) { return res.json(); });
+    };
+
+    const requestPromise = window.PESNet
+        ? PESNet.runLocked("active-room-request", task, signal)
+        : task(signal);
+    return requestPromise
+    .then(function (data) {
         const roomLink = document.getElementById("activeRoomTopbarLink");
         if (!roomLink) return;
 
@@ -312,30 +319,61 @@ function checkActiveRoom() {
         if (data.auto_redirect === true) {
             window.location.replace(data.room_url);
         }
-        })
-        .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:active-room", task)
-        : task();
+    })
+    .catch(function () {});
 }
 
 
-let pendingInvitesRequestPromise = null;
-function checkPendingInvites() {
-    if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
+document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) checkActiveRoom();
+});
 
-    const task = function () {
-        return fetch("{{ url_for('api_pending_invites') }}", {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) return {invites: []};
-            return res.json();
-        })
-        .then(function (data) {
+function roomPageNeedsInvitePolling() {
+    const context = window.PES_ROOM_CONTEXT;
+    if (!window.location.pathname.startsWith("/room/")) return true;
+    return Boolean(context && context.status === "waiting_ready" && !context.hasGuest);
+}
+
+function checkPendingInvites(signal) {
+    if (document.hidden || !roomPageNeedsInvitePolling()) return Promise.resolve();
+    const options = {
+        method: "GET",
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
+    };
+    const requestPromise = window.PESNet
+        ? PESNet.fetchJson(
+            "{{ url_for('api_pending_invites') }}",
+            options,
+            10000,
+            "pending-invites-request",
+            signal
+        )
+        : fetch("{{ url_for('api_pending_invites') }}", Object.assign({}, options, {signal: signal}))
+            .then(function (res) {
+                return res.text().then(function (text) {
+                    let data = null;
+                    try { data = text ? JSON.parse(text) : null; } catch (error) {}
+                    return {
+                        ok: res.ok,
+                        status: res.status,
+                        redirected: Boolean(res.redirected),
+                        url: res.url || "",
+                        contentType: res.headers.get("content-type") || "",
+                        data: data
+                    };
+                });
+            });
+    return requestPromise
+    .then(function (result) {
+        if (!result) return;
+        if (result.status === 401 || result.status === 403 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
+            stopInvitePolling();
+            return;
+        }
+        if (!result.ok && result.status !== 204) return;
+        const data = result.status === 204 ? {invites: []} : (result.data || {invites: []});
         if (!data.invites || data.invites.length === 0) {
             const backdrop = document.getElementById("inviteModalBackdrop");
             if (backdrop) backdrop.style.display = "none";
@@ -348,18 +386,8 @@ function checkPendingInvites() {
         if (invite.id !== lastInviteId) {
             renderInvitePopup(invite);
         }
-        })
-        .catch(function () {});
-    };
-
-    if (window.PESNet && typeof PESNet.singleFlight === "function") {
-        return PESNet.singleFlight("api:pending-invites", task);
-    }
-    if (pendingInvitesRequestPromise) return pendingInvitesRequestPromise;
-    pendingInvitesRequestPromise = Promise.resolve()
-        .then(task)
-        .finally(function () { pendingInvitesRequestPromise = null; });
-    return pendingInvitesRequestPromise;
+    })
+    .catch(function () {});
 }
 
 function escapeHtml(text) {
@@ -405,8 +433,6 @@ function renderBottomChat(messages) {
 }
 
 let isLobbyChatOpen = false;
-let lobbyChatPoller = null;
-let bottomChatSendInFlight = false;
 let chatLastReadFallback = null;
 const chatLastReadStorageKey = "rankzone_chat_last_read_{{ current_user.id }}";
 
@@ -472,29 +498,6 @@ document.addEventListener("click", function(event) {
     if (button) button.setAttribute("aria-expanded", "false");
 });
 
-function startLobbyChatPolling() {
-    if (!window.PESNet || !isLobbyChatOpen) return loadBottomChat();
-    lobbyChatPoller = PESNet.createPoller({
-        key: "lobby-chat",
-        task: loadBottomChatSmart,
-        visibleInterval: 20000,
-        hiddenInterval: 120000,
-        runWhenHidden: false,
-        immediate: true,
-        jitter: 2000
-    });
-    return lobbyChatPoller;
-}
-
-function stopLobbyChatPolling() {
-    if (lobbyChatPoller && typeof lobbyChatPoller.stop === "function") {
-        lobbyChatPoller.stop();
-    } else if (window.PESNet && typeof PESNet.stop === "function") {
-        PESNet.stop("lobby-chat");
-    }
-    lobbyChatPoller = null;
-}
-
 function toggleLobbyChat() {
     const panel = document.getElementById("bottomLobbyChat");
     const button = document.getElementById("chatToggleButton");
@@ -512,67 +515,54 @@ function toggleLobbyChat() {
     }
 
     if (willOpen) {
-        startLobbyChatPolling();
+        loadBottomChat();
     } else {
-        stopLobbyChatPolling();
         checkLobbyChatUnread();
     }
 }
 
-function loadBottomChatSmart() {
+function loadBottomChatSmart(signal) {
     if (document.hidden || !isLobbyChatOpen) return Promise.resolve();
-    return loadBottomChat();
+    return loadBottomChat(signal);
 }
 
-function checkAnnouncementSmart() {
+function checkAnnouncementSmart(signal) {
     if (document.hidden) return Promise.resolve();
-    return checkAnnouncement();
+    return checkAnnouncement(signal);
 }
 
-function updateOnlineFloatingCountSmart() {
+function updateOnlineFloatingCountSmart(signal) {
     if (document.hidden) return Promise.resolve();
-    return updateOnlineFloatingCount();
+    return updateOnlineFloatingCount(signal);
 }
 
-function loadBottomChat() {
-    const task = function () {
+function loadBottomChat(signal) {
+    const task = function (requestSignal) {
         return fetch("{{ url_for('api_global_chat') }}", {
             credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) {
-                stopLobbyChatPolling();
-                return null;
-            }
-            return res.json();
-        })
+            cache: "no-store",
+            signal: requestSignal
+        }).then(function (res) { return res.json(); });
+    };
+    const requestPromise = window.PESNet
+        ? PESNet.runLocked("lobby-chat-request", task, signal)
+        : task(signal);
+    return requestPromise
         .then(function (data) {
-            if (!data || !data.ok) return;
+            if (!data.ok) return;
             renderBottomChat(data.messages);
             if (isLobbyChatOpen) markLobbyChatRead(data.messages);
         })
         .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:global-chat", task)
-        : task();
 }
 
 function checkLobbyChatUnread() {
     if (document.hidden || isLobbyChatOpen) return Promise.resolve();
 
-    const task = function () {
-        return fetch("{{ url_for('api_global_chat_status') }}", {
-            credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204) return null;
-            return res.json();
-        })
+    return fetch("{{ url_for('api_global_chat_status') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
-            if (!data || !data.ok || !Array.isArray(data.messages)) return;
+            if (!data.ok || !Array.isArray(data.messages)) return;
 
             const latestTimestamp = data.latest_created_at || newestChatTimestamp(data.messages);
             const lastRead = getChatLastRead();
@@ -599,10 +589,6 @@ function checkLobbyChatUnread() {
             setChatUnreadCount(unreadCount);
         })
         .catch(function () {});
-    };
-    return window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:global-chat-status", task)
-        : task();
 }
 
 function sendBottomChat() {
@@ -610,9 +596,8 @@ function sendBottomChat() {
     const status = document.getElementById("bottomChatStatus");
     const message = input ? input.value.trim() : "";
 
-    if (!message || bottomChatSendInFlight) return;
+    if (!message) return;
 
-    bottomChatSendInFlight = true;
     if (status) status.innerText = "Đang gửi...";
     if (input) input.disabled = true;
 
@@ -622,13 +607,9 @@ function sendBottomChat() {
         headers: {"Content-Type": "application/json"},
         body: JSON.stringify({message: message})
     })
-    .then(function (res) {
-        if (res.status === 204) return {ok: false, data: {error: "Chat Sảnh đang tắt."}};
-        return res.json().then(function (data) { return {ok: res.ok, data: data}; });
-    })
+    .then(function (res) { return res.json().then(function (data) { return {ok: res.ok, data: data}; }); })
     .then(function (result) {
         if (!result.ok) {
-            if (input) input.disabled = false;
             if (status) status.innerText = result.data.error || "Không gửi được tin nhắn.";
             return;
         }
@@ -643,9 +624,6 @@ function sendBottomChat() {
     .catch(function () {
         if (input) input.disabled = false;
         if (status) status.innerText = "Lỗi kết nối.";
-    })
-    .finally(function () {
-        bottomChatSendInFlight = false;
     });
 }
 
@@ -817,23 +795,20 @@ document.addEventListener("visibilitychange", function () {
     }
 });
 
-function checkAnnouncement() {
-    const task = function () {
+function checkAnnouncement(signal) {
+    if (document.hidden) return Promise.resolve();
+    const task = function (requestSignal) {
         return fetch("{{ url_for('api_current_announcement') }}", {
             credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (res.status === 204 || !res.ok) return null;
-            return res.json().catch(function () { return null; });
-        });
+            cache: "no-store",
+            signal: requestSignal
+        }).then(function (res) { return res.json(); });
     };
-    const request = window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:announcement-current", task)
-        : task();
-    return Promise.resolve(request)
+    const requestPromise = window.PESNet
+        ? PESNet.runLocked("announcement-request", task, signal)
+        : task(signal);
+    return requestPromise
         .then(function (data) {
-            if (!data) return;
             if (!data.ok) return;
             const items = Array.isArray(data.announcements)
                 ? data.announcements
@@ -888,61 +863,130 @@ function sendAdminAnnouncement() {
     });
 }
 
-// Chỉ chạy polling cần thiết cho đúng trang hiện tại. Mỗi poller có key duy nhất,
-// nên kể cả script bị khởi tạo lại cũng không tạo vòng lặp thứ hai.
-window.addEventListener("DOMContentLoaded", function () {
-    if (!window.PESNet) return;
+// Collap_V1.13.3lv2.3: luôn chỉ có một luồng lời mời. Khi PESNet chưa
+// sẵn sàng, dùng một timer dự phòng thay vì ngừng kiểm tra hoàn toàn.
+let globalInvitePoller = null;
+let globalInviteFallbackTimer = null;
+let globalInviteFallbackInFlight = false;
+let globalInviteFallbackInterval = 15000;
+
+function clearInviteFallbackTimer() {
+    if (globalInviteFallbackTimer) window.clearTimeout(globalInviteFallbackTimer);
+    globalInviteFallbackTimer = null;
+}
+
+function stopInvitePolling() {
+    if (globalInvitePoller) {
+        globalInvitePoller.stop();
+        globalInvitePoller = null;
+    }
+    clearInviteFallbackTimer();
+    globalInviteFallbackInFlight = false;
+    if (window.PESNet) PESNet.abortRequest("pending-invites-request");
+}
+window.PESStopInvitePolling = stopInvitePolling;
+
+function scheduleInviteFallback(delay) {
+    clearInviteFallbackTimer();
+    if (document.hidden || !roomPageNeedsInvitePolling()) return;
+    globalInviteFallbackTimer = window.setTimeout(runInviteFallback, Math.max(500, Number(delay || globalInviteFallbackInterval)));
+}
+
+function runInviteFallback() {
+    if (window.PESNet) {
+        configureInvitePolling();
+        return;
+    }
+    if (document.hidden || !roomPageNeedsInvitePolling()) {
+        clearInviteFallbackTimer();
+        return;
+    }
+    if (globalInviteFallbackInFlight) {
+        scheduleInviteFallback(1000);
+        return;
+    }
+    globalInviteFallbackInFlight = true;
+    Promise.resolve(checkPendingInvites())
+        .finally(function () {
+            globalInviteFallbackInFlight = false;
+            if (!window.PESNet) scheduleInviteFallback();
+        });
+}
+
+function configureInvitePolling() {
+    stopInvitePolling();
+
     const path = window.location.pathname;
     const isRoomPage = path.startsWith("/room/");
     const isPlayersPage = path === "/players";
     const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
-    const isHistoryPage = path === "/matches";
-    const isGuidePage = path === "/guide";
-    const isPassivePage = isHistoryPage || isGuidePage;
+    if (isRoomPage && !roomPageNeedsInvitePolling()) return;
+
+    const interval = isPlayersPage ? 10000 : (isRoomPage ? 12000 : (isRankingPage ? 15000 : 15000));
+    if (!window.PESNet) {
+        globalInviteFallbackInterval = interval;
+        scheduleInviteFallback(250);
+        return;
+    }
+
+    globalInvitePoller = PESNet.createPoller({
+        key: "pending-invites",
+        task: checkPendingInvites,
+        visibleInterval: interval,
+        hiddenInterval: 60000,
+        runWhenHidden: false,
+        immediate: true,
+        jitter: 800
+    });
+}
+window.PESConfigureInvitePolling = configureInvitePolling;
+
+document.addEventListener("visibilitychange", function () {
+    if (document.hidden) {
+        clearInviteFallbackTimer();
+        return;
+    }
+    if (!window.PESNet && roomPageNeedsInvitePolling()) scheduleInviteFallback(100);
+});
+
+window.addEventListener("DOMContentLoaded", function () {
+    // Lời mời phải khởi động cả khi file PESNet chưa sẵn sàng; khi PESNet có
+    // mặt, configureInvitePolling() tự dùng poller chuẩn và không tạo timer phụ.
+    configureInvitePolling();
+    if (!window.PESNet) return;
 
     PESNet.createPoller({
         key: "heartbeat",
         task: postHeartbeat,
         visibleInterval: 60000,
-        hiddenInterval: 120000,
+        hiddenInterval: 90000,
         runWhenHidden: false,
         immediate: false,
-        jitter: 5000
+        jitter: 3000
     });
 
-    // Trong phòng đã có đủ hai người; Lịch sử/Hướng dẫn không cần dò lời mời.
-    if (!isRoomPage && !isPassivePage) {
+    // active-room đã có dữ liệu server khi tải trang. Chỉ kiểm tra lại khi quay lại tab.
+
+    if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
         PESNet.createPoller({
-            key: "pending-invites",
-            task: checkPendingInvites,
-            visibleInterval: isPlayersPage || isRankingPage ? 15000 : 20000,
-            hiddenInterval: 60000,
+            key: "lobby-chat",
+            task: loadBottomChatSmart,
+            visibleInterval: 20000,
+            hiddenInterval: 120000,
             runWhenHidden: false,
             immediate: true,
             jitter: 1500
         });
     }
 
-    if (!isRoomPage && !isPassivePage) {
-        PESNet.createPoller({
-            key: "active-room",
-            task: checkActiveRoom,
-            visibleInterval: isRankingPage ? 30000 : 45000,
-            hiddenInterval: 120000,
-            runWhenHidden: false,
-            immediate: false,
-            jitter: 2500
-        });
-    }
-
     PESNet.createPoller({
         key: "announcement",
         task: checkAnnouncementSmart,
-        visibleInterval: 120000,
-        hiddenInterval: 300000,
+        visibleInterval: 60000,
+        hiddenInterval: 120000,
         runWhenHidden: false,
         immediate: false,
-        jitter: 7000
+        jitter: 3000
     });
 });
 
@@ -955,23 +999,20 @@ document.addEventListener("visibilitychange", function () {
 
 {% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
 <script>
-function updateOnlineFloatingCount() {
-    const task = function () {
+function updateOnlineFloatingCount(signal) {
+    const task = function (requestSignal) {
         return fetch("{{ url_for('api_online_count') }}", {
             credentials: "same-origin",
-            cache: "no-store"
-        })
-        .then(function (res) {
-            if (!res.ok) return null;
-            return res.json().catch(function () { return null; });
-        });
+            cache: "no-store",
+            signal: requestSignal
+        }).then(function (res) { return res.json(); });
     };
-    const request = window.PESNet && typeof PESNet.singleFlight === "function"
-        ? PESNet.singleFlight("api:online-count", task)
-        : task();
-    return Promise.resolve(request)
+    const requestPromise = window.PESNet
+        ? PESNet.runLocked("online-count-request", task, signal)
+        : task(signal);
+    return requestPromise
         .then(function (data) {
-            if (!data || !data.ok) return;
+            if (!data.ok) return;
             const el = document.getElementById("onlineFloatingCount");
             if (el) el.innerText = data.online_count;
         })
@@ -980,7 +1021,7 @@ function updateOnlineFloatingCount() {
 
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return updateOnlineFloatingCount();
-    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, runWhenHidden: false, immediate: true, jitter: 5000});
+    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 60000, hiddenInterval: 120000, runWhenHidden: false, immediate: true, jitter: 2500});
 });
 </script>
 {% endif %}

@@ -1,83 +1,160 @@
-# Log — Collap_V1.13.3lv2.2
+# Collap_V1.13.3l — Tối ưu polling, reload phòng và cache static
 
-- Ngày giờ: 19/07/2026 01:43, múi giờ Asia/Bangkok.
-- Nhánh nền: `Collap_V1.13.3lv2.1`.
-- Loại gói: bản vá, chỉ gồm các file cần chép đè.
-- SQL Supabase: không cần.
-- Không sửa RP, lịch sử trận, phạt bỏ cuộc, modal phòng, công thức Rank hoặc dữ liệu Supabase.
+- **Ngày giờ:** 19/07/2026 00:03 — múi giờ Asia/Bangkok.
+- **Bản nền:** `Collap_V1.13.3k`.
+- **Phạm vi:** chỉ sửa các file liên quan đến polling, cập nhật phòng và cache; không sửa RP, Supabase, lịch sử bỏ cuộc hoặc quyền Admin.
 
-## Mục tiêu
+## 1. Kết quả đối chiếu báo cáo
 
-Hoàn thiện các phần request/polling còn có nguy cơ treo hoặc tiếp tục chạy sau khi người dùng rời trang, đồng thời giảm giật phần chat khi trạng thái phòng thay đổi.
+Một số đề xuất trong báo cáo đã tồn tại ở bản nền và không được viết chồng lại:
 
-## Nội dung đã sửa
+- `/api/room/<id>/state` đã có biến khóa request đang chạy.
+- Polling phòng đã dùng chuỗi `setTimeout`, không dùng nhiều `setInterval` trạng thái phòng.
+- Ô tỷ số đã có bản nháp trong `sessionStorage`.
+- `pes_polling.js` đã tự dừng request khi tab ẩn.
 
-### 1. Request không còn giữ khóa vô thời hạn
+Các phần còn thiếu hoặc chưa triệt để đã được sửa trong bản này.
 
-- `/api/room/<room-id>/state`: thời gian chờ tối đa 12 giây.
-- `/api/room/<room-id>/chat`: thời gian chờ tối đa 10 giây.
-- Gửi chat phòng: thời gian chờ tối đa 12 giây.
-- `/api/invites/pending`: thời gian chờ tối đa 10 giây.
-- Khi request quá thời gian, request bị hủy và khóa được giải phóng để chu kỳ sau thử lại.
-- Không tạo request mới khi request cùng khóa vẫn đang chạy.
+## 2. Phòng đấu không reload toàn trang khi trạng thái đổi
 
-### 2. Dừng toàn bộ request cũ khi rời trang
+### Trước
 
-- `pes_polling.js` bổ sung lớp dọn chung cho `pagehide` và `beforeunload`.
-- Khi trang thực sự rời đi: dừng toàn bộ poller và hủy toàn bộ request còn chạy.
-- Khi trang được giữ trong BFCache: chỉ hủy request đang chạy, giữ poller ở trạng thái có thể tiếp tục khi quay lại.
-- Không thay đổi logic riêng của phòng đấu đã có trong bản `lv2.1`.
+Khi `state_key` thay đổi, template gọi:
 
-### 3. Xử lý phiên đăng nhập hết hạn
+```javascript
+window.location.reload();
+```
 
-- State, chat và lời mời nhận biết trường hợp API bị chuyển hướng sang trang đăng nhập.
-- Không cố phân tích HTML đăng nhập thành JSON.
-- State dừng realtime và đưa người dùng về trang đăng nhập.
-- Chat/lời mời dừng poller thay vì tiếp tục gọi ngầm.
-- HTML lỗi 5xx không bị hiểu nhầm thành hết phiên; poller giữ giao diện và thử lại ở chu kỳ sau.
+Điều này làm tải lại HTML, CSS, JS và ảnh, gây nháy màn hình và tạo nhiều request bị hủy khi chuyển trạng thái nhanh.
 
-### 4. Giữ nguyên khung chat khi phòng cập nhật trạng thái
+### Sau
 
-- Khi đội, tỷ số, nút hoặc lịch sử thay đổi, vùng phòng vẫn cập nhật bằng fragment như bản trước.
-- Riêng DOM của chat phòng được giữ nguyên.
-- Không làm mất nội dung người dùng đang gõ.
-- Không làm mất vị trí cuộn chat.
-- Không tạo thêm request chat chỉ vì đội hoặc nút trong phòng thay đổi.
-- Chỉ khởi động/dừng chat nếu khung chat thực sự xuất hiện hoặc bị loại khỏi giao diện.
+- Gọi `/api/room/<id>/state` để phát hiện thay đổi.
+- Khi có thay đổi, chỉ tải HTML phòng mới bằng `fetch`.
+- Chỉ thay khối `#roomLiveShell` trong DOM.
+- Không tải lại thanh menu, CSS, JavaScript và phần khung ứng dụng.
+- Tự gắn lại sự kiện cho:
+  - Copy link phòng.
+  - Ô nhập tỷ số.
+  - Modal thoát/bỏ cuộc.
+  - Các nút thao tác trong phòng.
+  - Chat phòng.
 
-### 5. Cache CSS trên các trang độc lập
+Các thao tác sau được gửi bằng AJAX và cập nhật riêng phần phòng:
 
-- `public_ranking.html` dùng `style.css?v={{ APP_VERSION }}`.
-- `maintenance.html` bỏ số phiên bản cũ cố định và dùng `APP_VERSION` hiện tại.
-- Giữ nguyên cache một năm `immutable` đã có ở Flask/Vercel.
+- Sẵn sàng/Hủy sẵn sàng.
+- Quay đội.
+- Nhập kết quả.
+- Xác nhận kết quả.
+- Đá tiếp.
+- Quay lại/kết thúc giao hữu.
+- Chat phòng.
 
-## File đã chỉnh sửa
+Thoát phòng, bỏ cuộc hoặc thao tác cần chuyển sang trang khác vẫn điều hướng bình thường.
+
+## 3. Chỉ một request trạng thái phòng tại một thời điểm
+
+- Giữ khóa `roomStateRequestInFlight`.
+- Không tạo request mới khi:
+  - Request `/state` trước chưa xong.
+  - Một thao tác POST trong phòng đang chạy.
+  - Phần giao diện phòng đang được làm mới.
+- Bỏ `AbortController` khỏi polling trạng thái phòng để tránh tự tạo `ERR_ABORTED` khi rời trang.
+- Thêm `window.PESRoomStateController`; nếu script bị khởi tạo lại thì vòng cũ được dừng trước.
+- Khi `pagehide`, timer được dừng nhưng không hủy một request bằng AbortController.
+
+## 4. Bảo vệ ô nhập tỷ số
+
+- Polling không còn bị dừng toàn bộ chỉ vì người dùng đã nhập tỷ số.
+- Bản nháp tỷ số được giữ trong `sessionStorage`.
+- Nếu giao diện phòng cập nhật trong lúc đang nhập, bản nháp được khôi phục vào ô mới.
+- Chỉ xóa bản nháp sau khi server nhận thao tác nhập kết quả thành công.
+- Không còn tình trạng state mới ghi đè ô đang nhập về `0`.
+
+## 5. Chu kỳ polling phòng
+
+| Trạng thái | Chu kỳ mới |
+|---|---:|
+| Chờ sẵn sàng | khoảng 3 giây |
+| Đang thi đấu — phía khách | khoảng 5 giây |
+| Đang thi đấu — phía chủ | khoảng 12 giây |
+| Chờ xác nhận kết quả | khoảng 2 giây |
+| Đã xác nhận/chờ đá tiếp | khoảng 5 giây |
+| Tab bị ẩn | khoảng 60 giây |
+
+Khi quay lại tab, hệ thống kiểm tra ngay một lần.
+
+## 6. `pes_polling.js` chỉ còn một poller cho mỗi chức năng
+
+Thêm registry theo `key`:
+
+- `heartbeat`
+- `pending-invites`
+- `active-room`
+- `lobby-chat`
+- `announcement`
+- `online-count`
+
+Nếu một poller cùng key được tạo lại, poller cũ bị dừng trước. Khi rời trang, toàn bộ poller được dọn.
+
+## 7. Polling ngoài phòng
+
+| API | Cách chạy mới |
+|---|---|
+| `/api/invites/pending` | 15 giây tại Players/BXH, 20 giây ở trang khác cần thiết |
+| Trong phòng đấu | Không polling lời mời |
+| Trang Lịch sử | Không polling lời mời hoặc active-room |
+| Trang Hướng dẫn | Không polling lời mời hoặc active-room |
+| `/heartbeat` | khoảng 60 giây, dừng khi tab ẩn |
+| `/api/announcement/current` | khoảng 120 giây, dừng khi tab ẩn |
+| `/api/session/activity` | Chỉ gửi theo thao tác người dùng, giữ giới hạn cấu hình 300 giây và khóa request chồng |
+
+## 8. Cache CSS, JS và ảnh static
+
+- URL CSS/JS dùng `APP_VERSION`, nên mỗi phiên bản mới tự đổi URL cache.
+- Thêm header:
+
+```text
+Cache-Control: public, max-age=604800, stale-while-revalidate=86400
+```
+
+- Áp dụng trong cả Flask `after_request` và `vercel.json`.
+- Không cache lâu API trạng thái phòng.
+
+## 9. File đã sửa
 
 | File | Vị trí gần đúng | Nội dung |
 |---|---:|---|
-| `app.py` | khoảng dòng 65 | tăng phiên bản thành `Collap_V1.13.3lv2.2` |
-| `static/js/pes_polling.js` | khoảng dòng 220–305 | metadata response, timeout cleanup, nhận biết HTML redirect, dọn poller/request khi rời trang |
-| `templates/room_detail.html` | khoảng dòng 318–465, 618–760 | giữ DOM chat; timeout và xử lý hết phiên cho state/chat/gửi chat |
-| `templates/base.html` | khoảng dòng 337–395 | timeout, khóa và xử lý hết phiên cho lời mời |
-| `templates/public_ranking.html` | khoảng dòng 10 | thêm phiên bản URL CSS |
-| `templates/maintenance.html` | khoảng dòng 7 | thay version CSS cố định bằng `APP_VERSION` |
+| `app.py` | dòng 65; 1472–1490 | Tăng phiên bản; cache static |
+| `static/js/pes_polling.js` | toàn file | Registry singleton, khóa in-flight, dọn poller |
+| `static/js/session-timeout.js` | dòng 3–145 | Chặn khởi tạo hai lần; khóa request activity |
+| `templates/base.html` | dòng 9–23; 790–885 | Version static; polling theo từng trang và key |
+| `templates/room_detail.html` | dòng 4; khoảng 540–1190 | Soft refresh phòng, AJAX form, giữ bản nháp tỷ số, một vòng state polling |
+| `templates/maintenance.html` | dòng 7 | Version URL CSS |
+| `templates/public_ranking.html` | dòng 10 | Version URL CSS |
+| `vercel.json` | toàn file | Header cache `/static/*` |
 
-## Kiểm tra kỹ thuật
+## 10. Kiểm tra đã thực hiện
 
 - `python -m py_compile app.py modules/*.py`: đạt.
-- Parse 25 template Jinja: đạt.
-- Render thử `room_detail.html`, `public_ranking.html`, `maintenance.html`: đạt.
-- Kiểm tra cú pháp toàn bộ JavaScript nội tuyến của trang phòng: đạt.
-- `node --check static/js/pes_polling.js`: đạt.
-- Ba request cùng khóa chỉ chạy task một lần: đạt.
-- Response HTML 200 được nhận biết là redirect đăng nhập: đạt.
-- Response HTML 500 không bị nhận nhầm là redirect đăng nhập: đạt.
-- Điểm gọi state trong giao diện: 1.
-- Điểm gọi lời mời trong giao diện: 1 hàm, có nhánh fallback khi thiếu `PESNet`.
-- Điểm gọi chat phòng: 1 hàm, có nhánh fallback khi thiếu `PESNet`.
-- `location.reload()` trong `room_detail.html`: 0.
-- Link static trong template thiếu `?v=`: 0.
+- Parse 24 template Jinja: đạt.
+- `node --check` cho `pes_polling.js`: đạt.
+- `node --check` cho `session-timeout.js`: đạt.
+- Kiểm tra cú pháp bốn khối JavaScript trong `room_detail.html`: đạt.
+- Test tạo hai poller cùng key: registry chỉ giữ một poller.
+- `vercel.json`: JSON hợp lệ.
+- Không còn `location.reload()` trong template phòng.
+- Không thêm SQL Supabase.
 
-## Cài đặt
+## 11. Lưu ý kiểm thử thực tế
 
-Chép đè các file trong gói này lên nhánh `Collap_V1.13.3lv2.1`. Không áp dụng sang hai nhánh song song khác nếu chưa đối chiếu riêng.
+Sau khi deploy nhánh test, nên dùng hai trình duyệt và kiểm tra:
+
+1. Khách vào phòng và bấm Sẵn Sàng.
+2. Chủ quay đội.
+3. Chủ nhập tỷ số trong khi polling vẫn chạy.
+4. Khách nhận màn hình xác nhận mà không cần F5.
+5. Khách xác nhận.
+6. Hai bên bấm Đá tiếp và thi đấu thêm 2–3 trận.
+7. Chuyển tab trong 60 giây rồi quay lại.
+8. Dùng Network lọc `state`, `pending`, `activity`, `heartbeat` để xác nhận không chạy chồng.

@@ -6,21 +6,21 @@
     <meta charset="UTF-8">
     <title>{{ APP_NAME }}</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION }}">
-    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION }}" defer></script>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION|urlencode }}">
+    <script src="{{ url_for('static', filename='js/pes_polling.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
     {% if current_user and not (auth_only|default(false)) %}
     <script>
     window.PES_SESSION_CONFIG = {
         enabled: true,
         idleTimeoutSeconds: 3600,
         warningSeconds: 300,
-        activitySyncSeconds: 60,
+        activitySyncSeconds: 300,
         activityUrl: {{ url_for('api_session_activity')|tojson }},
         timeoutCheckUrl: {{ url_for('api_session_timeout_check')|tojson }},
         logoutUrl: {{ url_for('logout')|tojson }}
     };
     </script>
-    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION }}" defer></script>
+    <script src="{{ url_for('static', filename='js/session-timeout.js') }}?v={{ APP_VERSION|urlencode }}" defer></script>
     {% endif %}
 
 <script>
@@ -221,19 +221,11 @@ function toggleTheme(){
 {% endif %}
 
 <script>
-function postHeartbeat(signal) {
-    if (document.hidden) return Promise.resolve();
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('heartbeat') }}", {
-            method: "POST",
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal
-        }).catch(function () {});
-    };
-    return window.PESNet
-        ? PESNet.runLocked("heartbeat-request", task, signal)
-        : task(signal);
+function postHeartbeat() {
+    return fetch("{{ url_for('heartbeat') }}", {
+        method: "POST",
+        credentials: "same-origin"
+    }).catch(function () {});
 }
 
 let lastInviteId = null;
@@ -285,21 +277,14 @@ function renderInvitePopup(invite) {
 
 let lastKnownActiveRoomId = null;
 
-function checkActiveRoom(signal) {
+function checkActiveRoom() {
     if (document.hidden || window.location.pathname.startsWith("/room/")) return Promise.resolve();
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('api_active_room') }}", {
-            method: "GET",
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal
-        }).then(function (res) { return res.json(); });
-    };
 
-    const requestPromise = window.PESNet
-        ? PESNet.runLocked("active-room-request", task, signal)
-        : task(signal);
-    return requestPromise
+    return fetch("{{ url_for('api_active_room') }}", {
+        method: "GET",
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
     .then(function (data) {
         const roomLink = document.getElementById("activeRoomTopbarLink");
         if (!roomLink) return;
@@ -324,56 +309,14 @@ function checkActiveRoom(signal) {
 }
 
 
-document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) checkActiveRoom();
-});
-
-function roomPageNeedsInvitePolling() {
-    const context = window.PES_ROOM_CONTEXT;
-    if (!window.location.pathname.startsWith("/room/")) return true;
-    return Boolean(context && context.status === "waiting_ready" && !context.hasGuest);
-}
-
-function checkPendingInvites(signal) {
-    if (document.hidden || !roomPageNeedsInvitePolling()) return Promise.resolve();
-    const options = {
+function checkPendingInvites() {
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_pending_invites') }}", {
         method: "GET",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: {"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"}
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.fetchJson(
-            "{{ url_for('api_pending_invites') }}",
-            options,
-            10000,
-            "pending-invites-request",
-            signal
-        )
-        : fetch("{{ url_for('api_pending_invites') }}", Object.assign({}, options, {signal: signal}))
-            .then(function (res) {
-                return res.text().then(function (text) {
-                    let data = null;
-                    try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                    return {
-                        ok: res.ok,
-                        status: res.status,
-                        redirected: Boolean(res.redirected),
-                        url: res.url || "",
-                        contentType: res.headers.get("content-type") || "",
-                        data: data
-                    };
-                });
-            });
-    return requestPromise
-    .then(function (result) {
-        if (!result) return;
-        if (result.status === 401 || result.status === 403 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-            stopInvitePolling();
-            return;
-        }
-        if (!result.ok && result.status !== 204) return;
-        const data = result.status === 204 ? {invites: []} : (result.data || {invites: []});
+        credentials: "same-origin"
+    })
+    .then(function (res) { return res.json(); })
+    .then(function (data) {
         if (!data.invites || data.invites.length === 0) {
             const backdrop = document.getElementById("inviteModalBackdrop");
             if (backdrop) backdrop.style.display = "none";
@@ -521,33 +464,24 @@ function toggleLobbyChat() {
     }
 }
 
-function loadBottomChatSmart(signal) {
+function loadBottomChatSmart() {
     if (document.hidden || !isLobbyChatOpen) return Promise.resolve();
-    return loadBottomChat(signal);
+    return loadBottomChat();
 }
 
-function checkAnnouncementSmart(signal) {
+function checkAnnouncementSmart() {
     if (document.hidden) return Promise.resolve();
-    return checkAnnouncement(signal);
+    return checkAnnouncement();
 }
 
-function updateOnlineFloatingCountSmart(signal) {
+function updateOnlineFloatingCountSmart() {
     if (document.hidden) return Promise.resolve();
-    return updateOnlineFloatingCount(signal);
+    return updateOnlineFloatingCount();
 }
 
-function loadBottomChat(signal) {
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('api_global_chat') }}", {
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal
-        }).then(function (res) { return res.json(); });
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.runLocked("lobby-chat-request", task, signal)
-        : task(signal);
-    return requestPromise
+function loadBottomChat() {
+    return fetch("{{ url_for('api_global_chat') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
             renderBottomChat(data.messages);
@@ -795,19 +729,9 @@ document.addEventListener("visibilitychange", function () {
     }
 });
 
-function checkAnnouncement(signal) {
-    if (document.hidden) return Promise.resolve();
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('api_current_announcement') }}", {
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal
-        }).then(function (res) { return res.json(); });
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.runLocked("announcement-request", task, signal)
-        : task(signal);
-    return requestPromise
+function checkAnnouncement() {
+    return fetch("{{ url_for('api_current_announcement') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
             const items = Array.isArray(data.announcements)
@@ -863,57 +787,52 @@ function sendAdminAnnouncement() {
     });
 }
 
-// Collap_V1.13.3lv2.1: mỗi endpoint chỉ có một poller và tuân theo trạng thái trang/tab.
-let globalInvitePoller = null;
-
-function stopInvitePolling() {
-    if (globalInvitePoller) {
-        globalInvitePoller.stop();
-        globalInvitePoller = null;
-    }
-    if (window.PESNet) PESNet.abortRequest("pending-invites-request");
-}
-window.PESStopInvitePolling = stopInvitePolling;
-
-function configureInvitePolling() {
+// Chỉ chạy polling cần thiết cho đúng trang hiện tại. Mỗi poller có key duy nhất,
+// nên kể cả script bị khởi tạo lại cũng không tạo vòng lặp thứ hai.
+window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return;
-    stopInvitePolling();
-
     const path = window.location.pathname;
     const isRoomPage = path.startsWith("/room/");
     const isPlayersPage = path === "/players";
     const isRankingPage = path === "/bxh" || path === "/ranking" || path === "/";
-    if (isRoomPage && !roomPageNeedsInvitePolling()) return;
-
-    const interval = isPlayersPage ? 10000 : (isRoomPage ? 12000 : (isRankingPage ? 15000 : 15000));
-    globalInvitePoller = PESNet.createPoller({
-        key: "pending-invites",
-        task: checkPendingInvites,
-        visibleInterval: interval,
-        hiddenInterval: 60000,
-        runWhenHidden: false,
-        immediate: true,
-        jitter: 800
-    });
-}
-window.PESConfigureInvitePolling = configureInvitePolling;
-
-window.addEventListener("DOMContentLoaded", function () {
-    if (!window.PESNet) return;
+    const isHistoryPage = path === "/matches";
+    const isGuidePage = path === "/guide";
+    const isPassivePage = isHistoryPage || isGuidePage;
 
     PESNet.createPoller({
         key: "heartbeat",
         task: postHeartbeat,
         visibleInterval: 60000,
-        hiddenInterval: 90000,
+        hiddenInterval: 120000,
         runWhenHidden: false,
         immediate: false,
-        jitter: 3000
+        jitter: 5000
     });
 
-    configureInvitePolling();
+    // Trong phòng đã có đủ hai người; Lịch sử/Hướng dẫn không cần dò lời mời.
+    if (!isRoomPage && !isPassivePage) {
+        PESNet.createPoller({
+            key: "pending-invites",
+            task: checkPendingInvites,
+            visibleInterval: isPlayersPage || isRankingPage ? 15000 : 20000,
+            hiddenInterval: 60000,
+            runWhenHidden: false,
+            immediate: true,
+            jitter: 1500
+        });
+    }
 
-    // active-room đã có dữ liệu server khi tải trang. Chỉ kiểm tra lại khi quay lại tab.
+    if (!isRoomPage && !isPassivePage) {
+        PESNet.createPoller({
+            key: "active-room",
+            task: checkActiveRoom,
+            visibleInterval: isRankingPage ? 30000 : 45000,
+            hiddenInterval: 120000,
+            runWhenHidden: false,
+            immediate: false,
+            jitter: 2500
+        });
+    }
 
     if (typeof isLobbyChatOpen !== "undefined" && isLobbyChatOpen) {
         PESNet.createPoller({
@@ -923,18 +842,18 @@ window.addEventListener("DOMContentLoaded", function () {
             hiddenInterval: 120000,
             runWhenHidden: false,
             immediate: true,
-            jitter: 1500
+            jitter: 2000
         });
     }
 
     PESNet.createPoller({
         key: "announcement",
         task: checkAnnouncementSmart,
-        visibleInterval: 60000,
-        hiddenInterval: 120000,
+        visibleInterval: 120000,
+        hiddenInterval: 300000,
         runWhenHidden: false,
         immediate: false,
-        jitter: 3000
+        jitter: 7000
     });
 });
 
@@ -947,18 +866,9 @@ document.addEventListener("visibilitychange", function () {
 
 {% if current_user and not (auth_only|default(false)) and request.endpoint == "players" %}
 <script>
-function updateOnlineFloatingCount(signal) {
-    const task = function (requestSignal) {
-        return fetch("{{ url_for('api_online_count') }}", {
-            credentials: "same-origin",
-            cache: "no-store",
-            signal: requestSignal
-        }).then(function (res) { return res.json(); });
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.runLocked("online-count-request", task, signal)
-        : task(signal);
-    return requestPromise
+function updateOnlineFloatingCount() {
+    return fetch("{{ url_for('api_online_count') }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
         .then(function (data) {
             if (!data.ok) return;
             const el = document.getElementById("onlineFloatingCount");
@@ -969,7 +879,7 @@ function updateOnlineFloatingCount(signal) {
 
 window.addEventListener("DOMContentLoaded", function () {
     if (!window.PESNet) return updateOnlineFloatingCount();
-    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 60000, hiddenInterval: 120000, runWhenHidden: false, immediate: true, jitter: 2500});
+    PESNet.createPoller({key: "online-count", task: updateOnlineFloatingCountSmart, visibleInterval: 180000, hiddenInterval: 300000, runWhenHidden: false, immediate: true, jitter: 5000});
 });
 </script>
 {% endif %}

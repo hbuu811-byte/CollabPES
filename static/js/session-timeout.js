@@ -3,6 +3,8 @@
 
     const cfg = global.PES_SESSION_CONFIG || {};
     if (!cfg.enabled) return;
+    if (global.__PES_SESSION_TIMEOUT_RUNNING__) return;
+    global.__PES_SESSION_TIMEOUT_RUNNING__ = true;
 
     const timeoutMs = Math.max(60_000, Number(cfg.idleTimeoutSeconds || 3600) * 1000);
     const warningMs = Math.max(30_000, Number(cfg.warningSeconds || 300) * 1000);
@@ -11,15 +13,13 @@
     const timeoutCheckUrl = cfg.timeoutCheckUrl;
     const logoutUrl = cfg.logoutUrl;
 
-    const activityStorageKey = "pes-session-last-activity";
-    const syncStorageKey = "pes-session-last-sync";
-    let lastActivityAt = Number(sessionStorage.getItem(activityStorageKey) || 0) || Date.now();
-    let lastSyncAt = Number(sessionStorage.getItem(syncStorageKey) || 0) || 0;
-    let activitySyncInFlight = false;
+    let lastActivityAt = Date.now();
+    let lastSyncAt = 0;
     let warningTimer = null;
     let logoutTimer = null;
     let countdownTimer = null;
     let checkInFlight = false;
+    let activityInFlight = false;
 
     function ensureModal() {
         let root = document.getElementById("idleTimeoutModal");
@@ -75,26 +75,23 @@
     }
 
     function syncActivity(force) {
-        if (!activityUrl || !navigator.onLine || document.hidden || activitySyncInFlight) return;
+        if (!activityUrl || !navigator.onLine || document.hidden || activityInFlight) return;
         const now = Date.now();
-        // Kể cả thao tác cưỡng bức cũng không vượt quá một request mỗi 60 giây.
-        if (now - lastSyncAt < syncMs) return;
-        activitySyncInFlight = true;
+        if (!force && now - lastSyncAt < syncMs) return;
         lastSyncAt = now;
-        try { sessionStorage.setItem(syncStorageKey, String(lastSyncAt)); } catch (error) {}
+        activityInFlight = true;
         fetch(activityUrl, {
             method: "POST",
             credentials: "same-origin",
             cache: "no-store",
             headers: {"X-Requested-With": "XMLHttpRequest"}
         }).catch(function () {}).finally(function () {
-            activitySyncInFlight = false;
+            activityInFlight = false;
         });
     }
 
     function recordActivity(forceSync) {
         lastActivityAt = Date.now();
-        try { sessionStorage.setItem(activityStorageKey, String(lastActivityAt)); } catch (error) {}
         hideModal();
         schedule();
         syncActivity(Boolean(forceSync));
@@ -134,14 +131,15 @@
         document.addEventListener(name, onUserActivity, {passive: true, capture: true});
     });
     document.addEventListener("visibilitychange", function () {
-        if (!document.hidden) {
-            lastActivityAt = Date.now();
-            try { sessionStorage.setItem(activityStorageKey, String(lastActivityAt)); } catch (error) {}
-            hideModal();
-            schedule();
-            syncActivity(true);
-        }
+        if (!document.hidden) recordActivity(false);
     });
+
+    global.addEventListener("pagehide", function () {
+        clearTimeout(warningTimer);
+        clearTimeout(logoutTimer);
+        if (countdownTimer) clearInterval(countdownTimer);
+        global.__PES_SESSION_TIMEOUT_RUNNING__ = false;
+    }, {once: true});
 
     schedule();
 })(window);

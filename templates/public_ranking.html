@@ -7,7 +7,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description" content="Bảng xếp hạng công khai PES Arena">
     <title>Bảng xếp hạng • {{ APP_NAME }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v={{ APP_VERSION|default('collap')|urlencode }}">
     <script>
     (function initTheme(){
         const saved = localStorage.getItem('pes2026-theme');
@@ -52,7 +52,7 @@
     <div class="ranking-showcase">
         <div class="podium-stage podium-stage-cups podium-stage-reference">
             <div class="podium-reference-wrap">
-                <img class="podium-reference-image" src="{{ url_for('static', filename='podium_top3_reference.png') }}?v={{ APP_VERSION }}" alt="Top 3 podium cups">
+                <img class="podium-reference-image" src="{{ url_for('static', filename='podium_top3_reference.png') }}" alt="Top 3 podium cups">
                 <div class="podium-reference-names">
                     {% if players|length > 1 %}
                     <div class="podium-name-slot podium-name-slot-second">

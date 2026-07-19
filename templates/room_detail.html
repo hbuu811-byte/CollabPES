@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% from "_avatar_macros.html" import player_avatar %}
 {% block content %}
-<div class="room-view-shell">
+<div id="roomLiveShell" class="room-view-shell" data-room-state-key="{{ initial_room_state_key|e }}" data-room-status="{{ room.status|e }}">
 
 <!-- === WIN_STREAK_FEATURE_GOLD_V2_OVERLAY_BEGIN === -->
 {% if room.streak_event %}
@@ -39,8 +39,8 @@
                 <p class="room-stage-subtitle">{{ room.match_mode_label }} • 1 vs 1</p>
             </div>
         </div>
-        {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
-        <div id="roomStageShareWrap" class="room-stage-share-wrap"{% if room.status != 'waiting_ready' or room.has_guest %} hidden{% endif %}>
+        {% if room.status == 'waiting_ready' and not room.has_guest and (current_user.id == room.host_user_id or current_user.role == 'admin') %}
+        <div class="room-stage-share-wrap">
             <button id="copyRoomShareLink"
                     class="room-share-button"
                     type="button"
@@ -57,8 +57,419 @@
         {% endif %}
     </div>
 
-    <div id="roomLiveContent" class="room-match-shell">
-        {% include "_room_live_content.html" %}
+    <div class="room-match-shell">
+        <section class="room-side-card room-team-card home">
+            <div class="room-player-heading-plain">
+                {{ player_avatar(name=room.host_name, avatar_url=room.host_avatar_url, achievement=room.host_achievement, size='sm') }}
+                <div class="room-player-name">{{ room.host_name }}</div>
+                <div class="room-player-rankline">
+                    <img src="{{ url_for('static', filename='ranks/' ~ room.host_rank_info.slug ~ '.png') }}" alt="{{ room.host_rank_info.name }}" loading="lazy">
+                    <span>{{ room.host_rank_info.name }}</span>
+                </div>
+                {% if room.host_streak_badge %}
+                <div class="win-streak-badge win-streak-badge-host">
+                    <span>{{ room.host_streak_badge.icon }}</span>
+                    <strong>{{ room.host_streak_badge.title }}</strong>
+                    <span>· {{ room.host_streak_badge.count }} trận thắng</span>
+                </div>
+                {% endif %}
+            </div>
+            <div class="room-card-club-area">
+                {% if room.host_team_logo_url %}<img class="room-club-logo-large" src="{{ room.host_team_logo_url }}" alt="Logo {{ room.host_team or 'CLB' }}" loading="lazy">{% else %}<div class="room-team-placeholder-shield">?</div>{% endif %}
+                <div class="room-team-name-lg">{{ room.host_team or 'CHƯA CHỌN ĐỘI' }}</div>
+                {% if room.host_team_total_stats %}
+                <div class="room-team-points-block">
+                    <div class="room-team-points-value">{{ room.host_team_total_stats }}</div>
+                </div>
+                {% endif %}
+                <div class="room-team-league-text">{% if room.host_team_league_logo_url %}<img class="room-league-logo" src="{{ room.host_team_league_logo_url }}" alt="Logo {{ room.host_team_league }}" loading="lazy">{% endif %}<span>{{ room.host_team_league or 'Chưa có giải' }}</span></div>
+            </div>
+        </section>
+
+        <section class="room-center-stage-plain">
+            {% if room.has_guest %}
+                {% if room.status == 'waiting_ready' %}
+                <div class="room-center-countdown-label">Thời gian còn lại để bắt đầu</div>
+                <div class="room-center-countdown" id="roomStartCountdown" data-seconds="{{ room.start_countdown_seconds }}" data-mode="down">05:00</div>
+                {% else %}
+                <div class="room-center-countdown-label">Thời gian thi đấu</div>
+                <div class="room-center-countdown" id="roomStartCountdown" data-seconds="{{ room.match_elapsed_seconds }}" data-mode="up">00:00</div>
+                {% endif %}
+                {% if room.status == 'waiting_result_confirm' %}
+                    <div class="room-result-review" aria-label="Tỷ số đang chờ xác nhận">
+                        <div class="room-result-score">{{ room.host_score }} <span>-</span> {{ room.guest_score }}</div>
+                        {% if current_user.id == room.guest_user_id or current_user.role == 'admin' %}
+                        <div class="room-result-actions">
+                            <form method="post" action="{{ url_for('room_confirm_result', room_id=room.id) }}">
+                                <button class="room-result-btn confirm" type="submit">✓ Xác Nhận</button>
+                            </form>
+                            <details class="room-result-dispute">
+                                <summary class="room-result-btn disagree">× Không Đồng Ý</summary>
+                                <form class="dispute-form room-result-dispute-form" method="post" action="{{ url_for('room_dispute_result', room_id=room.id) }}" enctype="multipart/form-data" onsubmit="return confirm('Gửi tranh chấp cho Admin? Trận sẽ chưa được tính điểm.');">
+                                    <label>Lý do tranh chấp</label>
+                                    <select name="reason_code" required>
+                                        <option value="">-- Chọn lý do --</option>
+                                        <option value="wrong_score">Sai tỷ số</option>
+                                        <option value="wrong_winner">Sai người thắng</option>
+                                        <option value="interrupted">Trận bị gián đoạn</option>
+                                        <option value="unilateral_entry">Kết quả nhập không đúng thỏa thuận</option>
+                                        <option value="other">Lý do khác</option>
+                                    </select>
+                                    <label>Ghi chú cho Admin</label>
+                                    <textarea name="details" maxlength="500" rows="3" placeholder="Mô tả ngắn vấn đề để Admin xử lý chính xác..."></textarea>
+                                    <label>Ảnh bằng chứng (không bắt buộc)</label>
+                                    <input type="file" name="evidence" accept="image/png,image/jpeg,image/webp">
+                                    <button class="btn red" type="submit">Gửi tranh chấp</button>
+                                </form>
+                            </details>
+                        </div>
+                        {% else %}
+                        <div class="room-result-waiting">Đang chờ sân khách xác nhận</div>
+                        {% endif %}
+                    </div>
+                {% else %}
+                    <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
+                    {% if room.status == 'playing' and room.match_mode != 'friendly' and (current_user.id == room.host_user_id or current_user.role == 'admin') %}
+                        <div class="room-center-score-panel">
+                            <h3 class="room-score-title">Kết quả trận đấu</h3>
+                            <form method="post" action="{{ url_for('room_submit_result', room_id=room.id) }}" class="room-score-form room-center-score-form">
+                                <div class="room-score-fields">
+                                    <label>
+                                        <span>Sân Nhà</span>
+                                        <input type="number" min="0" name="host_score" value="0">
+                                    </label>
+                                    <label>
+                                        <span>Sân Khách</span>
+                                        <input type="number" min="0" name="guest_score" value="0">
+                                    </label>
+                                </div>
+                                <button class="btn green room-submit-result-btn" type="submit">Gửi Kết Quả</button>
+                            </form>
+                        </div>
+                    {% elif room.status == 'waiting_ready' %}
+                        {% if (current_user.id == room.host_user_id or current_user.role == 'admin') and room.guest_ready %}
+                        <form class="room-center-random-form" method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.classList.add('loading');">
+                            <input type="hidden" name="match_mode" value="ranked">
+                            <button class="room-center-random-trigger" type="submit">
+                                <span class="room-center-random-title room-random-button-label">QUAY RANDOM ĐỘI</span>
+                                <span class="room-center-random-sub">Nhấn để đổi đội ngẫu nhiên cho cả hai bên</span>
+                            </button>
+                        </form>
+                        {% else %}
+                        <div class="room-center-random-trigger disabled">
+                            <span class="room-center-random-title room-random-button-label">{% if current_user.id == room.guest_user_id %}ĐỢI QUAY RANDOM ĐỘI{% elif not room.guest_ready %}ĐỢI KHÁCH SẴN SÀNG{% else %}QUAY RANDOM ĐỘI{% endif %}</span>
+                            <span class="room-center-random-sub">{% if current_user.id == room.guest_user_id %}Đang chờ chủ phòng quay đội{% elif not room.guest_ready %}Khách chưa sẵn sàng{% else %}Đang chờ chủ phòng quay đội{% endif %}</span>
+                        </div>
+                        {% endif %}
+                        {% if current_user.id == room.guest_user_id %}
+                        <div class="room-center-primary-actions">
+                            {% if not room.guest_ready %}
+                            <form method="post" action="{{ url_for('room_guest_ready', room_id=room.id) }}">
+                                <button class="btn green room-center-action-btn" type="submit">Sẵn Sàng</button>
+                            </form>
+                            {% else %}
+                            <form method="post" action="{{ url_for('room_guest_unready', room_id=room.id) }}">
+                                <button class="btn gray room-center-action-btn" type="submit">Hủy Sẵn Sàng</button>
+                            </form>
+                            {% endif %}
+                            {% if room.guest_ready %}
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
+                                  data-modal-tone="danger"
+                                  data-modal-icon="⚠"
+                                  data-modal-title="Xác nhận bỏ cuộc"
+                                  data-modal-message="Bạn đã Sẵn Sàng. Thoát phòng lúc này sẽ bị tính là bỏ cuộc và hệ thống trừ 20 RP."
+                                  data-modal-note="−20 RP"
+                                  data-modal-confirm-label="Bỏ cuộc và thoát">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% else %}
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
+                                  data-modal-tone="safe"
+                                  data-modal-icon="🚪"
+                                  data-modal-title="Rời phòng đấu?"
+                                  data-modal-message="Bạn chưa Sẵn Sàng nên có thể rời phòng ngay. Phòng của chủ phòng vẫn được giữ lại."
+                                  data-modal-note="KHÔNG TRỪ RP"
+                                  data-modal-confirm-label="Rời phòng">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                        {% elif current_user.id == room.host_user_id %}
+                        <div class="room-center-primary-actions">
+                            {% if room.guest_ready %}
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_host_forfeit', room_id=room.id) }}"
+                                  data-modal-tone="danger"
+                                  data-modal-icon="⚠"
+                                  data-modal-title="Xác nhận bỏ cuộc"
+                                  data-modal-message="Khách đã Sẵn Sàng. Chủ phòng thoát lúc này sẽ bị tính là bỏ cuộc và hệ thống trừ 20 RP."
+                                  data-modal-note="−20 RP"
+                                  data-modal-confirm-label="Bỏ cuộc và đóng phòng">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% else %}
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
+                                  data-modal-tone="safe"
+                                  data-modal-icon="🚪"
+                                  data-modal-title="Đóng phòng đấu?"
+                                  data-modal-message="Khách chưa Sẵn Sàng nên bạn có thể đóng phòng mà không bị trừ RP."
+                                  data-modal-note="KHÔNG TRỪ RP"
+                                  data-modal-confirm-label="Thoát và đóng phòng">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+                    {% else %}
+                        {% if room.status == 'confirmed' and current_user.id in [room.host_user_id, room.guest_user_id] %}
+                        {% set current_has_rematch_ready = (current_user.id == room.host_user_id and room.rematch_host_ready) or (current_user.id == room.guest_user_id and room.rematch_guest_ready) %}
+                        <div class="room-center-primary-actions">
+                            <form method="post" action="{{ url_for('room_rematch', room_id=room.id) }}">
+                                <button class="btn gold room-center-action-btn" type="submit" {% if current_has_rematch_ready %}disabled{% endif %}>{{ 'Đã Chọn Đá Tiếp' if current_has_rematch_ready else 'Đá Tiếp' }}</button>
+                            </form>
+                            <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_rematch_decline', room_id=room.id) }}"
+                                  data-modal-tone="warning"
+                                  data-modal-icon="🚪"
+                                  data-modal-title="Kết thúc phiên đấu?"
+                                  data-modal-message="Bạn không muốn đá tiếp? Đối thủ sẽ nhận được thông báo và cả hai sẽ được đưa về sảnh chính."
+                                  data-modal-note="KHÔNG TRỪ RP"
+                                  data-modal-confirm-label="Thoát và về sảnh">
+                                <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                            </form>
+                        </div>
+                        {% elif room.status not in ['playing', 'waiting_result_confirm'] %}
+                        <div class="room-center-state-pill">{{ room.status|replace('_',' ')|title }}</div>
+                        {% endif %}
+                    {% endif %}
+                {% endif %}
+            {% else %}
+                <img class="room-center-vs-image" src="{{ url_for('static', filename='vs.png') }}" alt="VS" loading="eager">
+                {% if current_user.id == room.host_user_id or current_user.role == 'admin' %}
+                <div class="room-center-primary-actions">
+                    <a class="btn gold room-center-action-btn" href="{{ url_for('players') }}">Mời Đấu</a>
+                    <form class="room-exit-confirm-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}"
+                          data-modal-tone="warning"
+                          data-modal-icon="🚪"
+                          data-modal-title="Đóng phòng đấu?"
+                          data-modal-message="Phòng hiện chưa có đối thủ. Khi bạn thoát, phòng này sẽ được đóng."
+                          data-modal-note="ĐÓNG PHÒNG"
+                          data-modal-confirm-label="Thoát và đóng phòng">
+                        <button class="btn red room-center-action-btn" type="submit">Thoát Phòng</button>
+                    </form>
+                </div>
+                {% endif %}
+            {% endif %}
+        </section>
+
+        <section class="room-side-card room-team-card away">
+            <div class="room-player-heading-plain">
+                {{ player_avatar(name=room.guest_name, avatar_url=room.guest_avatar_url, achievement=room.guest_achievement, size='sm') }}
+                <div class="room-player-name">{{ room.guest_name }}</div>
+                {% if room.has_guest and room.guest_rank_info %}
+                <div class="room-player-rankline">
+                    <img src="{{ url_for('static', filename='ranks/' ~ room.guest_rank_info.slug ~ '.png') }}" alt="{{ room.guest_rank_info.name }}" loading="lazy">
+                    <span>{{ room.guest_rank_info.name }}</span>
+                </div>
+                {% if room.guest_streak_badge %}
+                <div class="win-streak-badge win-streak-badge-guest">
+                    <span>{{ room.guest_streak_badge.icon }}</span>
+                    <strong>{{ room.guest_streak_badge.title }}</strong>
+                    <span>· {{ room.guest_streak_badge.count }} trận thắng</span>
+                </div>
+                {% endif %}
+                {% else %}
+                <div class="room-player-rankline empty"><span>Đang chờ người chơi</span></div>
+                {% endif %}
+                {% if room.has_guest %}
+                <div class="room-ready-status {{ 'is-ready' if room.guest_ready else 'is-not-ready' }}">
+                    <span class="room-ready-dot"></span>{{ room.guest_ready_label }}
+                </div>
+                {% endif %}
+            </div>
+            <div class="room-card-club-area">
+                {% if room.guest_team_logo_url %}<img class="room-club-logo-large" src="{{ room.guest_team_logo_url }}" alt="Logo {{ room.guest_team or 'CLB' }}" loading="lazy">{% else %}<div class="room-team-placeholder-shield">?</div>{% endif %}
+                <div class="room-team-name-lg">{{ room.guest_team or 'CHƯA CHỌN ĐỘI' }}</div>
+                {% if room.guest_team_total_stats %}
+                <div class="room-team-points-block">
+                    <div class="room-team-points-value">{{ room.guest_team_total_stats }}</div>
+                </div>
+                {% endif %}
+                <div class="room-team-league-text">{% if room.guest_team_league_logo_url %}<img class="room-league-logo" src="{{ room.guest_team_league_logo_url }}" alt="Logo {{ room.guest_team_league }}" loading="lazy">{% endif %}<span>{{ room.guest_team_league or 'Chưa có giải' }}</span></div>
+            </div>
+        </section>
+
+        <aside class="room-side-rail">
+            <section class="panel room-side-info-panel">
+                <h3>Thông tin phòng đấu</h3>
+                <div class="room-side-info-list">
+                    <div><span>Mã phòng</span><strong>#{{ room.room_code }}</strong></div>
+                    <div><span>Loại trận</span><strong>{{ room.match_mode_label }}</strong></div>
+                    <div><span>Trạng thái phòng</span><strong>{{ room.status|replace('_',' ')|title }}</strong></div>
+                </div>
+            </section>
+
+            {% if room_head_to_head and room_head_to_head.available %}
+            <section class="panel room-session-h2h room-session-h2h-rail room-score-history-panel" aria-label="Lịch sử tỷ số trong phòng">
+                <div class="room-score-history-title">
+                    <h3>LỊCH SỬ ĐẤU</h3>
+                </div>
+
+                {% if room_head_to_head.matches %}
+                <div class="room-score-history-board">
+                    <div class="room-score-history-head">
+                        <span title="{{ room.host_name }}">{{ room.host_name }}</span>
+                        <strong>TỶ SỐ</strong>
+                        <span class="is-right" title="{{ room.guest_name or 'Đối thủ' }}">{{ room.guest_name or 'Đối thủ' }}</span>
+                    </div>
+                    <div class="room-score-history-list">
+                        {% for match in room_head_to_head.matches %}
+                        <div class="room-score-history-row" aria-label="Tỷ số {{ match.host_score }} - {{ match.guest_score }}">
+                            <span class="room-score-value{% if match.host_score|int > match.guest_score|int %} is-winner{% endif %}">{{ match.host_score }}</span>
+                            <span class="room-score-separator">-</span>
+                            <span class="room-score-value{% if match.guest_score|int > match.host_score|int %} is-winner{% endif %}">{{ match.guest_score }}</span>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% else %}
+                <p class="room-session-empty">Chưa có tỷ số nào trong phòng này.</p>
+                {% endif %}
+            </section>
+            {% endif %}
+
+            {% if system_features.room_chat_enabled %}<section class="panel room-chat-side">
+                <h2>Chat phòng</h2>
+                <div id="roomChatBox" class="chat-box"></div>
+                <form method="post" action="{{ url_for('send_room_chat', room_id=room.id) }}" class="chat-form">
+                    <input name="message" maxlength="200" placeholder="Nhắn với đối thủ trong phòng..." required autocomplete="off">
+                    <button class="btn green" type="submit">Gửi</button>
+                </form>
+                <div class="chat-note">Chat phòng chỉ dành cho 2 người trong phòng. Chống spam: 1 tin nhắn / 5 giây.</div>
+            </section>{% endif %}
+        </aside>
+    </div>
+
+    <div class="panel room-extra-controls">
+    <h2 class="room-control-title">Điều khiển phòng</h2>
+
+    {% if system_features.friendly_enabled and room.status == "waiting_ready" %}
+
+        {% if current_user.id == room.host_user_id or current_user.role == "admin" %}
+            {% if room.has_guest %}
+            <div class="room-mode-grid">
+
+                <form method="post" action="{{ url_for('room_random_teams', room_id=room.id) }}" class="room-mode-card" onsubmit="const b=this.querySelector('button'); b.disabled=true; b.textContent='Đang quay đội...';">
+                    <input type="hidden" name="match_mode" value="friendly">
+                    <h3>🤝 Giao hữu</h3>
+                    <label>Chọn Tier CLB</label>
+                    <select name="friendly_tier" required>
+                        {% for tier in friendly_tiers %}
+                        <option value="{{ tier }}" {% if room.friendly_tier == tier %}selected{% endif %}>Tier {{ tier }}</option>
+                        {% endfor %}
+                    </select>
+                    <p class="small">Hai CLB khác nhau trong cùng Tier. Không lưu lịch sử, không tính RP.</p>
+                    <button class="btn gold" type="submit">🎲 Quay đội Giao hữu</button>
+                </form>
+            </div>
+            {% endif %}
+        {% endif %}
+
+    {% endif %}
+
+    {% if system_features.friendly_enabled and room.status == "friendly_playing" %}
+    <div class="friendly-match-banner">
+        <h3>🤝 Trận giao hữu Tier {{ room.friendly_tier }}</h3>
+        <p>Không lưu lịch sử • Không cộng/trừ RP • Hai đội không trùng nhau.</p>
+        {% if current_user.id == room.host_user_id or current_user.role == "admin" %}
+        <form class="inline-form" method="post" action="{{ url_for('room_reroll_friendly', room_id=room.id) }}">
+            <button class="btn gold" type="submit">🎲 Tự Random Tiếp</button>
+        </form>
+        <form class="inline-form" method="post" action="{{ url_for('room_finish_friendly', room_id=room.id) }}">
+            <button class="btn gray" type="submit">✅ Kết thúc giao hữu</button>
+        </form>
+        {% else %}
+        <p class="small">Chờ chủ phòng kết thúc giao hữu để quay trận tiếp theo.</p>
+        {% endif %}
+        {% if current_user.id == room.guest_user_id %}
+        <form class="inline-form room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
+              data-modal-tone="danger"
+              data-modal-icon="⚠"
+              data-modal-title="Xác nhận bỏ cuộc"
+              data-modal-message="Trận đã bắt đầu. Thoát phòng lúc này được tính là bỏ cuộc."
+              data-modal-note="−20 RP"
+              data-modal-confirm-label="Bỏ cuộc và thoát">
+            <button class="btn red" type="submit">🚪 Thoát Phòng</button>
+        </form>
+        <p class="small danger-text">Đã quay đội. Thoát phòng lúc này bị tính là bỏ cuộc và trừ 20 RP.</p>
+        {% elif current_user.id == room.host_user_id %}
+        <form class="inline-form" method="post" action="{{ url_for('room_leave', room_id=room.id) }}">
+            <button class="btn red" type="submit">🚪 Thoát phòng</button>
+        </form>
+        {% endif %}
+    </div>
+    {% endif %}
+
+    {% if room.status == "playing" and current_user.id == room.guest_user_id %}
+    <div class="guest-forfeit-box">
+        <form class="inline-form room-exit-confirm-form" method="post" action="{{ url_for('room_guest_forfeit', room_id=room.id) }}"
+              data-modal-tone="danger"
+              data-modal-icon="⚠"
+              data-modal-title="Xác nhận bỏ cuộc"
+              data-modal-message="Trận đã bắt đầu. Thoát phòng lúc này được tính là bỏ cuộc."
+              data-modal-note="−20 RP"
+              data-modal-confirm-label="Bỏ cuộc và thoát">
+            <button class="btn red" type="submit">🚪 Thoát Phòng</button>
+        </form>
+        <p class="small danger-text">Thoát phòng sau khi đã quay đội được tính là bỏ cuộc và bị trừ 20 RP.</p>
+    </div>
+    {% endif %}
+
+    {% if room.status == "confirmed" %}
+    <div class="room-finished-summary">
+        <strong>{{ room.host_name }} {{ room.host_score }} - {{ room.guest_score }} {{ room.guest_name }}</strong>
+    </div>
+    {% endif %}
+
+    {% if room.status == "cancelled" %}
+    <p>{{ room.note or "Phòng đã bị hủy." }}</p>
+    <a class="btn gray" href="{{ url_for('dashboard') }}">Về sảnh chính</a>
+    {% endif %}
+
+    {% if room.status == "disputed" %}
+    <div class="dispute-status-card">
+        <div class="dispute-status-heading">
+            <h3>⚠️ Đang chờ Admin xử lý</h3>
+            <span class="badge disputed">Chưa tính điểm</span>
+        </div>
+        <p class="dispute-score"><strong>{{ room.host_name }} {{ room.host_score }} - {{ room.guest_score }} {{ room.guest_name }}</strong></p>
+        {% if room.dispute %}
+        <div class="dispute-detail-grid">
+            <div><span>Người gửi</span><strong>{{ room.dispute.raised_by_name }}</strong></div>
+            <div><span>Lý do</span><strong>{{ room.dispute.reason_label }}</strong></div>
+            <div><span>Thời gian</span><strong>{{ format_vn_datetime(room.dispute.created_at) }}</strong></div>
+            <div><span>Trạng thái</span><strong>Đang chờ Admin</strong></div>
+        </div>
+        {% if room.dispute.details %}<div class="dispute-note"><strong>Ghi chú:</strong> {{ room.dispute.details }}</div>{% endif %}
+        {% if room.dispute.evidence_url %}
+        <div class="dispute-evidence-block">
+            <strong>Ảnh bằng chứng</strong>
+            <a href="{{ room.dispute.evidence_url }}" target="_blank" rel="noopener">
+                <img src="{{ room.dispute.evidence_url }}" alt="Ảnh bằng chứng tranh chấp" loading="lazy">
+                <span>Mở ảnh kích thước đầy đủ</span>
+            </a>
+        </div>
+        {% endif %}
+        {% endif %}
+        <p class="small">Hai người có thể về sảnh và tiếp tục sử dụng app. Trận này chỉ được tính điểm sau khi Admin xử lý.</p>
+        {% if room.dispute and current_user.id == room.dispute.raised_by_id %}
+        <form class="inline-form" method="post" action="{{ url_for('room_withdraw_dispute', room_id=room.id) }}" onsubmit="return confirm('Rút tranh chấp và chấp nhận tỷ số ban đầu? Điểm rank sẽ được cập nhật ngay.');">
+            <button class="btn green" type="submit">↩️ Rút tranh chấp và chấp nhận kết quả</button>
+        </form>
+        {% endif %}
+        <a class="btn gray" href="{{ url_for('dashboard') }}">Về sảnh chính</a>
+    </div>
+    {% endif %}
+        </div>
+
     </div>
 </div>
 
@@ -130,22 +541,22 @@ async function copySharedRoomLink() {
     }
 }
 
-document.addEventListener("DOMContentLoaded", function () {
+function bindRoomShareButton() {
     const shareButton = document.getElementById("copyRoomShareLink");
-    if (shareButton) shareButton.addEventListener("click", copySharedRoomLink);
-});
+    if (!shareButton || shareButton.dataset.roomShareBound === "1") return;
+    shareButton.dataset.roomShareBound = "1";
+    shareButton.addEventListener("click", copySharedRoomLink);
+}
 
 let currentRoomStateKey = {{ initial_room_state_key|tojson }};
 let currentRoomStatus = {{ room.status|tojson }};
-let currentRoomHasGuest = {{ room.has_guest|tojson }};
 const currentRoomUserIsHost = {{ (current_user.id == room.host_user_id or current_user.role == 'admin')|tojson }};
 const currentRoomUserIsGuest = {{ (current_user.id == room.guest_user_id)|tojson }};
-const roomStateRequestKey = "room-state:{{ room.id }}";
-window.PES_ROOM_CONTEXT = {
-    status: currentRoomStatus,
-    hasGuest: currentRoomHasGuest,
-    roomId: {{ room.id|tojson }}
-};
+const currentRoomPath = {{ url_for('room_detail', room_id=room.id)|tojson }};
+
+let roomCountdownSeconds = 0;
+let roomStartCountdownSeconds = 0;
+let roomStartCountdownMode = "down";
 
 function renderRoomCountdown(seconds) {
     const countdown = document.getElementById("roomCountdown");
@@ -156,11 +567,6 @@ function renderRoomCountdown(seconds) {
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
 
-let roomCountdownSeconds = 0;
-let roomStartCountdownSeconds = 0;
-let roomStartCountdownMode = "down";
-let roomCountdownTimer = null;
-
 function renderRoomStartCountdown(seconds) {
     const countdown = document.getElementById("roomStartCountdown");
     if (!countdown) return;
@@ -170,271 +576,262 @@ function renderRoomStartCountdown(seconds) {
     countdown.textContent = String(minutes).padStart(2, "0") + ":" + String(remain).padStart(2, "0");
 }
 
-function syncRoomCountdownFromDom() {
+function syncRoomCountdownsFromDom() {
     const roomCountdown = document.getElementById("roomCountdown");
     const startCountdown = document.getElementById("roomStartCountdown");
-    roomCountdownSeconds = Number(roomCountdown?.dataset.seconds || roomCountdownSeconds || 0);
+    roomCountdownSeconds = Number(roomCountdown?.dataset.seconds || 0);
     roomStartCountdownSeconds = Number(startCountdown?.dataset.seconds || 0);
     roomStartCountdownMode = startCountdown?.dataset.mode || "down";
     renderRoomCountdown(roomCountdownSeconds);
     renderRoomStartCountdown(roomStartCountdownSeconds);
 }
 
-function startRoomCountdownClock() {
-    if (roomCountdownTimer) window.clearInterval(roomCountdownTimer);
-    roomCountdownTimer = window.setInterval(function () {
-        if (document.hidden) return;
-        if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
-        if (roomStartCountdownMode === "up") {
-            roomStartCountdownSeconds += 1;
-        } else if (roomStartCountdownSeconds > 0) {
-            roomStartCountdownSeconds -= 1;
-        }
-        renderRoomCountdown(roomCountdownSeconds);
-        renderRoomStartCountdown(roomStartCountdownSeconds);
-    }, 1000);
-}
-
-syncRoomCountdownFromDom();
-startRoomCountdownClock();
+syncRoomCountdownsFromDom();
+window.setInterval(function () {
+    if (roomCountdownSeconds > 0) roomCountdownSeconds -= 1;
+    if (roomStartCountdownMode === "up") {
+        roomStartCountdownSeconds += 1;
+    } else if (roomStartCountdownSeconds > 0) {
+        roomStartCountdownSeconds -= 1;
+    }
+    renderRoomCountdown(roomCountdownSeconds);
+    renderRoomStartCountdown(roomStartCountdownSeconds);
+}, 1000);
 
 const roomScoreDraftKey = "pes-room-score-draft:{{ room.id }}";
 let roomScoreFormDirty = false;
-
-function getRoomScoreInputs() {
-    const form = document.querySelector("#roomLiveContent .room-score-form");
-    return form
-        ? Array.from(form.querySelectorAll('input[name="host_score"], input[name="guest_score"]'))
-        : [];
-}
+let roomScoreForm = null;
+let roomScoreInputs = [];
 
 function saveRoomScoreDraft() {
-    const inputs = getRoomScoreInputs();
-    if (!inputs.length) return;
+    if (!roomScoreInputs.length) return;
     roomScoreFormDirty = true;
     try {
         const draft = {};
-        inputs.forEach(function (input) { draft[input.name] = input.value; });
+        roomScoreInputs.forEach(function (input) { draft[input.name] = input.value; });
         sessionStorage.setItem(roomScoreDraftKey, JSON.stringify(draft));
     } catch (error) {}
 }
 
 function restoreRoomScoreDraft() {
-    const inputs = getRoomScoreInputs();
-    if (!inputs.length) {
-        roomScoreFormDirty = false;
-        return;
-    }
+    if (!roomScoreInputs.length) return;
     try {
         const raw = sessionStorage.getItem(roomScoreDraftKey);
         if (!raw) return;
         const draft = JSON.parse(raw);
-        inputs.forEach(function (input) {
+        roomScoreInputs.forEach(function (input) {
             if (Object.prototype.hasOwnProperty.call(draft, input.name)) input.value = draft[input.name];
         });
         roomScoreFormDirty = true;
     } catch (error) {}
 }
 
-document.addEventListener("input", function (event) {
-    if (event.target && event.target.closest("#roomLiveContent .room-score-form")) saveRoomScoreDraft();
-});
-document.addEventListener("submit", function (event) {
-    if (event.target && event.target.matches("#roomLiveContent .room-score-form")) {
-        roomScoreFormDirty = false;
-        try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
-    }
-}, true);
-restoreRoomScoreDraft();
+function clearRoomScoreDraft() {
+    roomScoreFormDirty = false;
+    try { sessionStorage.removeItem(roomScoreDraftKey); } catch (error) {}
+}
+
+function bindRoomScoreDraft() {
+    roomScoreForm = document.querySelector(".room-score-form");
+    roomScoreInputs = roomScoreForm
+        ? Array.from(roomScoreForm.querySelectorAll('input[name="host_score"], input[name="guest_score"]'))
+        : [];
+    roomScoreInputs.forEach(function (input) {
+        if (input.dataset.roomDraftBound === "1") return;
+        input.dataset.roomDraftBound = "1";
+        input.addEventListener("input", saveRoomScoreDraft);
+    });
+    restoreRoomScoreDraft();
+}
 
 let roomStateRequestInFlight = false;
-let roomStateAbortController = null;
 let roomStateTimer = null;
 let roomStateStopped = false;
-let roomStateRunAgain = false;
+let roomViewRefreshInFlight = false;
+let roomActionRequestInFlight = false;
 
 function getRoomStateInterval() {
-    if (document.hidden) return 12000;
+    if (document.hidden) return 60000;
+    if (currentRoomStatus === "playing") return currentRoomUserIsGuest ? 5000 : 12000;
+    if (currentRoomStatus === "friendly_playing") return 12000;
     if (currentRoomStatus === "waiting_result_confirm") return 2000;
-    if (currentRoomStatus === "playing") return currentRoomUserIsGuest ? 3000 : 5000;
-    if (currentRoomStatus === "friendly_playing") return 5000;
-    if (currentRoomStatus === "waiting_ready") return currentRoomHasGuest ? 3000 : 5000;
-    if (currentRoomStatus === "confirmed") return 3000;
-    return 6000;
-}
-
-function syncRoomShareButton() {
-    const wrapper = document.getElementById("roomStageShareWrap");
-    if (!wrapper) return;
-    wrapper.hidden = !(currentRoomUserIsHost && currentRoomStatus === "waiting_ready" && !currentRoomHasGuest);
-}
-
-function updateRoomPollingContext(data) {
-    currentRoomStatus = data.status || currentRoomStatus;
-    if (typeof data.has_guest !== "undefined") currentRoomHasGuest = Boolean(data.has_guest);
-    window.PES_ROOM_CONTEXT = {
-        status: currentRoomStatus,
-        hasGuest: currentRoomHasGuest,
-        roomId: {{ room.id|tojson }}
-    };
-    syncRoomShareButton();
-    if (typeof window.PESConfigureInvitePolling === "function") {
-        window.PESConfigureInvitePolling();
-    }
+    if (currentRoomStatus === "waiting_ready") return 3000;
+    if (currentRoomStatus === "confirmed") return 5000;
+    return 10000;
 }
 
 function scheduleRoomStateCheck(delay) {
     if (roomStateStopped) return;
     if (roomStateTimer) window.clearTimeout(roomStateTimer);
     const baseDelay = typeof delay === "number" ? delay : getRoomStateInterval();
-    const jitter = document.hidden ? 0 : Math.floor(Math.random() * 250);
-    roomStateTimer = window.setTimeout(checkRoomState, baseDelay + jitter);
-    window.roomStateTimer = roomStateTimer;
+    const jitter = document.hidden ? 0 : Math.floor(Math.random() * 350);
+    roomStateTimer = window.setTimeout(runRoomStateCheck, baseDelay + jitter);
 }
 
-function captureRoomChatDraft() {
-    const input = document.querySelector("#roomLiveContent .chat-form input[name='message']");
+function showRoomAjaxNotice(message, tone) {
+    if (!message) return;
+    if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
+        window.PESRoomActionModal.showNotice({
+            tone: tone || "warning",
+            icon: tone === "danger" ? "⚠" : "ℹ",
+            title: tone === "danger" ? "Không thể thực hiện" : "Thông báo phòng đấu",
+            message: message,
+            note: "PES ARENA",
+            confirmLabel: "Đã hiểu"
+        });
+    }
+}
+
+function getFlashFromDocument(doc) {
+    const alert = doc.querySelector(".player-main > .alert, main .alert");
+    if (!alert) return null;
     return {
-        value: input ? input.value : "",
-        focused: Boolean(input && document.activeElement === input),
-        selectionStart: input ? input.selectionStart : null,
-        selectionEnd: input ? input.selectionEnd : null
+        message: (alert.textContent || "").trim(),
+        tone: alert.classList.contains("danger") ? "danger" : (alert.classList.contains("success") ? "success" : "warning")
     };
 }
 
-function restoreRoomChatDraft(draft) {
-    if (!draft) return;
-    const input = document.querySelector("#roomLiveContent .chat-form input[name='message']");
-    if (!input) return;
-    input.value = draft.value || "";
-    if (draft.focused) {
-        input.focus({preventScroll: true});
-        if (Number.isInteger(draft.selectionStart) && Number.isInteger(draft.selectionEnd)) {
-            try { input.setSelectionRange(draft.selectionStart, draft.selectionEnd); } catch (error) {}
-        }
+function rebindRoomDynamicUi() {
+    bindRoomShareButton();
+    bindRoomScoreDraft();
+    bindRoomAjaxForms();
+    syncRoomCountdownsFromDom();
+    if (window.PESRoomActionModal && typeof window.PESRoomActionModal.refreshForms === "function") {
+        window.PESRoomActionModal.refreshForms();
+    }
+    if (typeof currentRoomChatKey !== "undefined") currentRoomChatKey = "";
+    if (typeof loadRoomChat === "function" && !document.hidden) loadRoomChat();
+}
+
+function replaceRoomShellFromDocument(doc) {
+    const currentShell = document.getElementById("roomLiveShell");
+    const nextShell = doc.getElementById("roomLiveShell");
+    if (!currentShell || !nextShell) return false;
+
+    currentShell.replaceWith(nextShell);
+    currentRoomStateKey = nextShell.dataset.roomStateKey || currentRoomStateKey;
+    currentRoomStatus = nextShell.dataset.roomStatus || currentRoomStatus;
+    rebindRoomDynamicUi();
+    return true;
+}
+
+async function fetchRoomDocument(url, options) {
+    const response = await fetch(url, Object.assign({
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: {"X-PES-Room-Ajax": "1"}
+    }, options || {}));
+    const text = await response.text();
+    const doc = new DOMParser().parseFromString(text, "text/html");
+    return {response: response, doc: doc};
+}
+
+async function refreshRoomView() {
+    if (roomViewRefreshInFlight || roomStateStopped) return false;
+    roomViewRefreshInFlight = true;
+    try {
+        const result = await fetchRoomDocument(currentRoomPath);
+        if (!result.response.ok) return false;
+        return replaceRoomShellFromDocument(result.doc);
+    } catch (error) {
+        return false;
+    } finally {
+        roomViewRefreshInFlight = false;
     }
 }
 
-function refreshRoomLiveContent(data) {
-    const liveRoot = document.getElementById("roomLiveContent");
-    if (!liveRoot || typeof data.html !== "string") return;
-
-    // Chat không thuộc trạng thái thi đấu. Giữ nguyên DOM cũ để không làm mất
-    // nội dung đang gõ, vị trí cuộn hoặc tạo thêm request chat mỗi lần đội/nút đổi.
-    const existingChatPanel = liveRoot.querySelector(".room-chat-side");
-    const chatDraft = existingChatPanel ? null : captureRoomChatDraft();
-    liveRoot.innerHTML = data.html;
-    const renderedChatPanel = liveRoot.querySelector(".room-chat-side");
-    let chatPanelPreserved = false;
-    if (existingChatPanel && renderedChatPanel) {
-        renderedChatPanel.replaceWith(existingChatPanel);
-        chatPanelPreserved = true;
-    }
-
-    syncRoomCountdownFromDom();
-    restoreRoomScoreDraft();
-    if (!chatPanelPreserved) restoreRoomChatDraft(chatDraft);
-    syncRoomShareButton();
-
-    if (!renderedChatPanel && existingChatPanel && typeof window.PESStopRoomChatPolling === "function") {
-        window.PESStopRoomChatPolling();
-    } else if (!chatPanelPreserved && renderedChatPanel && typeof window.PESRefreshRoomChat === "function") {
-        window.PESRefreshRoomChat();
-    }
-    document.dispatchEvent(new CustomEvent("pes:room-state-updated", {detail: data}));
+function shouldAjaxRoomForm(form) {
+    if (!form || String(form.method || "get").toLowerCase() !== "post") return false;
+    if (form.classList.contains("room-exit-confirm-form")) return false;
+    if (form.querySelector('input[type="file"]')) return false;
+    const action = String(form.action || "");
+    if (!action.includes(currentRoomPath)) return false;
+    return !/(\/leave|\/forfeit|\/rematch\/decline|\/dispute|\/withdraw-dispute)(?:$|\?)/.test(action);
 }
 
-function abortRoomStateRequest() {
-    if (roomStateAbortController) roomStateAbortController.abort();
-    roomStateAbortController = null;
-    if (window.PESNet) PESNet.abortRequest(roomStateRequestKey);
+function bindRoomAjaxForms() {
+    const shell = document.getElementById("roomLiveShell");
+    if (!shell) return;
+    shell.querySelectorAll("form").forEach(function (form) {
+        if (!shouldAjaxRoomForm(form) || form.dataset.roomAjaxBound === "1") return;
+        form.dataset.roomAjaxBound = "1";
+        form.addEventListener("submit", async function (event) {
+            event.preventDefault();
+            if (roomActionRequestInFlight) return;
+            roomActionRequestInFlight = true;
+
+            const submitter = event.submitter || form.querySelector('button[type="submit"], input[type="submit"]');
+            const oldText = submitter ? submitter.textContent : "";
+            if (submitter) {
+                submitter.disabled = true;
+                submitter.textContent = "Đang xử lý...";
+            }
+
+            try {
+                const body = new FormData(form);
+                if (submitter && submitter.name && !body.has(submitter.name)) body.append(submitter.name, submitter.value || "");
+                const result = await fetchRoomDocument(form.action, {method: "POST", body: body});
+                const responsePath = new URL(result.response.url, window.location.origin).pathname;
+
+                if (!responsePath.startsWith(currentRoomPath)) {
+                    window.location.href = result.response.url;
+                    return;
+                }
+
+                const flash = getFlashFromDocument(result.doc);
+                const updated = replaceRoomShellFromDocument(result.doc);
+                if (updated && form.classList.contains("room-score-form") && (!flash || flash.tone !== "danger")) {
+                    clearRoomScoreDraft();
+                }
+                if (flash && flash.message) showRoomAjaxNotice(flash.message, flash.tone);
+                if (!updated && !flash) showRoomAjaxNotice("Không thể cập nhật phòng. Vui lòng thử lại sau vài giây.", "warning");
+            } catch (error) {
+                showRoomAjaxNotice("Kết nối phòng đấu bị gián đoạn. Vui lòng thử lại.", "danger");
+            } finally {
+                roomActionRequestInFlight = false;
+                if (submitter && document.contains(submitter)) {
+                    submitter.disabled = false;
+                    submitter.textContent = oldText;
+                }
+                scheduleRoomStateCheck(500);
+            }
+        });
+    });
 }
 
-function stopRoomRealtime() {
-    roomStateStopped = true;
-    roomStateRunAgain = false;
-    if (roomStateTimer) window.clearTimeout(roomStateTimer);
-    roomStateTimer = null;
-    window.roomStateTimer = null;
-    abortRoomStateRequest();
-    if (typeof window.PESStopRoomChatPolling === "function") window.PESStopRoomChatPolling();
-    if (typeof window.PESStopInvitePolling === "function") window.PESStopInvitePolling();
-}
-window.PESStopRoomRealtime = stopRoomRealtime;
-
-async function checkRoomState() {
+function runRoomStateCheck() {
     if (roomStateStopped) return;
-    if (roomStateRequestInFlight) {
-        roomStateRunAgain = true;
-        return;
-    }
-    // Chỉ tạm hoãn khi người dùng đang nhập tỷ số chưa gửi. Ô chat được giữ lại
-    // qua mỗi lần cập nhật nên không còn làm polling trạng thái bị đứng.
-    if (roomScoreFormDirty) {
-        scheduleRoomStateCheck(1200);
-        return;
-    }
+    checkRoomState().finally(function () {
+        scheduleRoomStateCheck();
+    });
+}
+
+function checkRoomState() {
+    if (roomStateRequestInFlight || roomActionRequestInFlight || roomViewRefreshInFlight) return Promise.resolve();
 
     roomStateRequestInFlight = true;
-    roomStateAbortController = new AbortController();
     const stateUrl = new URL("{{ url_for('api_room_state', room_id=room.id) }}", window.location.origin);
     if (currentRoomStateKey) stateUrl.searchParams.set("since", currentRoomStateKey);
 
-    const requestOptions = {
+    return fetch(stateUrl.toString(), {
         method: "GET",
         credentials: "same-origin",
-        cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
-    };
-
-    try {
-        let result;
-        if (window.PESNet) {
-            result = await PESNet.fetchJson(
-                stateUrl.toString(),
-                requestOptions,
-                12000,
-                roomStateRequestKey,
-                roomStateAbortController.signal
-            );
-        } else {
-            const res = await fetch(stateUrl.toString(), Object.assign({}, requestOptions, {signal: roomStateAbortController.signal}));
-            const text = res.status === 204 ? "" : await res.text();
-            let data = null;
-            try { data = text ? JSON.parse(text) : null; } catch (error) {}
-            result = {
-                ok: res.ok,
-                status: res.status,
-                redirected: Boolean(res.redirected),
-                url: res.url || "",
-                contentType: res.headers.get("content-type") || "",
-                data: data
-            };
-        }
-
-        if (result.status === 204 || result.status === 304) return;
-        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-            stopRoomRealtime();
-            window.location.href = "{{ url_for('login') }}";
-            return;
-        }
-        if ([403, 404].includes(result.status)) {
-            stopRoomRealtime();
-            window.location.href = "{{ url_for('dashboard') }}";
-            return;
-        }
-        if (!result.ok) return;
-        const data = result.data;
+        cache: "no-store"
+    })
+    .then(function (res) {
+        if (res.status === 204 || res.status === 304) return null;
+        return res.json();
+    })
+    .then(async function (data) {
         if (!data || !data.ok) return;
-        updateRoomPollingContext(data);
-
+        currentRoomStatus = data.status || currentRoomStatus;
         if (data.status === "cancelled") {
-            stopRoomRealtime();
+            roomStateStopped = true;
             window.location.href = "{{ url_for('dashboard') }}";
             return;
         }
         if (data.rematch_expired) {
-            stopRoomRealtime();
+            roomStateStopped = true;
             if (window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
                 window.PESRoomActionModal.showNotice({
                     tone: "warning",
@@ -451,8 +848,12 @@ async function checkRoomState() {
             }
             return;
         }
+        if (typeof data.timeout_seconds !== "undefined") {
+            roomCountdownSeconds = Number(data.timeout_seconds) || 0;
+            renderRoomCountdown(roomCountdownSeconds);
+        }
         if (data.rematch_declined) {
-            stopRoomRealtime();
+            roomStateStopped = true;
             if (!data.rematch_declined_by_me && window.PESRoomActionModal && typeof window.PESRoomActionModal.showNotice === "function") {
                 window.PESRoomActionModal.showNotice({
                     tone: "warning",
@@ -469,95 +870,48 @@ async function checkRoomState() {
             }
             return;
         }
-        if (typeof data.timeout_seconds !== "undefined") {
-            roomCountdownSeconds = Number(data.timeout_seconds) || 0;
-            renderRoomCountdown(roomCountdownSeconds);
+        if (data.state_key !== currentRoomStateKey) {
+            await refreshRoomView();
         }
-        if (data.state_key && data.state_key !== currentRoomStateKey) {
-            currentRoomStateKey = data.state_key;
-            refreshRoomLiveContent(data);
-        }
-    } catch (error) {
-        if (!(error && error.name === "AbortError")) {
-            // Mất mạng tạm thời: giữ nguyên giao diện và thử lại ở chu kỳ sau.
-        }
-    } finally {
+    })
+    .catch(function () {})
+    .finally(function () {
         roomStateRequestInFlight = false;
-        roomStateAbortController = null;
-        if (roomStateStopped) return;
-        if (roomStateRunAgain) {
-            roomStateRunAgain = false;
-            scheduleRoomStateCheck(100);
-        } else {
-            scheduleRoomStateCheck();
-        }
-    }
+    });
 }
 
 function requestImmediateRoomStateCheck() {
     if (document.hidden || roomStateStopped) return;
-    if (roomStateRequestInFlight) {
-        roomStateRunAgain = true;
-        return;
-    }
-    scheduleRoomStateCheck(80);
+    scheduleRoomStateCheck(100);
 }
 
-window.addEventListener("DOMContentLoaded", function () {
-    syncRoomShareButton();
+function stopRoomStatePolling() {
+    roomStateStopped = true;
+    if (roomStateTimer) window.clearTimeout(roomStateTimer);
+    roomStateTimer = null;
+}
+
+if (window.PESRoomStateController && typeof window.PESRoomStateController.stop === "function") {
+    window.PESRoomStateController.stop();
+}
+window.PESRoomStateController = {stop: stopRoomStatePolling, runNow: requestImmediateRoomStateCheck};
+
+document.addEventListener("DOMContentLoaded", function () {
+    rebindRoomDynamicUi();
     scheduleRoomStateCheck(300);
 });
+
 document.addEventListener("visibilitychange", function () {
-    if (!document.hidden) requestImmediateRoomStateCheck();
+    if (document.hidden) scheduleRoomStateCheck(60000);
+    else requestImmediateRoomStateCheck();
 });
-window.addEventListener("online", requestImmediateRoomStateCheck);
-window.addEventListener("pagehide", function () {
-    stopRoomRealtime();
-    if (roomCountdownTimer) window.clearInterval(roomCountdownTimer);
-    roomCountdownTimer = null;
-});
-window.addEventListener("beforeunload", stopRoomRealtime);
-window.addEventListener("pageshow", function (event) {
-    if (!event.persisted) return;
-    roomStateStopped = false;
-    startRoomCountdownClock();
-    if (typeof window.PESStartRoomChatPolling === "function") window.PESStartRoomChatPolling();
-    if (typeof window.PESConfigureInvitePolling === "function") window.PESConfigureInvitePolling();
-    scheduleRoomStateCheck(80);
-});
-
-// Các form làm server chuyển trang phải dừng timer/request cũ ngay khi gửi.
-// Form chat được gửi AJAX; form xác nhận bỏ cuộc chỉ dừng sau khi người dùng
-// bấm nút xác nhận trong modal.
-document.addEventListener("submit", function (event) {
-    const form = event.target && event.target.closest ? event.target.closest("#roomLiveContent form") : null;
-    if (!form || form.matches(".chat-form") || form.matches(".room-exit-confirm-form")) return;
-    stopRoomRealtime();
-}, true);
-
-// Dừng timer/request ngay từ lúc bấm liên kết nội bộ, không đợi đến pagehide.
-document.addEventListener("click", function (event) {
-    const link = event.target && event.target.closest ? event.target.closest("a[href]") : null;
-    if (!link || event.defaultPrevented || event.button !== 0) return;
-    if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-    if (link.target && link.target !== "_self") return;
-    if (link.hasAttribute("download")) return;
-    const href = link.getAttribute("href") || "";
-    if (!href || href.startsWith("#") || href.startsWith("javascript:")) return;
-    let targetUrl;
-    try { targetUrl = new URL(link.href, window.location.href); } catch (error) { return; }
-    if (targetUrl.origin !== window.location.origin) return;
-    stopRoomRealtime();
-}, true);
-
+window.addEventListener("focus", requestImmediateRoomStateCheck);
+window.addEventListener("pagehide", stopRoomStatePolling, {once: true});
 </script>
 
+{% if system_features.room_chat_enabled %}
 <script>
 let currentRoomChatKey = "";
-let roomChatPoller = null;
-let roomChatStopped = false;
-const roomChatRequestKey = "room-chat:{{ room.id }}";
-const roomChatSendRequestKey = "room-chat-send:{{ room.id }}";
 
 function escapeRoomHtml(text) {
     const div = document.createElement("div");
@@ -575,22 +929,17 @@ function renderRoomAvatar(url, name, achievement) {
     return `<span class="player-avatar avatar-xs"><span>${initial}</span>${badge}</span>`;
 }
 
-function setRoomChatStatus(message) {
-    const status = document.getElementById("roomChatStatus");
-    if (status && message) status.textContent = message;
-}
-
 function renderRoomChat(messages) {
     const box = document.getElementById("roomChatBox");
     if (!box) return;
-    const safeMessages = Array.isArray(messages) ? messages : [];
-    const nextKey = safeMessages.map(function (msg) {
+
+    const nextKey = (messages || []).map(function (msg) {
         return [msg.id || "", msg.created_at || "", msg.message || ""].join(":");
     }).join("|");
     if (nextKey === currentRoomChatKey) return;
     currentRoomChatKey = nextKey;
 
-    box.innerHTML = safeMessages.map(function (msg) {
+    box.innerHTML = messages.map(function (msg) {
         const adminBadge = msg.user_role === "admin" ? '<span class="badge gold">ADMIN</span>' : '';
         const adminClass = msg.user_role === "admin" ? 'admin' : '';
         return `
@@ -602,179 +951,32 @@ function renderRoomChat(messages) {
             </div>
         `;
     }).join("");
+
     box.scrollTop = box.scrollHeight;
 }
 
-function stopRoomChatPolling() {
-    roomChatStopped = true;
-    if (roomChatPoller) roomChatPoller.stop();
-    roomChatPoller = null;
-    if (window.PESNet) {
-        PESNet.abortRequest(roomChatRequestKey);
-        PESNet.abortRequest(roomChatSendRequestKey);
-    }
-}
-window.PESStopRoomChatPolling = stopRoomChatPolling;
-
-function loadRoomChat(signal) {
-    if (document.hidden || roomChatStopped || !document.getElementById("roomChatBox")) return Promise.resolve();
-    const options = {
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"}
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.fetchJson(
-            "{{ url_for('api_room_chat', room_id=room.id) }}",
-            options,
-            10000,
-            roomChatRequestKey,
-            signal
-        )
-        : fetch("{{ url_for('api_room_chat', room_id=room.id) }}", Object.assign({}, options, {signal: signal}))
-            .then(function (res) {
-                return res.text().then(function (text) {
-                    let data = null;
-                    try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                    return {
-                        ok: res.ok,
-                        status: res.status,
-                        redirected: Boolean(res.redirected),
-                        url: res.url || "",
-                        contentType: res.headers.get("content-type") || "",
-                        data: data
-                    };
-                });
-            });
-
-    return requestPromise
-        .then(function (result) {
-            if (!result) return;
-            if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-                stopRoomChatPolling();
-                setRoomChatStatus("Phiên đăng nhập đã hết hạn.");
-                return;
-            }
-            if ([403, 404].includes(result.status)) {
-                stopRoomChatPolling();
-                return;
-            }
-            const data = result.data;
-            if (data && data.stop_polling) {
-                stopRoomChatPolling();
-                return;
-            }
-            if (result.ok && data && data.ok) renderRoomChat(data.messages);
+function loadRoomChat() {
+    if (document.hidden) return Promise.resolve();
+    return fetch("{{ url_for('api_room_chat', room_id=room.id) }}", { credentials: "same-origin" })
+        .then(function (res) { return res.json(); })
+        .then(function (data) {
+            if (data.ok) renderRoomChat(data.messages);
         })
-        .catch(function (error) {
-            if (!(error && error.name === "AbortError")) setRoomChatStatus("Chat đang kết nối lại...");
-        });
+        .catch(function () {});
 }
 
-function startRoomChatPolling() {
-    if (!document.getElementById("roomChatBox")) {
-        stopRoomChatPolling();
-        return;
-    }
-    roomChatStopped = false;
-    if (!window.PESNet) {
-        loadRoomChat();
-        return;
-    }
-    if (roomChatPoller) roomChatPoller.stop();
-    roomChatPoller = PESNet.createPoller({
-        key: "room-chat",
+window.addEventListener("DOMContentLoaded", function () {
+    if (!window.PESNet) return loadRoomChat();
+    PESNet.createPoller({
         task: loadRoomChat,
         visibleInterval: 12000,
         hiddenInterval: 60000,
-        runWhenHidden: false,
         immediate: true,
         jitter: 1000
     });
-}
-window.PESStartRoomChatPolling = startRoomChatPolling;
-
-function refreshRoomChat() {
-    if (!document.getElementById("roomChatBox")) {
-        stopRoomChatPolling();
-        return;
-    }
-    currentRoomChatKey = "";
-    if (!roomChatPoller) startRoomChatPolling();
-    else roomChatPoller.runNow();
-}
-window.PESRefreshRoomChat = refreshRoomChat;
-
-function submitRoomChat(form) {
-    const input = form.querySelector('input[name="message"]');
-    const button = form.querySelector('button[type="submit"]');
-    const message = input ? input.value.trim() : "";
-    if (!message) return Promise.resolve();
-    if (button) button.disabled = true;
-    setRoomChatStatus("Đang gửi tin nhắn...");
-
-    const options = {
-        method: "POST",
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: {"X-Requested-With": "XMLHttpRequest", "Accept": "application/json"},
-        body: new FormData(form)
-    };
-    const requestPromise = window.PESNet
-        ? PESNet.fetchJson(form.action, options, 12000, roomChatSendRequestKey)
-        : fetch(form.action, options).then(function (res) {
-            return res.text().then(function (text) {
-                let data = null;
-                try { data = text ? JSON.parse(text) : null; } catch (error) {}
-                return {
-                    status: res.status,
-                    ok: res.ok,
-                    redirected: Boolean(res.redirected),
-                    url: res.url || "",
-                    contentType: res.headers.get("content-type") || "",
-                    data: data
-                };
-            });
-        });
-
-    return requestPromise.then(function (result) {
-        if (result.status === 401 || (window.PESNet && PESNet.isUnexpectedHtml(result))) {
-            stopRoomChatPolling();
-            setRoomChatStatus("Phiên đăng nhập đã hết hạn.");
-            return;
-        }
-        if (result.status === 403 || result.status === 404) {
-            stopRoomChatPolling();
-            setRoomChatStatus((result.data && result.data.error) || "Bạn không còn quyền chat trong phòng này.");
-            return;
-        }
-        if (result.data && result.data.stop_polling) stopRoomChatPolling();
-        if (!result.ok || !result.data || !result.data.ok) {
-            setRoomChatStatus((result.data && result.data.error) || "Không gửi được tin nhắn.");
-            return;
-        }
-        if (input) input.value = "";
-        setRoomChatStatus("Đã gửi.");
-        currentRoomChatKey = "";
-        if (roomChatPoller) roomChatPoller.runNow();
-        else loadRoomChat();
-    }).catch(function (error) {
-        if (!(error && error.name === "AbortError")) setRoomChatStatus("Lỗi kết nối chat. Hãy thử lại.");
-    }).finally(function () {
-        if (button) button.disabled = false;
-        if (input && document.body.contains(input)) input.focus();
-    });
-}
-
-document.addEventListener("submit", function (event) {
-    const form = event.target && event.target.closest ? event.target.closest("#roomLiveContent .chat-form") : null;
-    if (!form) return;
-    event.preventDefault();
-    submitRoomChat(form);
-}, true);
-
-window.addEventListener("DOMContentLoaded", startRoomChatPolling);
+});
 </script>
+{% endif %}
 
 <script>
 (function initWinStreakEvent(){
@@ -828,6 +1030,7 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
     const cancelButton = document.getElementById("roomActionModalCancel");
     const closeButton = modal.querySelector(".room-action-modal-close");
     const cancelButtons = modal.querySelectorAll("[data-room-modal-cancel]");
+
     let pendingForm = null;
     let returnFocus = null;
     let submitting = false;
@@ -909,7 +1112,7 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
         submitting = false;
         noticeMode = true;
         noticeRedirectUrl = settings.redirectUrl || "";
-        setDismissControlsVisible(false);
+        setDismissControlsVisible(!noticeRedirectUrl);
 
         modal.dataset.tone = settings.tone || "warning";
         icon.textContent = settings.icon || "ℹ";
@@ -927,15 +1130,19 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
         }
     }
 
-    document.addEventListener("submit", function (event) {
-        const form = event.target && event.target.closest
-            ? event.target.closest(".room-exit-confirm-form")
-            : null;
-        if (!form) return;
-        event.preventDefault();
-        if (submitting || noticeMode) return;
-        openModal(form);
-    }, true);
+    function refreshForms() {
+        document.querySelectorAll(".room-exit-confirm-form").forEach(function (form) {
+            if (form.dataset.roomExitModalBound === "1") return;
+            form.dataset.roomExitModalBound = "1";
+            form.addEventListener("submit", function (event) {
+                event.preventDefault();
+                if (submitting || noticeMode) return;
+                openModal(form);
+            });
+        });
+    }
+
+    refreshForms();
 
     cancelButtons.forEach(function (button) {
         button.addEventListener("click", closeModal);
@@ -955,7 +1162,12 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
 
     confirmButton.addEventListener("click", function () {
         if (noticeMode) {
-            redirectNotice();
+            if (noticeRedirectUrl) {
+                redirectNotice();
+            } else {
+                noticeMode = false;
+                closeModal();
+            }
             return;
         }
         if (!pendingForm || submitting) return;
@@ -963,14 +1175,14 @@ window.addEventListener("DOMContentLoaded", startRoomChatPolling);
         confirmButton.disabled = true;
         confirmButton.textContent = "Đang xử lý...";
         const formToSubmit = pendingForm;
-        if (typeof window.PESStopRoomRealtime === "function") window.PESStopRoomRealtime();
         window.setTimeout(function () {
             HTMLFormElement.prototype.submit.call(formToSubmit);
         }, 120);
     });
 
     window.PESRoomActionModal = {
-        showNotice: showNotice
+        showNotice: showNotice,
+        refreshForms: refreshForms
     };
 })();
 </script>

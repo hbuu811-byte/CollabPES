@@ -1,61 +1,75 @@
-# Collap_V1.13.3lv3.6 — Khôi phục đúng bố cục phòng đấu
+# Collap_V1.13.3lv3.5 — Sửa khung Rank/CLB phóng toàn màn hình
 
-- Ngày giờ: 20/07/2026, múi giờ Asia/Bangkok.
-- Bản nền hỗ trợ: `Collap_V1.13.3lv3.4` hoặc `Collap_V1.13.3lv3.5`.
-- Phạm vi: chỉ sửa cơ chế cập nhật giao diện phòng.
+- Ngày giờ: 20/07/2026 09:47, múi giờ Asia/Bangkok.
+- Bản nền bắt buộc: `Collap_V1.13.3lv3.4`.
+- Loại gói: trình vá an toàn.
 - SQL Supabase: không cần.
 
-## Nguyên nhân xác nhận lại
+## Lỗi quan sát được
 
-Hai bản `lv3.4` và `lv3.5` đều can thiệp vào cấu trúc DOM bên trong grid phòng:
+Trong phòng chưa quay đội, thẻ Chủ phòng chứa khung Rank và vùng CLB bị kéo ngang gần toàn bộ màn hình; biểu tượng VS rơi xuống phía dưới thay vì nằm giữa hai người chơi.
 
-- `lv3.4` morph node đệ quy theo vị trí/key.
-- `lv3.5` thay từng thẻ Chủ, VS, Khách và thanh bên bằng selector.
+## Nguyên nhân
 
-Giao diện thực tế của dự án có nhiều nhánh trạng thái và wrapper khác nhau. Chỉ cần một
-selector hoặc vị trí node không khớp là thẻ Chủ, VS hoặc Khách bị đưa sai khỏi grid,
-làm khung Rank/CLB kéo rộng gần toàn màn hình.
+`lv3.4` dùng bộ morph DOM đệ quy, ghép node theo vị trí trong `childNodes`. HTML phòng có nhiều text node, comment, form và phần tử xuất hiện/biến mất theo trạng thái. Khi một node được di chuyển, chỉ số các node sau thay đổi nhưng thuật toán vẫn tiếp tục dựa trên chỉ số cũ. Kết quả là các thẻ `.home`, `.center`, `.away` có thể bị đưa ra khỏi `.room-match-shell` hoặc bị xóa nhầm, làm grid ba cột bị vỡ.
 
-## Cách sửa lv3.6
+Đây không phải lỗi kích thước ảnh Rank và không cần sửa ảnh hoặc dữ liệu CLB.
 
-- Xóa hoàn toàn hai thuật toán morph/replace theo node.
-- Khi trạng thái thật sự thay đổi, server vẫn chỉ trả `_room_live_content.html`.
-- Client thay nguyên nội dung bên trong `#roomLiveContent` bằng fragment chuẩn từ server.
-- Không reload `Document`, `base.html`, menu, CSS hoặc JavaScript.
-- Chỉ thực hiện thay fragment khi HTML mới khác cache.
-- Kiểm tra fragment phải có đủ cấu trúc phòng trước khi đưa vào trang.
-- Giữ tỷ số đang nhập, checkbox/select, focus, vị trí con trỏ, nội dung chat đang gõ,
-  vị trí cuộn chat và vị trí cuộn trang.
-- Ảnh Rank/CLB/giao diện tiếp tục dùng cache trình duyệt hiện có.
-- Đổi cache sang `pes-room-fragment-cache-v3:<room_id>` và xóa hai cache lỗi cũ.
+## Cách sửa
+
+### `templates/room_detail.html`
+
+- Xóa hoàn toàn `roomNodeKey()`, `syncRoomAttributes()` và `morphRoomNode()` của `lv3.4`.
+- Không ghép lại từng text node hoặc từng node con.
+- Chỉ so sánh và thay các vùng ổn định:
+  1. thông báo chuỗi thắng;
+  2. thanh thông tin phòng;
+  3. thẻ Chủ phòng;
+  4. vùng giữa/VS/tỷ số;
+  5. thẻ Khách;
+  6. thông tin bên phải;
+  7. lịch sử và điều khiển phòng;
+  8. trạng thái xuất hiện hoặc biến mất của chat.
+- Giữ nguyên DOM chat nếu chat vẫn đang bật, tránh mất tin nhắn, nội dung đang gõ và vị trí cuộn.
+- Kiểm tra cấu trúc bắt buộc của `.room-match-shell` trước khi áp dụng HTML mới.
+- Nếu DOM đã bị `lv3.4` làm hỏng, tự phục hồi riêng `#roomLiveContent`; không reload toàn bộ trang.
+- Đổi cache key sang `pes-room-fragment-cache-v2:<room_id>` và xóa cache cũ của `lv3.4`.
+- Tiếp tục giữ tỷ số đang nhập, focus và vị trí con trỏ bằng cơ chế snapshot hiện có.
+
+### `app.py`
+
+- Tăng `APP_VERSION` lên `Collap_V1.13.3lv3.5` để trình duyệt nhận đúng phiên bản mới.
 
 ## File được sửa sau khi chạy
 
-| File | Nội dung |
-|---|---|
-| `app.py` | Tăng phiên bản thành `Collap_V1.13.3lv3.6` |
-| `templates/room_detail.html` | Thay bộ vá DOM bằng thay fragment phòng an toàn |
+| File | Vị trí ước lượng | Nội dung |
+|---|---:|---|
+| `app.py` | khoảng dòng 65 | tăng phiên bản |
+| `templates/room_detail.html` | khu vực `roomNodeKey()` đến `patchRoomLiveContent()` | thay thuật toán morph bằng fragment cố định và tự sửa grid |
 
 ## Không thay đổi
 
-- Không sửa CSS hoặc kích thước khung Rank/CLB.
-- Không sửa RP, lịch sử trận, bỏ cuộc, Admin hoặc Supabase.
-- Không thay đổi API chat, khóa request hay watchdog của nhánh `lv3.4`.
-- Không đưa lại reload toàn bộ trang.
+- Không sửa CSS hoặc kích thước ảnh Rank.
+- Không sửa RP, lịch sử đấu, bỏ cuộc, Admin hoặc Supabase.
+- Không thay đổi polling, chat API hoặc khoảng watchdog của `lv3.4`.
+- Không đưa lại `location.reload()`.
+- Không tải lại `base.html`, CSS, JavaScript hoặc toàn bộ Document khi sự kiện phòng thay đổi.
 
 ## Cài đặt
 
-1. Chép ba file trong gói vào thư mục gốc dự án, cùng cấp với `app.py`.
-2. Chạy `APPLY_Collap_V1.13.3lv3.6.bat`.
-3. Commit đúng `app.py` và `templates/room_detail.html`.
-4. Không commit `.collap_v1_13_3lv3_6_backup`.
+1. Chép ba file trong ZIP vào thư mục gốc dự án `Collap_V1.13.3lv3.4`.
+2. Nhấp đúp `APPLY_Collap_V1.13.3lv3.5.bat`.
+3. Commit đúng:
+   - `app.py`;
+   - `templates/room_detail.html`.
+4. Không commit thư mục `.collap_v1_13_3lv3_5_backup`.
 5. Push và redeploy Vercel.
-6. Sau deploy, tải lại trang phòng một lần để nhận JavaScript mới.
 
-## Kịch bản kiểm tra
+## Kịch bản test
 
-1. Tạo phòng chưa có khách: Chủ – VS – Khách nằm cùng một hàng như giao diện gốc.
-2. Khách tham gia: chỉ phần phòng đổi, không tải lại trang.
-3. Sẵn sàng, quay đội, gửi kết quả: bố cục không bị kéo rộng.
-4. Đang nhập tỷ số khi đối thủ thao tác: tỷ số không bị xóa.
-5. Chat đang gõ hoặc đang cuộn: nội dung và vị trí được giữ.
+1. Chủ phòng tạo phòng khi chưa có khách: thẻ Chủ, VS và thẻ Khách phải nằm cùng hàng.
+2. Khách vào phòng: chỉ thẻ Khách và nút liên quan đổi, bố cục không giãn toàn màn hình.
+3. Khách bấm Sẵn sàng: vùng giữa đổi nút, không reload trang.
+4. Quay đội: logo/tên đội hai bên đổi nhưng grid giữ nguyên.
+5. Đang nhập tỷ số và có cập nhật khác: ô tỷ số không bị reset.
+6. Gửi chat rồi đổi trạng thái phòng: tin nhắn và nội dung đang gõ không mất.

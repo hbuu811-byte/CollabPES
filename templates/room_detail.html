@@ -93,6 +93,7 @@ let roomStartCountdownSeconds = 0;
 let roomStartCountdownMode = "down";
 let roomStatePoller = null;
 let roomViewRefreshInFlight = false;
+let roomStateStablePolls = 0;
 
 function renderRoomCountdown(seconds) {
     const countdown = document.getElementById("roomCountdown");
@@ -238,12 +239,24 @@ function bindRoomLiveControls() {
 }
 
 function getRoomStateInterval() {
-    if (currentRoomStatus === "waiting_result_confirm") return currentRoomUserIsGuest ? 1500 : 3500;
-    if (currentRoomStatus === "playing") return currentRoomUserIsGuest ? 2500 : 6000;
-    if (currentRoomStatus === "friendly_playing") return 6000;
-    if (currentRoomStatus === "waiting_ready") return 3000;
-    if (currentRoomStatus === "confirmed") return 4000;
-    return 7000;
+    let baseInterval = 10000;
+    if (currentRoomStatus === "waiting_result_confirm") {
+        baseInterval = currentRoomUserIsGuest ? 2200 : 4500;
+    } else if (currentRoomStatus === "playing") {
+        baseInterval = currentRoomUserIsGuest ? 4000 : 7500;
+    } else if (currentRoomStatus === "friendly_playing") {
+        baseInterval = 10000;
+    } else if (currentRoomStatus === "waiting_ready") {
+        baseInterval = currentRoomUserIsGuest ? 4000 : 5000;
+    } else if (currentRoomStatus === "confirmed") {
+        baseInterval = 7000;
+    }
+
+    // Sau nhiều lần không đổi, tự giãn để giảm request. Khi có thay đổi,
+    // roomStateStablePolls được đặt lại 0 và tốc độ phản hồi nhanh trở lại.
+    if (roomStateStablePolls >= 8) return Math.min(18000, Math.round(baseInterval * 2.4));
+    if (roomStateStablePolls >= 4) return Math.min(13000, Math.round(baseInterval * 1.6));
+    return baseInterval;
 }
 
 function stopRoomStatePolling() {
@@ -258,18 +271,32 @@ function stopRoomChatPolling() {
     window.PESRoomChatPoller = null;
 }
 
-function stopAllRoomPolling() {
+function stopRoomInteractionPolling(reason) {
+    const stopReason = reason || "room-action-submit";
     stopRoomStatePolling();
     stopRoomChatPolling();
+    if (window.PESNet && typeof PESNet.stopByPrefix === "function") {
+        PESNet.stopByPrefix("room-state:", stopReason);
+        PESNet.stopByPrefix("room-chat:", stopReason);
+    }
+    if (window.PESNet && typeof PESNet.abortRequestsByPrefix === "function") {
+        PESNet.abortRequestsByPrefix("request:room-state:", stopReason);
+        PESNet.abortRequestsByPrefix("request:room-chat:", stopReason);
+    }
+}
+
+function stopAllRoomPolling(reason) {
+    const stopReason = reason || "leave-room-page";
+    stopRoomInteractionPolling(stopReason);
     if (window.PESNet && typeof PESNet.stopAll === "function") {
-        PESNet.stopAll("leave-room-page");
-    } else if (window.PESNet && typeof PESNet.stopByPrefix === "function") {
-        PESNet.stopByPrefix("room-state:", "leave-room-page");
-        PESNet.stopByPrefix("room-chat:", "leave-room-page");
+        PESNet.stopAll(stopReason);
+    } else if (window.PESNet && typeof PESNet.abortAllRequests === "function") {
+        PESNet.abortAllRequests(stopReason);
     }
 }
 
 window.PESStopRoomPolling = stopAllRoomPolling;
+window.PESStopRoomInteractionPolling = stopRoomInteractionPolling;
 
 function showRoomRedirectNotice(options) {
     stopAllRoomPolling();
@@ -344,7 +371,11 @@ function checkRoomState(signal) {
 
     return stateRequest
     .then(function (result) {
-        if (!result || result.status === 204 || result.status === 304) return null;
+        if (!result) return null;
+        if (result.status === 204 || result.status === 304) {
+            roomStateStablePolls = Math.min(20, roomStateStablePolls + 1);
+            return null;
+        }
         if (result.status === 401 || result.status === 403 || result.status === 404) {
             stopAllRoomPolling();
             window.location.href = "{{ url_for('dashboard') }}";
@@ -398,6 +429,7 @@ function checkRoomState(signal) {
             return;
         }
         if (data.state_key && data.state_key !== currentRoomStateKey) {
+            roomStateStablePolls = 0;
             return refreshRoomLiveContent(data.state_key, signal);
         }
     })
@@ -409,6 +441,12 @@ function checkRoomState(signal) {
 
 window.addEventListener("DOMContentLoaded", function () {
     bindRoomLiveControls();
+    const liveContent = document.getElementById("roomLiveContent");
+    if (liveContent) {
+        liveContent.addEventListener("pointerdown", function () {
+            roomStateStablePolls = 0;
+        }, {passive: true});
+    }
     if (!window.PESNet) return;
 
     if (typeof PESNet.stopByPrefix === "function") {
@@ -426,7 +464,9 @@ window.addEventListener("DOMContentLoaded", function () {
     });
 });
 
-window.addEventListener("pagehide", stopAllRoomPolling, {once: true});
+window.addEventListener("pagehide", function () {
+    stopAllRoomPolling("room-pagehide");
+}, {once: true});
 </script>
 
 {% if system_features.room_chat_enabled %}
@@ -522,8 +562,14 @@ window.addEventListener("DOMContentLoaded", function () {
     window.PESRoomChatPoller = PESNet.createPoller({
         key: "room-chat:{{ room.id }}",
         task: loadRoomChat,
-        visibleInterval: 15000,
-        hiddenInterval: 60000,
+        interval: function () {
+            const chatBox = document.getElementById("roomChatBox");
+            if (!chatBox) return 60000;
+            const rect = chatBox.getBoundingClientRect();
+            const visible = rect.bottom > 0 && rect.top < window.innerHeight;
+            return visible ? 30000 : 60000;
+        },
+        hiddenInterval: 120000,
         runWhenHidden: false,
         immediate: true,
         jitter: 1000,
@@ -544,7 +590,7 @@ document.addEventListener("submit", function (event) {
     } catch (error) {}
 
     if (actionPath.indexOf("/room/{{ room.id }}/") === 0) {
-        stopAllRoomPolling();
+        stopRoomInteractionPolling("room-action-submit");
     }
 }, true);
 </script>
@@ -737,7 +783,7 @@ initWinStreakEvent();
         confirmButton.disabled = true;
         confirmButton.textContent = "Đang xử lý...";
         const formToSubmit = pendingForm;
-        stopAllRoomPolling();
+        stopAllRoomPolling("confirmed-room-exit");
         window.setTimeout(function () {
             HTMLFormElement.prototype.submit.call(formToSubmit);
         }, 120);

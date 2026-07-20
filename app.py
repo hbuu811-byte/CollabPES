@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3lv2.5"
+APP_VERSION = "Collap_V1.13.3lv3.3"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1480,8 +1480,20 @@ def set_device_cookie(response):
             httponly=True,
             samesite="Lax",
         )
-    if request.endpoint == "static":
-        response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+
+    # Cache file tĩnh theo loại. CSS/JS luôn gắn APP_VERSION vào URL nên có thể
+    # cache dài và immutable; ảnh rank/giao diện dùng 180 ngày kèm tái xác thực nền.
+    path = str(request.path or "").lower()
+    if path.startswith("/static/"):
+        if path.endswith((".css", ".js")):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif path.endswith((".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".ico")):
+            response.headers["Cache-Control"] = "public, max-age=15552000, stale-while-revalidate=604800"
+        elif path.endswith((".woff", ".woff2", ".ttf", ".otf")):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        response.headers.setdefault("Vary", "Accept-Encoding")
+    elif path.startswith("/api/") or path == "/heartbeat":
+        response.headers["Cache-Control"] = "no-store, max-age=0"
     return response
 
 
@@ -2611,6 +2623,48 @@ def get_room(room_id):
     return room
 
 
+def get_room_state_snapshot(room_id):
+    """Đọc dữ liệu tối thiểu cho polling /state, không làm giàu toàn bộ phòng.
+
+    ``get_room()`` còn phải đọc users, rank, đội bóng và tranh chấp để render HTML.
+    Polling chỉ cần các cột có khả năng làm thay đổi giao diện. Chỉ khi deadline
+    thực sự hết hạn mới gọi ``enrich_room()`` để xử lý phạt/thông báo đầy đủ.
+    """
+    columns = (
+        "id,host_user_id,guest_user_id,status,match_mode,guest_ready,"
+        "host_team,guest_team,host_team_overall,guest_team_overall,"
+        "host_team_logo_url,guest_team_logo_url,host_team_league,guest_team_league,"
+        "host_score,guest_score,note,state_expires_at,created_at,updated_at,match_id,invite_id"
+    )
+    result = execute_query(
+        db.table("match_rooms").select(columns).eq("id", room_id).limit(1),
+        "get_room_state_snapshot",
+        attempts=2,
+    )
+    room = dict(result.data[0]) if result.data else None
+    if not room:
+        return None
+
+    expires_at = room_expiry_dt(room)
+    room["state_expires_at"] = expires_at.isoformat() if expires_at else None
+    room["timeout_seconds"] = max(0, int((expires_at - now_dt()).total_seconds())) if expires_at else 0
+
+    if expires_at and expires_at <= now_dt():
+        # Các luồng hết hạn có thể ghi RP/thông báo, nên lúc này mới cần dữ liệu
+        # người chơi đầy đủ. Đây là tình huống hiếm, không phải mỗi vòng polling.
+        enrich_room(room)
+        expire_room_if_needed(room)
+    else:
+        note = room.get("note") or ""
+        room["rematch_host_ready"] = note == REMATCH_HOST_READY_NOTE
+        room["rematch_guest_ready"] = note == REMATCH_GUEST_READY_NOTE
+        room["rematch_host_declined"] = note == REMATCH_HOST_DECLINED_NOTE
+        room["rematch_guest_declined"] = note == REMATCH_GUEST_DECLINED_NOTE
+        room["rematch_declined"] = room["rematch_host_declined"] or room["rematch_guest_declined"]
+        room["rematch_expired"] = note == REMATCH_EXPIRED_NOTE
+    return room
+
+
 def enrich_room(room):
     users = users_map()
     host = users.get(room.get("host_user_id"), {})
@@ -3057,7 +3111,7 @@ def active_room_for_user(user_id, exclude_room_id=None):
     return None
 
 
-def build_room_head_to_head(room, allow_full_fallback=True):
+def build_room_head_to_head(room):
     """Thống kê đối đầu trong phòng bằng truy vấn nhỏ, có fallback an toàn.
 
     Trước đây mỗi lần khách nhận thay đổi trạng thái và tải lại phòng, hàm này
@@ -3110,16 +3164,13 @@ def build_room_head_to_head(room, allow_full_fallback=True):
     pair = {str(host_id), str(guest_id)}
     if raw_matches is None:
         raw_matches = []
-        # Trang tải đầy đủ vẫn giữ fallback cũ. Fragment realtime không được
-        # phép tải toàn bộ lịch sử hệ thống vì có thể làm máy khách chờ quá lâu.
-        if allow_full_fallback:
-            for match in list_matches("confirmed"):
-                if {str(match.get("player1_id")), str(match.get("player2_id"))} != pair:
-                    continue
-                match_time = parse_dt(match.get("created_at"))
-                if room_opened_at and match_time and match_time < room_opened_at:
-                    continue
-                raw_matches.append(match)
+        for match in list_matches("confirmed"):
+            if {str(match.get("player1_id")), str(match.get("player2_id"))} != pair:
+                continue
+            match_time = parse_dt(match.get("created_at"))
+            if room_opened_at and match_time and match_time < room_opened_at:
+                continue
+            raw_matches.append(match)
 
     selected = []
     for match in raw_matches:
@@ -3642,19 +3693,11 @@ def heartbeat():
 @app.route("/api/invites/pending")
 @login_required
 def api_pending_invites():
-    """Trả lời mời mới nhất của đúng người dùng hiện tại.
-
-    Truy vấn trực tiếp là đường chính. Nếu PostgREST tạm thời không nhận bộ
-    select tối ưu, dùng lại helper cũ thay vì giả vờ trả danh sách rỗng.
-    """
+    """Truy vấn trực tiếp lời mời của người hiện tại để giảm độ trễ popup."""
     user = current_user()
     if not user or user.get("role") == "admin":
-        response = jsonify({"ok": True, "invites": []})
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
+        return jsonify({"invites": []})
 
-    rows = None
-    direct_error = None
     try:
         result = execute_query(
             db.table("match_invites")
@@ -3667,71 +3710,29 @@ def api_pending_invites():
             attempts=2,
         )
         rows = result.data or []
-    except Exception as exc:
-        direct_error = exc
-
-    if rows is None:
-        try:
-            rows = [
-                dict(invite)
-                for invite in list_invites("pending")
-                if str(invite.get("to_user_id")) == str(user["id"])
-            ][:3]
-            app.logger.warning(
-                "Pending invite direct query failed; fallback succeeded for user=%s: %s",
-                user.get("id"), direct_error,
-            )
-        except Exception as fallback_exc:
-            app.logger.exception(
-                "Pending invite queries failed user=%s direct=%s fallback=%s",
-                user.get("id"), direct_error, fallback_exc,
-            )
-            response = jsonify({
-                "ok": False,
-                "error": "temporary_db_error",
-                "invites": [],
-            })
-            response.status_code = 503
-            response.headers["Cache-Control"] = "no-store, max-age=0"
-            return response
-
-    data = []
-    try:
-        users = users_map()
-    except Exception as exc:
-        app.logger.warning("Could not load users map for invite popup: %s", exc)
-        users = {}
-
-    for row in rows:
-        invite = expire_invite_if_needed(dict(row))
-        if invite.get("status") != "pending":
-            continue
-        sender = dict(users.get(invite.get("from_user_id"), {}) or {})
-        if not sender:
-            try:
-                sender = dict(get_user(invite.get("from_user_id")) or {})
-            except Exception:
-                sender = {}
-        try:
+        data = []
+        for row in rows:
+            invite = expire_invite_if_needed(dict(row))
+            if invite.get("status") != "pending":
+                continue
+            sender = get_user(invite.get("from_user_id")) or {}
             decorate_player_achievements(sender)
-        except Exception:
-            pass
-        data.append({
-            "id": invite["id"],
-            "from_name": sender.get("display_name", "Unknown"),
-            "from_avatar_url": sender.get("avatar_url"),
-            "from_achievement": sender.get("featured_achievement"),
-            "from_rank": get_rank_display(sender.get("rank_points", 0)),
-            "from_points": sender.get("rank_points", 0),
-            "tier": invite.get("tier") or SMART_RANDOM_MODE,
-            "expires_in_seconds": int(invite.get("expires_in_seconds") or 0),
-            "accept_url": url_for("respond_invite", invite_id=invite["id"]),
-            "reject_url": url_for("respond_invite", invite_id=invite["id"]),
-        })
-
-    response = jsonify({"ok": True, "invites": data})
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
+            data.append({
+                "id": invite["id"],
+                "from_name": sender.get("display_name", "Unknown"),
+                "from_avatar_url": sender.get("avatar_url"),
+                "from_achievement": sender.get("featured_achievement"),
+                "from_rank": get_rank_display(sender.get("rank_points", 0)),
+                "from_points": sender.get("rank_points", 0),
+                "tier": invite.get("tier") or SMART_RANDOM_MODE,
+                "expires_in_seconds": int(invite.get("expires_in_seconds") or 0),
+                "accept_url": url_for("respond_invite", invite_id=invite["id"]),
+                "reject_url": url_for("respond_invite", invite_id=invite["id"]),
+            })
+        return jsonify({"invites": data})
+    except Exception as exc:
+        print(f"api_pending_invites ERROR user={user.get('id')}: {type(exc).__name__}: {exc}")
+        return jsonify({"invites": []})
 
 
 
@@ -3774,58 +3775,59 @@ def api_active_room():
     })
 
 def build_room_state_key(room):
-    """Tạo khóa trạng thái ổn định dùng chung cho HTML và API phòng đấu."""
+    """Khóa trạng thái chỉ dựa trên dữ liệu phòng, không cần query phụ."""
     return "|".join([
         str(room.get("status")),
+        str(room.get("host_user_id")),
         str(room.get("guest_user_id")),
-        str(room.get("match_id")),
         str(room.get("host_team")),
         str(room.get("guest_team")),
         str(room.get("guest_ready")),
         str(room.get("host_score")),
         str(room.get("guest_score")),
-        str(room.get("rematch_host_ready")),
-        str(room.get("rematch_guest_ready")),
-        str(room.get("rematch_host_declined")),
-        str(room.get("rematch_guest_declined")),
-        str(room.get("rematch_expired")),
-        str(room.get("state_expires_at")),
-        str((room.get("dispute") or {}).get("status")),
-        str((room.get("dispute") or {}).get("updated_at")),
+        str(room.get("match_id")),
+        str(room.get("invite_id")),
         str(room.get("note")),
-        str(room.get("updated_at")),
+        str(room.get("state_expires_at")),
     ])
 
 
 @app.route("/api/room/<room_id>/state")
 @login_required
+
 def api_room_state(room_id):
-    """Snapshot rất nhẹ cho polling phòng. Không render Jinja, không đọc lịch sử."""
     user = current_user()
 
+    # Trang phòng đã gọi /state thường xuyên. Tận dụng request này để duy trì
+    # trạng thái online, tránh phải chạy thêm một heartbeat HTTP riêng trong phòng.
+    now_ts = int(time.time())
+    last_presence_sync = int(session.get("room_state_presence_at", 0) or 0)
+    if now_ts - last_presence_sync >= 60:
+        try:
+            mark_current_user_active()
+            session["room_state_presence_at"] = now_ts
+        except Exception as exc:
+            app.logger.debug("Room state presence sync skipped: %s", exc)
+
     try:
-        result = execute_query(
-            db.table("match_rooms").select("*").eq("id", room_id).limit(1),
-            "api_room_state_snapshot",
-            attempts=2,
-        )
-        room = dict(result.data[0]) if result.data else None
-        if room:
-            expire_room_if_needed(room)
-    except Exception as exc:
-        app.logger.warning("api_room_state snapshot failed room=%s: %s", room_id, exc)
-        response = jsonify({"ok": False, "error": "temporary_db_error"})
-        response.status_code = 503
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
+        room = get_room_state_snapshot(room_id)
+    except Exception:
+        return jsonify({"ok": False, "error": "temporary_db_error"}), 503
 
     if not room:
         return jsonify({"ok": False, "error": "room_not_found"}), 404
 
-    if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
+    is_room_member = (
+        _same_user_id(user.get("id"), room.get("host_user_id"))
+        or _same_user_id(user.get("id"), room.get("guest_user_id"))
+    )
+    if not is_room_member and not is_admin_user(user):
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     state_key = build_room_state_key(room)
+
+    # V4.1: nếu trạng thái chưa đổi, trả response rỗng để giảm dữ liệu truyền.
+    # Client vẫn giữ polling nhưng không phải nhận/phân tích JSON lặp lại.
     since_state_key = (request.args.get("since") or "").strip()
     if since_state_key and since_state_key == state_key:
         response = app.response_class(status=204)
@@ -3833,80 +3835,21 @@ def api_room_state(room_id):
         response.headers["X-Room-State-Unchanged"] = "1"
         return response
 
-    note = str(room.get("note") or "")
-    rematch_host_declined = note == REMATCH_HOST_DECLINED_NOTE
-    rematch_guest_declined = note == REMATCH_GUEST_DECLINED_NOTE
-    rematch_declined = rematch_host_declined or rematch_guest_declined
     rematch_declined_by_me = (
-        (user["id"] == room.get("host_user_id") and rematch_host_declined)
-        or (user["id"] == room.get("guest_user_id") and rematch_guest_declined)
+        (user["id"] == room.get("host_user_id") and room.get("rematch_host_declined"))
+        or (user["id"] == room.get("guest_user_id") and room.get("rematch_guest_declined"))
     )
 
-    response = jsonify({
+    return jsonify({
         "ok": True,
-        "changed": True,
         "state_key": state_key,
         "status": room.get("status"),
-        "has_guest": bool(room.get("guest_user_id")),
-        "guest_ready": bool(room.get("guest_ready")),
-        "rematch_declined": bool(rematch_declined),
+        "rematch_declined": bool(room.get("rematch_declined")),
         "rematch_declined_by_me": bool(rematch_declined_by_me),
-        "rematch_expired": note == REMATCH_EXPIRED_NOTE,
+        "rematch_expired": bool(room.get("rematch_expired")),
         "timeout_seconds": int(room.get("timeout_seconds") or 0),
         "timeout_label": room.get("timeout_label") or "",
-        "fragment_url": url_for("api_room_fragment", room_id=room_id),
     })
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
-
-
-@app.route("/api/room/<room_id>/fragment")
-@login_required
-def api_room_fragment(room_id):
-    """Render vùng giao diện động; chỉ được gọi khi snapshot báo trạng thái đổi."""
-    user = current_user()
-    try:
-        room = get_room(room_id)
-    except Exception as exc:
-        app.logger.warning("api_room_fragment load failed room=%s: %s", room_id, exc)
-        response = jsonify({"ok": False, "error": "temporary_db_error"})
-        response.status_code = 503
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
-
-    if not room:
-        return jsonify({"ok": False, "error": "room_not_found"}), 404
-    if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
-        return jsonify({"ok": False, "error": "forbidden"}), 403
-
-    try:
-        # Không fallback sang toàn bộ lịch sử hệ thống trong request realtime.
-        room_head_to_head = build_room_head_to_head(room, allow_full_fallback=False)
-        live_html = render_template(
-            "_room_live_content.html",
-            room=room,
-            current_user=user,
-            system_features=get_system_features(),
-            friendly_tiers=get_available_team_tiers(),
-            room_head_to_head=room_head_to_head,
-        )
-    except Exception as exc:
-        app.logger.exception("api_room_fragment render failed room=%s: %s", room_id, exc)
-        response = jsonify({"ok": False, "error": "temporary_render_error"})
-        response.status_code = 503
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
-
-    response = jsonify({
-        "ok": True,
-        "state_key": build_room_state_key(room),
-        "status": room.get("status"),
-        "has_guest": bool(room.get("guest_user_id")),
-        "html": live_html,
-    })
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
-
 
 # =========================
 # Auth
@@ -4269,114 +4212,72 @@ def api_global_chat_status():
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
-    # Khi Admin vừa tắt chat hoặc người dùng vừa rời phòng, poller cũ nhận
-    # lệnh dừng bằng response 200 thay vì tạo lỗi 403 giả trên Network.
-    if not system_feature_enabled("room_chat_enabled"):
-        response = jsonify({
-            "ok": False,
-            "error": "Chat phòng đang tắt.",
-            "stop_polling": True,
-            "messages": [],
-        })
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
+    """Chat phòng nhẹ và an toàn cho polling.
 
+    Khi Admin vừa tắt chat hoặc phòng vừa đóng/rời thành viên, client nhận phản
+    hồi 200 có cờ ``disabled``/``closed`` để tự dừng poller thay vì lặp 403.
+    Phòng đang hoạt động vẫn giữ kiểm tra quyền, không làm lộ tin nhắn.
+    """
     user = current_user()
-    try:
-        room = get_room(room_id)
-    except Exception as exc:
-        app.logger.warning("api_room_chat get_room failed room=%s: %s", room_id, exc)
-        response = jsonify({"ok": False, "error": "temporary_db_error"})
-        response.status_code = 503
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
+    if not system_feature_enabled("room_chat_enabled"):
+        return jsonify({"ok": True, "messages": [], "disabled": True})
 
+    try:
+        result = execute_query(
+            db.table("match_rooms")
+            .select("id,host_user_id,guest_user_id,status")
+            .eq("id", room_id)
+            .limit(1),
+            "api_room_chat_membership",
+            attempts=2,
+        )
+    except Exception as exc:
+        app.logger.warning("Room chat membership load failed room=%s: %s", room_id, exc)
+        return jsonify({"ok": False, "error": "temporary_db_error"}), 503
+
+    room = dict(result.data[0]) if result.data else None
     if not room:
-        response = jsonify({"ok": False, "error": "room_not_found", "stop_polling": True})
-        response.status_code = 404
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
+        return jsonify({"ok": True, "messages": [], "closed": True})
 
-    if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
-        # Poller có thể vừa gửi request đúng lúc người dùng rời phòng. Trả lệnh
-        # dừng bình thường thay vì 403 để Network không ghi nhận lỗi giả trong
-        # luồng sử dụng hợp lệ. Không trả bất kỳ nội dung chat nào.
-        response = jsonify({
-            "ok": False,
-            "error": "not_room_member",
-            "stop_polling": True,
-            "messages": [],
-        })
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
+    is_room_member = (
+        _same_user_id(user.get("id"), room.get("host_user_id"))
+        or _same_user_id(user.get("id"), room.get("guest_user_id"))
+    )
+    if not is_room_member and not is_admin_user(user):
+        # Khi khách vừa rời phòng, guest_user_id đã bị xóa trước khi trang cũ
+        # chuyển hướng. Trả danh sách rỗng để request cuối không tạo lỗi 403.
+        if not room.get("guest_user_id") or room.get("status") == "cancelled":
+            return jsonify({"ok": True, "messages": [], "closed": True})
+        return jsonify({"ok": False, "error": "forbidden"}), 403
 
-    try:
-        messages = list_chat_messages("room", room_id=room_id, limit=20)
-    except Exception as exc:
-        app.logger.warning("api_room_chat list failed room=%s: %s", room_id, exc)
-        response = jsonify({"ok": False, "error": "temporary_db_error"})
-        response.status_code = 503
-        response.headers["Cache-Control"] = "no-store, max-age=0"
-        return response
-
-    response = jsonify({"ok": True, "messages": messages})
-    response.headers["Cache-Control"] = "no-store, max-age=0"
-    return response
+    messages = list_chat_messages("room", room_id=room_id, limit=20)
+    return jsonify({"ok": True, "messages": messages})
 
 
 @app.route("/room/<room_id>/chat/send", methods=["POST"])
 @login_required
 def send_room_chat(room_id):
-    wants_json = (
-        request.headers.get("X-Requested-With") == "XMLHttpRequest"
-        or request.accept_mimetypes.best == "application/json"
-    )
-
-    if not system_feature_enabled("room_chat_enabled"):
-        if wants_json:
-            return jsonify({"ok": False, "error": "Chat phòng đang tắt.", "stop_polling": True}), 409
-        flash("Chat phòng đang tắt.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
-
     user = current_user()
-    try:
-        room = get_room(room_id)
-    except Exception:
-        if wants_json:
-            return jsonify({"ok": False, "error": "Dữ liệu phòng đang bận. Hãy thử lại."}), 503
-        flash("Dữ liệu phòng đang bận. Hãy thử lại.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
+    room = get_room(room_id)
 
     if not room:
-        if wants_json:
-            return jsonify({"ok": False, "error": "Không tìm thấy phòng."}), 404
         flash("Không tìm thấy phòng.", "danger")
         return redirect(url_for("rooms"))
 
-    if user["id"] not in [room.get("host_user_id"), room.get("guest_user_id")] and not is_admin_user(user):
-        if wants_json:
-            return jsonify({"ok": False, "error": "Bạn không thuộc phòng này."}), 403
+    is_room_member = (
+        _same_user_id(user.get("id"), room.get("host_user_id"))
+        or _same_user_id(user.get("id"), room.get("guest_user_id"))
+    )
+    if not is_room_member and not is_admin_user(user):
         flash("Bạn không thuộc phòng này.", "danger")
         return redirect(url_for("rooms"))
 
     message = request.form.get("message", "")
-    try:
-        ok, error = create_chat_message(user["id"], message, scope="room", room_id=room_id)
-    except Exception as exc:
-        app.logger.warning("send_room_chat failed room=%s user=%s: %s", room_id, user.get("id"), exc)
-        if wants_json:
-            return jsonify({"ok": False, "error": "Không gửi được tin nhắn lúc này."}), 503
-        flash("Không gửi được tin nhắn lúc này.", "warning")
-        return redirect(url_for("room_detail", room_id=room_id))
-
-    if wants_json:
-        if not ok:
-            status_code = 429 if "5 giây" in str(error or "") else 400
-            return jsonify({"ok": False, "error": error or "Không gửi được tin nhắn."}), status_code
-        return jsonify({"ok": True})
+    ok, error = create_chat_message(user["id"], message, scope="room", room_id=room_id)
 
     if not ok:
         flash(error, "warning")
+
     return redirect(url_for("room_detail", room_id=room_id))
 
 

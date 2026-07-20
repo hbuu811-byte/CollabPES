@@ -62,7 +62,7 @@ from modules.win_streaks import (
 load_dotenv()
 
 APP_NAME = "PES Arena – Bản Lĩnh Sân Cỏ"
-APP_VERSION = "Collap_V1.13.3lv3.3"
+APP_VERSION = "Collap_V1.13.3lv3.4"
 DEFAULT_POINTS = 1000
 DEVICE_COOKIE_NAME = "rankzone_device_id"
 COOLDOWN_MINUTES = 3
@@ -1471,6 +1471,56 @@ def get_device_id():
 
 @app.after_request
 def set_device_cookie(response):
+    # Request thao tác phòng bằng AJAX không đi theo redirect để tải lại toàn
+    # trang. Server trả thẳng HTML động mới nhất và thông báo cần thiết.
+    if (
+        request.headers.get("X-PES-Room-Action") == "1"
+        and response.status_code in {301, 302, 303, 307, 308}
+    ):
+        location = response.headers.get("Location") or ""
+        path_parts = [part for part in str(request.path or "").split("/") if part]
+        room_id = path_parts[1] if len(path_parts) >= 2 and path_parts[0] == "room" else None
+        flash_rows = session.pop("_flashes", []) or []
+        flash_messages = [
+            {"category": str(row[0] or "info"), "message": str(row[1] or "")}
+            for row in flash_rows
+            if isinstance(row, (list, tuple)) and len(row) >= 2
+        ]
+
+        payload = {
+            "ok": True,
+            "redirect_url": location,
+            "stay_in_room": False,
+            "messages": flash_messages,
+        }
+
+        if room_id and f"/room/{room_id}" in location:
+            try:
+                room = get_room(room_id)
+                if room:
+                    payload.update({
+                        "stay_in_room": True,
+                        "redirect_url": None,
+                        "state_key": build_room_state_key(room),
+                        "html": render_template(
+                            "_room_live_content.html",
+                            **build_room_template_context(room),
+                        ),
+                    })
+                else:
+                    payload.update({"ok": False, "error": "room_not_found"})
+            except Exception as exc:
+                app.logger.warning("Room AJAX response render failed room=%s: %s", room_id, exc)
+                payload.update({
+                    "ok": False,
+                    "error": "temporary_render_error",
+                    "retry_url": url_for("api_room_view", room_id=room_id),
+                })
+
+        response = make_response(jsonify(payload), 200 if payload.get("ok") else 503)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        response.headers["X-PES-Room-Action"] = "1"
+
     device_id = getattr(g, "new_device_id", None)
     if device_id:
         response.set_cookie(
@@ -4212,12 +4262,7 @@ def api_global_chat_status():
 @app.route("/api/room/<room_id>/chat")
 @login_required
 def api_room_chat(room_id):
-    """Chat phòng nhẹ và an toàn cho polling.
-
-    Khi Admin vừa tắt chat hoặc phòng vừa đóng/rời thành viên, client nhận phản
-    hồi 200 có cờ ``disabled``/``closed`` để tự dừng poller thay vì lặp 403.
-    Phòng đang hoạt động vẫn giữ kiểm tra quyền, không làm lộ tin nhắn.
-    """
+    """Chat phòng chỉ trả dữ liệu khi danh sách tin nhắn thật sự thay đổi."""
     user = current_user()
     if not system_feature_enabled("room_chat_enabled"):
         return jsonify({"ok": True, "messages": [], "disabled": True})
@@ -4244,14 +4289,27 @@ def api_room_chat(room_id):
         or _same_user_id(user.get("id"), room.get("guest_user_id"))
     )
     if not is_room_member and not is_admin_user(user):
-        # Khi khách vừa rời phòng, guest_user_id đã bị xóa trước khi trang cũ
-        # chuyển hướng. Trả danh sách rỗng để request cuối không tạo lỗi 403.
         if not room.get("guest_user_id") or room.get("status") == "cancelled":
             return jsonify({"ok": True, "messages": [], "closed": True})
         return jsonify({"ok": False, "error": "forbidden"}), 403
 
     messages = list_chat_messages("room", room_id=room_id, limit=20)
-    return jsonify({"ok": True, "messages": messages})
+    latest = messages[-1] if messages else {}
+    chat_key = "|".join([
+        str(len(messages)),
+        str(latest.get("id") or ""),
+        str(latest.get("created_at") or ""),
+        str(latest.get("message") or ""),
+    ])
+    since = (request.args.get("since") or "").strip()
+    if since and since == chat_key:
+        response = app.response_class(status=204)
+        response.headers["Cache-Control"] = "no-store, max-age=0"
+        return response
+
+    response = jsonify({"ok": True, "messages": messages, "chat_key": chat_key})
+    response.headers["Cache-Control"] = "no-store, max-age=0"
+    return response
 
 
 @app.route("/room/<room_id>/chat/send", methods=["POST"])

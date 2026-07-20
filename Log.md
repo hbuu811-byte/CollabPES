@@ -1,76 +1,97 @@
-# Collap_V1.13.3lv3.2
+# Collap_V1.13.3lv3.3 — Giảm request trong phòng đấu
 
-- Ngày giờ: 19/07/2026 01:38, múi giờ Asia/Bangkok.
-- Bản nền: Collap_V1.13.3lv3.1.
-- Mục tiêu: ưu tiên trải nghiệm người dùng, giảm nguy cơ request cũ chạy ngầm và tránh lỗi 403 chat sai.
-- Phạm vi: chỉ sửa các file trực tiếp liên quan; không sửa RP, lịch sử đấu, giao diện lịch sử phòng, modal, cache hoặc SQL Supabase.
+- Ngày giờ: 19/07/2026 — múi giờ Asia/Bangkok.
+- Bản nền bắt buộc: `Collap_V1.13.3lv3.2`.
+- Loại gói: trình vá an toàn; chỉ sửa đúng ba file liên quan.
+- SQL Supabase: không cần.
+
+## Kết quả rà soát
+
+Request trùng đã được khóa ở `lv3.2`, nhưng tổng request vẫn cao vì nhiều vòng hợp lệ cùng hoạt động trong phòng:
+
+1. `/state` chạy nhanh cố định ngay cả khi phòng không thay đổi.
+2. Chat phòng gọi mỗi 15 giây.
+3. Heartbeat, lời mời và thông báo hệ thống vẫn chạy khi người chơi đang ở trong phòng.
+4. `updated_at` nằm trong `state_key`; cập nhật phụ cũng có thể làm tải thêm fragment `/view`.
 
 ## Nội dung sửa
 
-### 1. Sửa gửi chat phòng bị từ chối nhầm
+### `app.py`
 
-- Route gửi chat trước đây so sánh trực tiếp `user["id"]` với ID chủ/khách.
-- Khi một giá trị là số và giá trị còn lại là chuỗi, người đang ở đúng phòng vẫn có thể bị báo không thuộc phòng.
-- Đã đổi sang `_same_user_id()` giống API đọc chat.
-- Quyền bảo mật giữ nguyên: người ngoài phòng vẫn không thể gửi chat.
+- Tăng version lên `Collap_V1.13.3lv3.3`.
+- Bỏ `updated_at` khỏi `build_room_state_key()` vì các trường làm đổi giao diện đã có trong khóa.
+- Tận dụng `/api/room/<id>/state` để cập nhật online tối đa một lần mỗi 60 giây.
+- Nhờ đó trang phòng không cần gửi thêm request `/heartbeat` riêng.
 
-### 2. Không dừng toàn bộ hệ thống khi chỉ thao tác trong phòng
+### `templates/base.html`
 
-- Các thao tác như Sẵn Sàng, Hủy Sẵn Sàng, quay đội, gửi kết quả, xác nhận kết quả và gửi chat chỉ dừng:
-  - polling trạng thái phòng;
-  - polling chat phòng;
-  - request `/state` hoặc chat đang chạy.
-- Heartbeat, lời mời và thông báo hệ thống không bị dừng sớm trong lúc server đang xử lý form.
-- Khi trình duyệt thực sự chuyển trang, `pagehide` sẽ dừng toàn bộ như trước.
+Khi đang ở trang phòng:
 
-### 3. Hủy request đúng theo từng nhóm
+- Không chạy heartbeat riêng.
+- Không kiểm tra `/api/invites/pending`.
+- Không chạy active-room.
+- Không chạy chat sảnh.
+- Không polling thông báo hệ thống.
 
-Bổ sung registry có `AbortController` cho request dùng chung:
+Khi ở ngoài phòng:
 
-- `abortRequest(key)` — hủy một request.
-- `abortRequestsByPrefix(prefix)` — hủy nhóm request, ví dụ toàn bộ request phòng hiện tại.
-- `abortAllRequests()` — hủy toàn bộ request khi rời trang.
+- Heartbeat: 60 giây.
+- Lời mời: 18 giây.
+- Active room: 30–45 giây.
+- Chat sảnh khi mở: 30 giây.
+- Thông báo hệ thống: 90 giây.
 
-Giữ tương thích với API JavaScript cũ:
+### `templates/room_detail.html`
 
-- `requestOnce()` vẫn trả về Promise như trước.
-- `fetchJsonOnce()` và `fetchTextOnce()` vẫn giữ nguyên cách gọi.
-- Hỗ trợ registry cũ từng lưu Promise trực tiếp.
+- `/state` dùng chu kỳ thích ứng:
+  - phản hồi nhanh ngay sau khi phòng thay đổi;
+  - sau 4 lần không đổi bắt đầu giãn;
+  - sau 8 lần không đổi có thể giãn tối đa 18 giây;
+  - khi có thay đổi hoặc người dùng thao tác, lập tức quay về chu kỳ nhanh.
+- Chat phòng:
+  - 30 giây khi khung chat đang nằm trong màn hình;
+  - 60 giây khi khung chat ngoài vùng nhìn;
+  - 120 giây khi tab ẩn.
+- Không thêm reload toàn trang.
+- Không sửa khóa request hoặc logic giữ ô tỷ số của `lv3.2`.
 
-### 4. Thoát phòng vẫn dừng toàn bộ
+## Ước lượng giảm request trong phòng ổn định
 
-- Bấm xác nhận Bỏ cuộc/Thoát phòng: dừng toàn bộ poller và request trước khi gửi form.
-- Trang bị hủy, phòng đóng hoặc chuyển về sảnh: dừng toàn bộ.
-- Sự kiện `pagehide`: dừng toàn bộ với lý do rõ ràng, không truyền nhầm Event object làm lý do dừng.
+So với `lv3.2`, mỗi người chơi trong phòng sẽ loại bỏ hoàn toàn:
 
-## File đã sửa
+- 1 vòng lời mời.
+- 1 vòng heartbeat.
+- 1 vòng thông báo hệ thống.
 
-- `app.py`
-  - Khoảng dòng 65: tăng phiên bản lên `Collap_V1.13.3lv3.2`.
-  - Khoảng dòng 4247–4265: chuẩn hóa kiểm tra thành viên khi gửi chat.
-- `static/js/pes_polling.js`
-  - Khoảng dòng 16–95: registry request có khả năng hủy và chống request trùng.
-  - Khoảng dòng 270–280: `stopAll()` hủy cả poller và request.
-  - Khoảng dòng 325–370: truyền AbortSignal dùng chung cho `fetchJsonOnce()` và `fetchTextOnce()`.
-  - Khoảng dòng 370–390: xuất các hàm hủy request.
-- `templates/room_detail.html`
-  - Khoảng dòng 249–286: tách dừng polling phòng và dừng toàn bộ trang.
-  - Khoảng dòng 440–446: dừng toàn bộ khi `pagehide`.
-  - Khoảng dòng 550–570: form thông thường chỉ dừng polling phòng.
-  - Khoảng dòng 745–760: xác nhận thoát phòng vẫn dừng toàn bộ.
+Đồng thời:
 
-## Kiểm tra kỹ thuật
+- `/state` tự giãn khi không có thay đổi.
+- Chat giảm khoảng một nửa hoặc hơn.
+- Các cập nhật phụ không còn tự kích hoạt `/view` chỉ vì `updated_at` đổi.
 
-- `python -m py_compile app.py`: đạt.
-- `node --check static/js/pes_polling.js`: đạt.
-- Parse `base.html` và `room_detail.html` bằng Jinja: đạt.
-- Số route trước/sau: giữ nguyên 43 decorator route trong gói vá.
-- `room_detail.html`: không có `location.reload()`.
-- Chỉ có một tham chiếu endpoint trạng thái phòng.
-- Mô phỏng hai lời gọi cùng request key: executor chỉ chạy một lần.
-- Mô phỏng hủy request theo prefix: nhận đúng `AbortError`.
-- Không có SQL Supabase mới.
+Mức giảm thực tế phụ thuộc trạng thái phòng và số tin chat, nhưng trong giai đoạn thi đấu ổn định dự kiến giảm khoảng 45–70% số request nền của trang phòng.
 
-## Cài đặt
+## File được sửa sau khi chạy
 
-Chép đè ba file code lên bản `Collap_V1.13.3lv3.1`. Không cần chạy SQL.
+| File | Nội dung |
+|---|---|
+| `app.py` | Version, state key, gộp online presence vào `/state` |
+| `templates/base.html` | Tắt poller toàn cục trong phòng; giãn poller ngoài phòng |
+| `templates/room_detail.html` | Polling `/state` thích ứng và giãn chat phòng |
+
+## Không thay đổi
+
+- Không sửa RP hoặc phạt bỏ cuộc.
+- Không sửa lịch sử trận.
+- Không sửa Admin.
+- Không sửa modal hoặc giao diện phòng.
+- Không sửa CSS/JS cache đã có.
+- Không thay đổi cấu trúc Supabase.
+
+## Cách áp dụng
+
+1. Giải nén ZIP.
+2. Chép ba file trong ZIP vào thư mục gốc dự án `Collap_V1.13.3lv3.2`.
+3. Nhấp đúp `APPLY_Collap_V1.13.3lv3.3.bat`.
+4. Commit đúng ba file được báo đã sửa.
+5. Không commit thư mục `.collap_v1_13_3lv3_3_backup`.

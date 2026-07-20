@@ -99,7 +99,8 @@ let roomEventSyncController = null;
 let roomSafetySyncTimer = null;
 let roomChatSafetyTimer = null;
 let currentRoomChatServerKey = "";
-const roomHtmlCacheKey = "pes-room-html-cache:{{ room.id }}";
+const roomHtmlCacheKey = "pes-room-fragment-cache-v2:{{ room.id }}";
+try { sessionStorage.removeItem("pes-room-html-cache:{{ room.id }}"); } catch (error) {}
 const roomStateCacheKey = "pes-room-state-cache:{{ room.id }}";
 const roomEventChannel = typeof BroadcastChannel === "function"
     ? new BroadcastChannel("pes-room-events:{{ room.id }}")
@@ -317,110 +318,131 @@ function showRoomRedirectNotice(options) {
     }
 }
 
-function roomNodeKey(node) {
-    if (!node || node.nodeType !== Node.ELEMENT_NODE) return "";
-    if (node.id) return "id:" + node.id;
-    const fragmentKey = node.getAttribute("data-room-fragment");
-    if (fragmentKey) return "fragment:" + fragmentKey;
-    if (node.tagName === "FORM") {
-        const action = node.getAttribute("action") || "";
-        if (action) return "form:" + action + ":" + (node.getAttribute("method") || "get");
-    }
-    return "";
+function roomFragmentHtml(node) {
+    return node ? node.outerHTML : "";
 }
 
-function syncRoomAttributes(current, incoming) {
-    const incomingNames = new Set(Array.from(incoming.attributes || []).map(function (attr) { return attr.name; }));
-    Array.from(current.attributes || []).forEach(function (attr) {
-        if (!incomingNames.has(attr.name)) current.removeAttribute(attr.name);
-    });
-    Array.from(incoming.attributes || []).forEach(function (attr) {
-        if (current.getAttribute(attr.name) !== attr.value) current.setAttribute(attr.name, attr.value);
-    });
+function roomGridStructureValid(root) {
+    if (!root) return false;
+    const shell = root.querySelector(".room-match-shell");
+    if (!shell) return false;
+    const home = shell.querySelector(":scope > .room-side-card.home");
+    const center = shell.querySelector(":scope > .room-center-stage-plain");
+    const away = shell.querySelector(":scope > .room-side-card.away");
+    const rail = shell.querySelector(":scope > .room-side-rail");
+    return Boolean(home && center && away && rail);
 }
 
-function morphRoomNode(current, incoming) {
-    if (!current || !incoming) return;
-    if (current.nodeType !== incoming.nodeType) {
+function replaceRoomFragment(currentRoot, incomingRoot, selector) {
+    const current = currentRoot.querySelector(selector);
+    const incoming = incomingRoot.querySelector(selector);
+    if (!current && !incoming) return false;
+    if (!incoming) {
+        if (current) current.remove();
+        return Boolean(current);
+    }
+    if (!current) return false;
+    if (roomFragmentHtml(current) === roomFragmentHtml(incoming)) return false;
+    current.replaceWith(incoming.cloneNode(true));
+    return true;
+}
+
+function syncRoomOverlay(currentRoot, incomingRoot, selector) {
+    const current = currentRoot.querySelector(selector);
+    const incoming = incomingRoot.querySelector(selector);
+    if (!current && !incoming) return false;
+    if (current && !incoming) {
+        current.remove();
+        return true;
+    }
+    if (current && incoming) {
+        if (roomFragmentHtml(current) === roomFragmentHtml(incoming)) return false;
         current.replaceWith(incoming.cloneNode(true));
-        return;
+        return true;
     }
-    if (current.nodeType === Node.TEXT_NODE || current.nodeType === Node.COMMENT_NODE) {
-        if (current.nodeValue !== incoming.nodeValue) current.nodeValue = incoming.nodeValue;
-        return;
+    const anchor = currentRoot.querySelector(".room-stage-topbar");
+    if (!anchor || !incoming) return false;
+    anchor.parentNode.insertBefore(incoming.cloneNode(true), anchor);
+    return true;
+}
+
+function syncRoomChatPanel(currentRoot, incomingRoot) {
+    const current = currentRoot.querySelector(".room-chat-side");
+    const incoming = incomingRoot.querySelector(".room-chat-side");
+    if (current && incoming) {
+        // Giữ nguyên tin nhắn, nội dung đang gõ và vị trí cuộn chat.
+        return false;
     }
-    if (current.tagName !== incoming.tagName) {
-        current.replaceWith(incoming.cloneNode(true));
-        return;
+    if (current && !incoming) {
+        current.remove();
+        return true;
     }
-
-    const active = current === document.activeElement;
-    const oldValue = active && "value" in current ? current.value : null;
-    const oldSelectionStart = active && typeof current.selectionStart === "number" ? current.selectionStart : null;
-    const oldSelectionEnd = active && typeof current.selectionEnd === "number" ? current.selectionEnd : null;
-    const wasOpen = current.tagName === "DETAILS" && current.open;
-
-    syncRoomAttributes(current, incoming);
-
-    const oldChildren = Array.from(current.childNodes);
-    const keyedOld = new Map();
-    oldChildren.forEach(function (child) {
-        const key = roomNodeKey(child);
-        if (key && !keyedOld.has(key)) keyedOld.set(key, child);
-    });
-
-    Array.from(incoming.childNodes).forEach(function (incomingChild, index) {
-        const key = roomNodeKey(incomingChild);
-        let currentChild = key ? keyedOld.get(key) : current.childNodes[index];
-        if (currentChild && currentChild !== current.childNodes[index]) {
-            current.insertBefore(currentChild, current.childNodes[index] || null);
-        }
-        if (!currentChild) {
-            current.appendChild(incomingChild.cloneNode(true));
-            return;
-        }
-        const currentKey = roomNodeKey(currentChild);
-        if (key && currentKey && key !== currentKey) {
-            current.insertBefore(incomingChild.cloneNode(true), currentChild);
-            return;
-        }
-        morphRoomNode(currentChild, incomingChild);
-    });
-
-    while (current.childNodes.length > incoming.childNodes.length) {
-        current.removeChild(current.lastChild);
+    if (!current && incoming) {
+        const rail = currentRoot.querySelector(".room-side-rail");
+        if (!rail) return false;
+        rail.appendChild(incoming.cloneNode(true));
+        return true;
     }
+    return false;
+}
 
-    if (wasOpen && current.tagName === "DETAILS") current.open = true;
-    if (active && oldValue !== null && "value" in current) {
-        current.value = oldValue;
-        current.focus({preventScroll: true});
-        if (oldSelectionStart !== null && typeof current.setSelectionRange === "function") {
-            try { current.setSelectionRange(oldSelectionStart, oldSelectionEnd); } catch (error) {}
-        }
-    }
+function repairRoomLiveContent(target, incomingRoot, snapshot) {
+    target.replaceChildren(...Array.from(incomingRoot.childNodes).map(function (node) {
+        return node.cloneNode(true);
+    }));
+    restoreRoomFormState(snapshot);
+    bindRoomLiveControls();
+    return true;
 }
 
 function patchRoomLiveContent(html) {
     const target = document.getElementById("roomLiveContent");
     if (!target || !html) return false;
-    const cached = sessionStorage.getItem(roomHtmlCacheKey) || "";
-    if (cached === html) return false;
 
     const template = document.createElement("template");
     template.innerHTML = String(html).trim();
     const incomingRoot = document.createElement("div");
-    Array.from(target.attributes || []).forEach(function (attr) {
-        incomingRoot.setAttribute(attr.name, attr.value);
-    });
     incomingRoot.appendChild(template.content.cloneNode(true));
-    const snapshot = captureRoomFormState();
 
-    morphRoomNode(target, incomingRoot);
-    restoreRoomFormState(snapshot);
-    bindRoomLiveControls();
+    // Không nhận fragment thiếu cấu trúc: giữ giao diện hiện tại và thử lại sau.
+    if (!roomGridStructureValid(incomingRoot)) return false;
+
+    const snapshot = captureRoomFormState();
+    const cached = sessionStorage.getItem(roomHtmlCacheKey) || "";
+
+    // Tự sửa DOM đã bị lv3.4 làm lệch grid. Chỉ thay vùng động, không reload trang.
+    if (!roomGridStructureValid(target)) {
+        const repaired = repairRoomLiveContent(target, incomingRoot, snapshot);
+        sessionStorage.setItem(roomHtmlCacheKey, html);
+        return repaired;
+    }
+
+    if (cached === html) return false;
+
+    let changed = false;
+    changed = syncRoomOverlay(target, incomingRoot, "#winStreakToast") || changed;
+    changed = syncRoomOverlay(target, incomingRoot, "#winStreakAnnouncement") || changed;
+
+    // Sáu vùng ổn định: không morph node con và không bao giờ kéo thẻ ra khỏi grid.
+    [
+        ".room-stage-topbar",
+        ".room-match-shell > .room-side-card.home",
+        ".room-match-shell > .room-center-stage-plain",
+        ".room-match-shell > .room-side-card.away",
+        ".room-match-shell > .room-side-rail > .room-side-info-panel",
+        ".room-extra-controls"
+    ].forEach(function (selector) {
+        changed = replaceRoomFragment(target, incomingRoot, selector) || changed;
+    });
+
+    changed = syncRoomChatPanel(target, incomingRoot) || changed;
+
+    if (changed) {
+        restoreRoomFormState(snapshot);
+        bindRoomLiveControls();
+    }
     sessionStorage.setItem(roomHtmlCacheKey, html);
-    return true;
+    return changed;
 }
 
 function refreshRoomLiveContent(nextStateKey, signal) {

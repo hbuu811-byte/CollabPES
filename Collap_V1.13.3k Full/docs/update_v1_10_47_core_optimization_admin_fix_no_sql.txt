@@ -1,8 +1,0 @@
-V1.10.47 - Core optimization and Admin template hotfix
-
-1. Fix /admin 500: always inject SUPABASE_PUBLIC_URL, SUPABASE_PUBLIC_ANON_KEY and SUPABASE_REALTIME_ENABLED into every template context. Empty values are serialized as empty strings instead of Jinja Undefined.
-2. Keep one Supabase client per warm Flask/Vercel process.
-3. Replace select('*') in the most frequently used player and match listing paths with explicit column lists.
-4. Keep public leaderboard cache and Realtime/fallback logic from V1.10.46.
-5. Profile history now reads only matches involving that player, limits the query, and displays 20 matches per page.
-6. No SQL migration is required.
